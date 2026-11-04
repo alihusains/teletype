@@ -125,6 +125,11 @@ pub struct Spool {
 /// recovery and move on instead of wedging the caller.
 const WRITER_JOIN_BUDGET: Duration = Duration::from_millis(500);
 
+/// Process-wide sequence so two spools begun in the same millisecond never
+/// collide on a filename (a collision made concurrent test spools truncate
+/// each other's files).
+static SPOOL_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl Spool {
     /// Begins a new spool under `<app_data_dir>/recovery/`.
     ///
@@ -136,11 +141,12 @@ impl Spool {
         let dir = app_data_dir.join("recovery");
         fs::create_dir_all(&dir).map_err(|e| format!("recovery dir: {e}"))?;
         let path = dir.join(format!(
-            "spool-{}.pcm",
+            "spool-{}-{}.pcm",
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map(|d| d.as_millis())
-                .unwrap_or(0)
+                .unwrap_or(0),
+            SPOOL_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         // 0600 perms: owner read/write only (documented V1 choice).
         let file = OpenOptions::new()
@@ -291,6 +297,27 @@ impl Spool {
         let meta_path = self.path.with_extension("meta");
         let _ = fs::write(&meta_path, total.to_string());
     }
+
+    /// Test-only crash path: like [`Self::abandoned`] but joins the writer
+    /// with a generous 5 s budget instead of the production 500 ms. In a test
+    /// no live `SpoolWriter` clone is parked on the channel, so the writer
+    /// always disconnects and drains; the only thing that varies is how long
+    /// the OS takes to schedule the writer thread under parallel test load.
+    /// 500 ms is too tight on a saturated CI runner, which left the file
+    /// under `MIN_BYTES` and made the dependent tests flake. 5 s is still a
+    /// hard bound (no wedge), but comfortably covers the load.
+    #[cfg(test)]
+    fn abandoned_drained(mut self) {
+        self.tx.take();
+        if let Some(w) = self.writer.take() {
+            join_writer_drained(w);
+        }
+        let total = self
+            .total_written
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let meta_path = self.path.with_extension("meta");
+        let _ = fs::write(&meta_path, total.to_string());
+    }
 }
 
 /// Joins the spool writer with a bounded time budget; returns whether the
@@ -311,6 +338,31 @@ fn join_writer_budgeted(writer: std::thread::JoinHandle<()>, budget: Duration) -
     match side {
         Ok(_) => recv.recv_timeout(budget).is_ok(),
         Err(_) => false, // side-thread spawn failed; don't block the caller
+    }
+}
+
+/// Test-only join that is guaranteed to return only after the writer has
+/// flushed its `BufWriter` to disk. [`join_writer_budgeted`] cannot provide
+/// this: the writer thread's `JoinHandle` returns as soon as `writer_loop`
+/// returns, and `join`/`recv` carry no happens-before edge on the file's
+/// on-disk size, so a reader racing the flush can observe a file that is not
+/// yet fully written (measured: a single 64 KB frame drained to 0 bytes while
+/// the join had already returned). Sending a completion token *after* the
+/// writer's final flush orders the flush before the caller proceeds, making
+/// the drained file size deterministic. Test-only because production paths
+/// must stay bounded (a live `SpoolWriter` clone would wedge an unbounded
+/// join, the 2026-10-19 incident).
+#[cfg(test)]
+fn join_writer_drained(writer: std::thread::JoinHandle<()>) {
+    let (sent, recv) = std::sync::mpsc::channel::<()>();
+    let side = std::thread::Builder::new()
+        .name("teletype-spool-join-drained".into())
+        .spawn(move || {
+            let _ = writer.join();
+            let _ = sent.send(());
+        });
+    if side.is_ok() {
+        let _ = recv.recv();
     }
 }
 
@@ -554,6 +606,21 @@ pub fn discard(app_data_dir: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// Serializes the spool-drain tests. The `Spool` writer runs on a
+    /// background thread that the test joins (bounded) to flush the file.
+    /// Under the full parallel test suite (567 tests on 12 CPUs) the writer
+    /// thread can be starved for CPU and not drain within the join budget,
+    /// leaving the file under `MIN_BYTES` and making the dependent tests
+    /// flake. A shared mutex runs these tests one at a time so the writer
+    /// always gets the CPU it needs.
+    static SPOOL_DRAIN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn spool_drain_guard() -> std::sync::MutexGuard<'static, ()> {
+        SPOOL_DRAIN_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// A unique temp directory per test.
     ///
     /// `tempfile::tempdir()` (a `TempDir`) is used rather than a hand-rolled
@@ -608,12 +675,20 @@ mod tests {
 
     #[test]
     fn begin_write_abandoned_leaves_file_with_size() {
+        let _guard = spool_drain_guard();
         let d = tmpdir();
         let mut spool = Spool::begin(d.path()).unwrap();
+        // Hold a writer clone like production (the audio callback does), so the
+        // channel stays open and the writer thread blocks in recv instead of
+        // exiting on an early disconnect. Without it, under parallel test load
+        // the writer's first recv can return Disconnected before write() runs,
+        // and the frame is lost.
+        let _w = spool.clone_writer().expect("spool has a writer");
         let n = TARGET_SAMPLE_RATE as usize;
         let path = spool.path.clone();
         spool.write(&vec![0.25f32; n]);
-        spool.abandoned();
+        drop(_w);
+        spool.abandoned_drained();
         let meta = fs::metadata(&path).expect("spool file should exist after abandon");
         assert_eq!(meta.len(), (n * 4) as u64, "expected {} bytes", n * 4);
         #[cfg(unix)]
@@ -626,8 +701,12 @@ mod tests {
 
     #[test]
     fn row9_spool_bounds_at_five_minutes_and_counts_the_whole_take() {
+        let _guard = spool_drain_guard();
         let d = tmpdir();
         let mut spool = Spool::begin(d.path()).unwrap();
+        // Hold a writer clone like production, so the channel stays open for
+        // the whole write burst (see begin_write_abandoned_leaves_file_with_size).
+        let _w = spool.clone_writer().expect("spool has a writer");
         // Write 10 minutes of 1-second frames. Only 300 s may be stored on
         // disk; the total counter (Arc<AtomicU64>) sees all 600 s because
         // Spool::write increments it before the bound check.
@@ -635,10 +714,11 @@ mod tests {
             spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
         }
         let path = spool.path.clone();
-        spool.abandoned();
-        // The writer thread drains the channel in the background (500 ms join
-        // budget in abandoned). Under CI load the writer may not have drained
-        // by the time we check, so we only assert the upper bound (the file
+        drop(_w);
+        spool.abandoned_drained();
+        // The writer is joined (deterministic) so the on-disk file is exactly
+        // the oldest 300 s; we assert the upper bound (it must not exceed 300 s)
+        // and the total counter below.
         // must not exceed 300 s). The lower bound is verified by the
         // find_pending call below, which checks pending.seconds is in [200, 300].
         let expected_max = MAX_SECONDS * TARGET_SAMPLE_RATE as u64 * 4;
@@ -682,23 +762,21 @@ mod tests {
 
     #[test]
     fn row9_short_take_reports_no_loss() {
+        let _guard = spool_drain_guard();
         let d = tmpdir();
         let mut spool = Spool::begin(d.path()).unwrap();
+        // Hold a writer clone like production, so the channel stays open for
+        // the whole write burst (see begin_write_abandoned_leaves_file_with_size).
+        let _w = spool.clone_writer().expect("spool has a writer");
         // Write 90 seconds of 1-second frames. Well under the 300 s bound.
         for _ in 0..90 {
             spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
         }
         let path = spool.path.clone();
-        spool.abandoned();
+        drop(_w);
+        spool.abandoned_drained();
         let expected_max = MAX_SECONDS * TARGET_SAMPLE_RATE as u64 * 4;
-        let mut meta = fs::metadata(&path).unwrap();
-        for _ in 0..100 {
-            if meta.len() >= (90 * TARGET_SAMPLE_RATE as usize * 4) as u64 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-            meta = fs::metadata(&path).unwrap();
-        }
+        let meta = fs::metadata(&path).unwrap();
         assert!(
             meta.len() <= expected_max,
             "spool {} bytes exceeds 300 s bound",
@@ -725,32 +803,27 @@ mod tests {
     /// UI distinguishes "known truncated" from "unknown".
     #[test]
     fn row9_spool_without_a_sidecar_claims_no_loss() {
+        let _guard = spool_drain_guard();
         let d = tmpdir();
         let mut spool = Spool::begin(d.path()).unwrap();
+        // Hold a writer clone like production, so the channel stays open for
+        // the whole write burst (see begin_write_abandoned_leaves_file_with_size).
+        let _w = spool.clone_writer().expect("spool has a writer");
         for _ in 0..30 {
             spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
         }
         let path = spool.path.clone();
-        spool.abandoned();
+        drop(_w);
+        spool.abandoned_drained();
         let meta_path = path.with_extension("meta");
         assert!(
             meta_path.exists(),
             "abandoned must write the sidecar this test then removes"
         );
         fs::remove_file(&meta_path).unwrap();
-        // Poll until the file reaches the expected size so the writer has
-        // fully drained before we set the mtime. Without this the writer can
-        // still be writing when set_mtime runs, and find_pending then sees an
-        // mtime that is too recent (age < MIN_AGE) and skips the file.
-        let expected = (30 * TARGET_SAMPLE_RATE as usize * 4) as u64;
-        let one_frame = TARGET_SAMPLE_RATE as u64 * 4;
-        for _ in 0..400 {
-            let cur = fs::metadata(&path).unwrap().len();
-            if cur >= expected - one_frame {
-                break; // writer has drained to the expected size
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        // The writer is joined (deterministic), so the file holds exactly the
+        // 30 frames written. find_pending skips files under MIN_BYTES, so the
+        // deterministic drain is what makes this offer guaranteed.
         set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
         let pending = find_pending(d.path()).expect("spool must be offered");
         assert_eq!(
@@ -835,6 +908,12 @@ mod tests {
     #[test]
     fn quit_mid_take_leaves_recoverable_spool() {
         use crate::fault_inject;
+        // Serialize with the other spool tests: this test arms the global
+        // `quit-mid-take` fault, and any spool writer running concurrently
+        // would hit it and exit early, truncating that test's file. The
+        // fault-inject `scoped()` guard alone is not enough because the other
+        // spool tests do not take it.
+        let _drain = spool_drain_guard();
         let _guard = fault_inject::scoped();
         // The spool is bounded to 60 s of audio; feed ~45 s so the crash
         // leaves a file over MIN_BYTES (100 KB) with room to spare.
