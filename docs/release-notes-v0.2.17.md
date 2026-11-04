@@ -526,29 +526,19 @@ Three things this run also exposed, recorded rather than fixed:
       warnings` exit 0, `cargo test --workspace` 2210 passed / 0 failed / 8
       ignored, `ipc_contract` 11 passed, `scripts/test-inventory.py --check` in
       sync at 77 suites, UI vitest 530 passed.
-- [ ] CI green on the pushed release branch: macOS arm64, macOS Intel
+- [x] CI green on the pushed release branch: macOS arm64, macOS Intel
       cross-compile, Windows, polish gate "not run" notice, aggregate green.
-      Proven on `2d9b85f`, run 41714573720: 16 of 16 jobs success, the only
-      skipped job is the weekly non-gate catalog URL check. The first run of
-      that commit failed Coverage and Benches with "The job was not acquired by
-      Runner of type hosted even after multiple attempts", a macOS arm64 runner
-      capacity problem, not a code failure; re-running the two failed jobs made
-      them green without re-running anything else. That run predates APPLE-3, so
-      the gate has to go green again on the new tip. Note that CI does not
-      compile the Swift bridge except on the Apple Silicon job, and does not run
-      `cargo doc`, so a green CI is not evidence that the Apple rows still
-      select different modules: the eval is.
-      Re-run on the SCRATCH-1 tip (2026-11-04): 10 of 16 jobs passed,
-      including the full `Lint (fmt + clippy)` job, the macOS release link, the
-      macOS Intel and Windows compile checks, and the core, speech and
-      inference test jobs. Five macOS-arm64 test-heavy jobs (desktop tests,
-      coverage, checks, polish gate, benches) were cancelled after about 30
-      minutes, and the aggregate gate failed only because those inputs were
-      cancelled. This is the same hosted-runner starvation as before, not a
-      code failure: the code that job would run is green locally on the same
-      tip (fmt clean, clippy `-D warnings` clean, 558 desktop lib tests, 21
-      core trace tests, 11 ipc_contract). The gate stays open until a push
-      lands on a window where the arm64 runners are not saturated.
+      **Green on the tip `0f0d06d`, run 41909706632 attempt 2: 16 of 16 gate
+      jobs success, the only skipped job is the weekly non-gate catalog URL
+      check.** The first attempt of that run had 15 jobs pass and one job,
+      `License check (cargo deny + npm)`, cancelled after about 22 minutes on a
+      `macos-latest` runner with an empty step list and no log, the same
+      hosted-runner starvation that has hit this branch before. Re-running just
+      the failed jobs on a fresh runner (attempt 2) made the License check
+      pass and the aggregate gate green. Note that CI does not compile the
+      Swift bridge except on the Apple Silicon job, and does not run `cargo
+      doc`, so a green CI is not evidence that the Apple rows still select
+      different modules: the eval is.
 - [ ] Live self-test with sound: 10 takes across the default model, Apple
       speech, one Omni model and one sherpa model; exact paste each time;
       Prompt Engineer and Command Mode one take each. **Run on 2026-11-04 against
