@@ -2550,6 +2550,40 @@ fn run_live_preview(
     }
 }
 
+/// Scores the engine's word rows against the dictionary and pack terms and
+/// rebuilds the take from them.
+///
+/// Split out of `Session::rescore_with_confidence`, which returns as soon as
+/// there is no Tauri state, so the empty-word-row shape it guards against was
+/// unreachable from a test while it was silently pasting nothing in production.
+fn rescore_or_keep(
+    raw: String,
+    words: &[teletype_speech::Word],
+    terms: &[teletype_core::rescoring::RescoreTerm],
+) -> String {
+    if terms.is_empty() {
+        return raw;
+    }
+    if words.is_empty() {
+        crate::log_entry(
+            crate::LogLevel::Info,
+            "rescoring skipped: engine returned no word rows, keeping transcript",
+        );
+        return raw;
+    }
+    let word_texts: Vec<String> = words.iter().map(|w| w.text.clone()).collect();
+    let word_confs: Vec<f32> = words.iter().map(|w| w.conf).collect();
+    let (rescored_words, replacements) =
+        teletype_core::rescoring::rescore_words(&word_texts, &word_confs, terms);
+    if !replacements.is_empty() {
+        crate::log_entry(
+            crate::LogLevel::Info,
+            format!("rescoring applied {} replacements", replacements.len()),
+        );
+    }
+    rescored_words.join(" ")
+}
+
 impl Session {
     fn state(&self) -> Option<tauri::State<'_, AppState>> {
         self.app.as_ref().map(|app| app.state::<AppState>())
@@ -8300,24 +8334,7 @@ impl Session {
             )
             .collect();
 
-        if terms.is_empty() {
-            return raw;
-        }
-
-        let word_texts: Vec<String> = words.iter().map(|w| w.text.clone()).collect();
-        let word_confs: Vec<f32> = words.iter().map(|w| w.conf).collect();
-
-        let (rescored_words, replacements) =
-            teletype_core::rescoring::rescore_words(&word_texts, &word_confs, &terms);
-
-        if !replacements.is_empty() {
-            crate::log_entry(
-                crate::LogLevel::Info,
-                format!("rescoring applied {} replacements", replacements.len()),
-            );
-        }
-
-        rescored_words.join(" ")
+        rescore_or_keep(raw, words, &terms)
     }
 
     fn arm_edit_check(&mut self, session: u64) {
@@ -9743,6 +9760,71 @@ fn headless_pipeline_run(raw: &str) -> teletype_core::pipeline::PipelineResult {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn term() -> teletype_core::rescoring::RescoreTerm {
+        teletype_core::rescoring::RescoreTerm {
+            text: "Teletype".into(),
+            aliases: vec!["teletype".into()],
+            weight: 1.0,
+        }
+    }
+
+    /// CMCP-1. Granite and Moonshine answer a live take with the text and no
+    /// word rows at all, while claiming `word_timings`. The delivery path
+    /// rebuilds the sentence from the word rows, so an empty word list joined
+    /// to "" and the take pasted nothing, with no error logged.
+    #[test]
+    fn a_wordless_engine_keeps_its_transcript() {
+        let kept = rescore_or_keep(
+            "the quick brown fox jumps over the lazy dog".into(),
+            &[],
+            &[term()],
+        );
+        assert_eq!(kept, "the quick brown fox jumps over the lazy dog");
+    }
+
+    #[test]
+    fn no_terms_skips_the_rebuild() {
+        let words = [
+            teletype_speech::Word {
+                text: "the".into(),
+                start_ms: 0,
+                end_ms: 100,
+                conf: 0.9,
+            },
+            teletype_speech::Word {
+                text: "quick".into(),
+                start_ms: 100,
+                end_ms: 200,
+                conf: 0.9,
+            },
+        ];
+        assert_eq!(rescore_or_keep("raw text".into(), &words, &[]), "raw text");
+    }
+
+    /// The guard above must not disable rescoring for the engines that do
+    /// report word rows: those still rebuild the take from them.
+    #[test]
+    fn word_rows_still_rebuild_the_take() {
+        let words = [
+            teletype_speech::Word {
+                text: "the".into(),
+                start_ms: 0,
+                end_ms: 100,
+                conf: 0.9,
+            },
+            teletype_speech::Word {
+                text: "quick".into(),
+                start_ms: 100,
+                end_ms: 200,
+                conf: 0.9,
+            },
+        ];
+        assert_eq!(
+            rescore_or_keep("raw text".into(), &words, &[term()]),
+            "the quick"
+        );
+    }
 
     /// A provider that counts calls to `transcribe` and `transcribe_detailed`
     /// so tests can pin the exact call sequence the retry logic produces.
