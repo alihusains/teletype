@@ -22,6 +22,15 @@
 //!   support the locale but the other one does, the bridge falls back to the
 //!   other module and still succeeds; `tta_module_used` then names the module
 //!   that actually ran.
+//! - `tta_transcribe` reserves the locale with `AssetInventory` before it
+//!   builds the module and releases the reservation when the take ends, so
+//!   `SpeechAnalyzer` never runs a module on an unallocated locale (Apple
+//!   logs that today and says it will become an error) and the five-locale
+//!   reservation cap stays free for other languages. Reserving is best
+//!   effort: a refused or throwing reservation is logged on the Swift side
+//!   (marker `tta-locale-reserve`) and the take runs anyway, exactly as
+//!   before, so no take that used to work starts failing and
+//!   `tta_last_error` stays empty for a take that produced a result.
 //! - `tta_module_used` returns the class name of the module the most recent
 //!   `tta_transcribe` selected, with the same return contract as
 //!   `tta_last_error` (0 when no transcribe has run yet).

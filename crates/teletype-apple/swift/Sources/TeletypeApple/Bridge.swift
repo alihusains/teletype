@@ -37,14 +37,37 @@
 // process-wide session state (locale reservation + last error); one live
 // instance is expected, exactly like TeletypeFluid.
 //
+// Locale allocation: `SpeechAnalyzer` refuses (today: logs) modules whose
+// locale was never reserved through `AssetInventory`, measured on macOS 27
+// Build 26A428 as "Cannot use modules with unallocated locales ... This will
+// be an error in a future release!", once per take on both catalog rows. Both
+// paths now reserve: `tta_install_assets` before it builds its install
+// request, `tta_transcribe` around the whole take (see
+// `withLocaleReservedForTake`). A take releases its reservation when it
+// finishes, so the `AssetInventory.maximumReservedLocales` cap stays free for
+// other languages, and a reservation that fails for any reason never fails a
+// take that would otherwise work.
+//
 // Models are OS-managed: `AssetInventory` downloads and stores them in
 // system storage, so there is no app download and no file on disk to check.
 //
 // SDK notes (verified against the macOS 27.0 swiftinterface):
 // - `AssetInventory`'s members are all static (`reserve(locale:)`,
-//   `release(reservedLocale:)`, `maximumReservedLocales`,
+//   `release(reservedLocale:)`, `maximumReservedLocales`, `reservedLocales`,
 //   `assetInstallationRequest(supporting:)`); there is no instance
 //   initializer. Locales are `Foundation.Locale` values.
+// - `reserve(locale:)` is `async throws -> Bool` (`@discardableResult`) and
+//   reservations are not refcounted. Measured behavior: true when this call
+//   took the slot, false when the locale is already reserved, throws when no
+//   slot is available (cap full: `SFSpeechErrorDomain` Code 11 "Too many
+//   allocated locales, 5 maximum") and when the locale cannot be reserved at
+//   all (Code 15 "Unable to reserve unsupported locale").
+//   `release(reservedLocale:)` is `async -> Bool`, false when nothing was
+//   reserved for that exact `Locale` value, so it must be called with the
+//   identifier `reserve` was given in canonical form ("en_US", not "en-US").
+//   There is no `allocate` API.
+// - `reservedLocales` is an async static property, so every read of it
+//   happens inside an async context.
 // - `supportedLocales` / `installedLocales` are async static properties, so
 //   every read of them happens inside an async context.
 // - `AssetInstallationRequest.downloadAndInstall()` takes no delegate;
@@ -79,6 +102,9 @@ private let moduleNameDictation = "DictationTranscriber"
 private final class BridgeState: @unchecked Sendable {
     let lock = NSLock()
     /// Locale reserved through `AssetInventory.reserve` during an install.
+    /// A `tta_transcribe` take keeps its own reservation in local scope
+    /// (`withLocaleReservedForTake`), so the two paths never release each
+    /// other's slot.
     var reservedLocale: String?
     var lastError = ""
     /// Module class name the most recent `tta_transcribe` selected (empty
@@ -189,6 +215,114 @@ private func runBlocking<T>(
     return try value.get()
 }
 
+// MARK: - Locale reservation
+
+/// The locale identifier the speech framework uses ("en_US"), given a
+/// caller-supplied tag that may be hyphenated BCP-47 ("en-US"). `Locale`
+/// keeps the separator it was handed and does not equate the two forms
+/// (`Locale(identifier: "en-US") != Locale(identifier: "en_US")`, verified on
+/// this host), so every reservation comparison is done on the normalized
+/// identifier.
+///
+/// Both `reserve` and `release` must be called with the normalized form.
+/// Measured on macOS 27 Build 26A428: `reserve(Locale("en-US"))` succeeds and
+/// the framework records the reservation as "en_US", but
+/// `release(Locale("en-US"))` returns false and leaves the slot taken, so a
+/// hyphenated caller tag would burn one of the five reservation slots for the
+/// rest of the process.
+private func normalizedLocaleIdentifier(_ locale: String) -> String {
+    locale.replacingOccurrences(of: "-", with: "_")
+}
+
+/// Give the locale one take's worth of allocation, run `body`, then release
+/// the allocation whether `body` returned or threw.
+///
+/// `tta_transcribe` needs this: building `SpeechTranscriber` /
+/// `DictationTranscriber` for a locale that was never reserved makes
+/// `SpeechAnalyzer` log "Cannot use modules with unallocated locales ... This
+/// will be an error in a future release!" (measured on macOS 27 Build 26A428:
+/// one line per take on both catalog rows, always right after a reservation
+/// this process did not get). The install path reserves for its own reasons
+/// and releases when the assets land, so a take must not borrow that pairing:
+/// it creates exactly its own reservation and frees it on every exit path, so
+/// the `maximumReservedLocales` cap stays free for the next language.
+///
+/// Reserving is best effort and must never turn a take that works today into a
+/// failure. Each case is logged under the `tta-locale-reserve` marker (at
+/// `notice`, the level `log show` keeps by default; `info` lines from this
+/// process never reached the store when measured):
+/// - `reserve` returns true: the take owns the reservation and releases it when
+///   the take ends, which is the case that removes the framework's complaint;
+/// - `reserve` returns false: the locale is already reserved. Reservations are
+///   not refcounted (measured: a second `reserve` of a held locale returns
+///   false), so this is how the take shares the install path's reservation
+///   instead of stealing it: it releases nothing on this path;
+/// - `reserve` throws: either the cap is full (`SFSpeechErrorDomain` Code 11
+///   "Too many allocated locales, 5 maximum", measured for the sixth distinct
+///   locale) or the locale is not reservable at all (Code 15 "Unable to
+///   reserve unsupported locale", measured for "xx_YY"). The take runs exactly
+///   as it does today, unallocated, and releases nothing. Only the framework's
+///   warning comes back.
+///
+/// - Returns: `body`'s result, unmodified; the result-code contract of the
+///   calling entry point is untouched, and a take that runs (allocated or
+///   not) still leaves `tta_last_error` empty.
+@available(macOS 26.0, *)
+private func withLocaleReservedForTake<Result>(
+    _ localeId: String,
+    _ body: () async throws -> Result
+) async rethrows -> Result {
+    let normalized = normalizedLocaleIdentifier(localeId)
+    // Reserved and released in normalized form (see
+    // `normalizedLocaleIdentifier`): a hyphenated release does not match and
+    // would leak the slot. The module itself is still built from the caller's
+    // tag by `resolveModule`, which is the APPLE-3 behavior.
+    let localeValue = Locale(identifier: normalized)
+    // Set only when this call created the reservation, so the release below
+    // can never free another path's reservation.
+    var ownsReservation = false
+    do {
+        let reserved = try await AssetInventory.reserve(locale: localeValue)
+        ownsReservation = reserved
+        if reserved {
+            log.notice("tta-locale-reserve: reserved '\(normalized, privacy: .public)' for the take")
+        } else {
+            log.notice(
+                "tta-locale-reserve: reserve('\(normalized, privacy: .public)') returned false, the locale is already reserved and this take does not own it"
+            )
+        }
+    } catch {
+        // A reservation that threw is not the take's problem: run it anyway,
+        // and record why it ran unallocated.
+        log.error(
+            "tta-locale-reserve: reserve('\(normalized, privacy: .public)') threw, the take runs unallocated: \(String(describing: error), privacy: .public)"
+        )
+    }
+    do {
+        let result = try await body()
+        if ownsReservation { await endTakeReservation(normalized, locale: localeValue) }
+        return result
+    } catch {
+        if ownsReservation { await endTakeReservation(normalized, locale: localeValue) }
+        throw error
+    }
+}
+
+/// Hand back the take's reservation so the locale cap stays free for the next
+/// language, and log what `AssetInventory` still holds afterwards. That list
+/// is the leak check: after the take it must be what it was before the take.
+@available(macOS 26.0, *)
+private func endTakeReservation(_ normalized: String, locale: Locale) async {
+    let released = await AssetInventory.release(reservedLocale: locale)
+    let remaining = await AssetInventory.reservedLocales.map {
+        normalizedLocaleIdentifier($0.identifier)
+    }.sorted()
+    let list = remaining.isEmpty ? "none" : remaining.joined(separator: ",")
+    log.notice(
+        "tta-locale-reserve: released '\(normalized, privacy: .public)' after the take (release returned \(released, privacy: .public)), reserved locales now: \(list, privacy: .public)"
+    )
+}
+
 /// The transcriber module for a locale when only the locale is known (the
 /// asset-install path, which prepares whatever the OS would use):
 /// `SpeechTranscriber` when it supports the locale, `DictationTranscriber`
@@ -227,7 +361,7 @@ private func resolveModule(
 ) async -> (module: any SpeechModule, name: String) {
     let wantsDictation = requested == moduleCodeDictation
     let localeValue = Locale(identifier: locale)
-    let normalized = locale.replacingOccurrences(of: "-", with: "_")
+    let normalized = normalizedLocaleIdentifier(locale)
     let transcriberLocales = Set(await SpeechTranscriber.supportedLocales.map(\.identifier))
     let dictationLocales = Set(await DictationTranscriber.supportedLocales.map(\.identifier))
     let requestedSupports = wantsDictation
@@ -511,7 +645,12 @@ public func tta_install_assets(
     let reporter = ProgressReporter(cb: cb, userData: userData)
     do {
         try runBlocking(installTimeout) {
-            let localeValue = Locale(identifier: localeId)
+            // Reserved and released in normalized form: the framework records
+            // `reserve(Locale("de-DE"))` as "de_DE" but
+            // `release(Locale("de-DE"))` then returns false, so releasing with
+            // the caller's raw tag leaks one of the five slots per install
+            // (measured on macOS 27 Build 26A428).
+            let localeValue = Locale(identifier: normalizedLocaleIdentifier(localeId))
             let reserved = try await AssetInventory.reserve(locale: localeValue)
             withBridge { bridge.reservedLocale = reserved ? localeId : nil }
             let module = await module(forLocale: localeId)
@@ -526,7 +665,11 @@ public func tta_install_assets(
             await pumpProgress(request.progress, reporter: reporter)
             try await install
             // The reservation is consumed once the assets are in; release it
-            // so the 5-locale cap stays free for other languages.
+            // so the 5-locale cap stays free for other languages. The pairing
+            // is unchanged from before: `reservedLocale` is set only when this
+            // install call created the reservation, so a take that already
+            // holds the locale (its `reserve` then returns false, so the take
+            // never records it as its own) is not affected by this release.
             if withBridge({ let l = bridge.reservedLocale; bridge.reservedLocale = nil; return l })
                 == localeId
             {
@@ -535,8 +678,11 @@ public func tta_install_assets(
         }
         return 0
     } catch {
-        // Leave the reservation in place on failure: the OS owns it and the
-        // next attempt re-reserves the same locale, which is idempotent.
+        // Leave the reservation in place on failure: the OS owns it until the
+        // process does. Measured note for anyone tempted to "fix" the retry:
+        // a second `reserve` of a held locale returns false rather than
+        // succeeding again, so the retry does not re-acquire the slot and this
+        // path keeps it for the life of the process.
         return fail(err, errCap, "installing assets for '\(localeId)' failed: \(error)")
     }
 }
@@ -571,12 +717,21 @@ public func tta_transcribe(
             let int16Data = samples.map {
                 Int16((max(-1.0, min(1.0, Double($0))) * 32_767.0).rounded())
             }
-            // Honor the caller's requested module (0 = transcriber,
-            // 1 = dictation) and record the one actually selected so
-            // `tta_module_used` can report a fallback to the caller.
-            let selection = await resolveModule(requested: module, locale: localeId)
-            withBridge { bridge.lastModuleUsed = selection.name }
-            return try await analyze(int16Data: int16Data, module: selection.module)
+            // Allocate the locale for the whole take (see
+            // `withLocaleReservedForTake`): a module built on a locale
+            // `AssetInventory` never reserved makes `SpeechAnalyzer` log
+            // "Cannot use modules with unallocated locales", which Apple
+            // states will become a hard error. The reservation is released
+            // when the take ends, and a reservation that cannot be made
+            // never fails the take.
+            return try await withLocaleReservedForTake(localeId) {
+                // Honor the caller's requested module (0 = transcriber,
+                // 1 = dictation) and record the one actually selected so
+                // `tta_module_used` can report a fallback to the caller.
+                let selection = await resolveModule(requested: module, locale: localeId)
+                withBridge { bridge.lastModuleUsed = selection.name }
+                return try await analyze(int16Data: int16Data, module: selection.module)
+            }
         }
         return Int32(copyOut(text, to: out, cap: outCap))
     } catch {
