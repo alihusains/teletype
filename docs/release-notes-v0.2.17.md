@@ -321,11 +321,19 @@ request" as "pool request", "auth module" as "off module" and "us east one" as
         `pubkey` and `createUpdaterArtifacts: true`, and the plugin is
         registered (`crates/teletype-desktop/src/lib.rs:604`) with a real
         "Check for updates" button in Settings
-        (`ui/src/settings/PermissionsUpdatesLicenseSections.tsx:205`). When the
-        manifest has no entry for the running platform, `check()` returns null
-        and the UI returns to idle: it does not claim you are up to date, and
-        the adjacent "Open releases page" button still works. So the failure is
-        silent rather than dishonest.
+        (`ui/src/settings/PermissionsUpdatesLicenseSections.tsx:205`). Read
+        from the source, not measured against a live empty manifest: when the
+        manifest has no entry for the running platform the plugin resolves
+        `check()` to null, the handler takes the `else` branch and puts the row
+        back to `idle` (`:213`-`:215`), which re-renders the same "Check for
+        updates" button. There is no "you are up to date" string anywhere in
+        that component, so the failure is silent rather than dishonest, and the
+        adjacent "Open releases page" button still works.
+        Verification limit: the idle-on-null behavior is a code read plus the
+        plugin's documented contract. I have not clicked the button against a
+        zero-platform manifest in a running app, and doing so needs a built app
+        plus network, so treat that one sentence as reasoned rather than
+        observed.
       - Why the tag now fails instead of publishing: the fail-closed gate
         (`if not platforms and not (not key_present and allow)`) and the
         `ALLOW_NO_UPDATER` escape hatch both landed in `7b0014d` on 2026-10-31,
