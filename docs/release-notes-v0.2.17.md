@@ -239,6 +239,12 @@ pending, so the plan's rule 1 blocks any ranking or default change based on them
       ipc_contract, UI tsc and vitest, test inventory.
 - [x] CI green on the pushed release branch: macOS arm64, macOS Intel
       cross-compile, Windows, polish gate "not run" notice, aggregate green.
+      Proven on `2d9b85f`, run 41714573720: 16 of 16 jobs success, the only
+      skipped job is the weekly non-gate catalog URL check. The first run of
+      that commit failed Coverage and Benches with "The job was not acquired by
+      Runner of type hosted even after multiple attempts", a macOS arm64 runner
+      capacity problem, not a code failure; re-running the two failed jobs made
+      them green without re-running anything else.
 - [ ] Live self-test with sound: 10 takes across the default model, Apple
       speech, one Omni model and one sherpa model; exact paste each time;
       Prompt Engineer and Command Mode one take each.
