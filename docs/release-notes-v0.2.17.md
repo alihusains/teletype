@@ -555,7 +555,15 @@ Three things this run also exposed, recorded rather than fixed:
       the transcribe.cpp rows returned nothing live (CMCP-1 above, now fixed and
       re-proven on the very recordings those takes produced), and Command Mode
       typed its command instead of running it (CMD-1). Streaming committed 0
-      segments on all 14. Not runnable on this host, and not claimed: the
+      segments on all 14.
+      **Re-verified headless on 2026-11-04 against the merged tip:** the
+      `--e2e` socket harness (an isolated instance pointed at the real models
+      dir via `TELETYPE_E2E_DATA_DIR`, a private config selecting
+      `granite-speech-470m-q4`) drove the real production take path from
+      `hello.wav` and returned `text: "hello"`, `error: null` on the
+      `transcribe_cpp` engine. That is the CMCP-1 failure mode (empty text on a
+      live take) closed on the actual take path, not just on the offline WAV
+      eval, so the transcribe.cpp leg of this gate is now covered. Not runnable on this host, and not claimed: the
       sherpa leg, because no sherpa row is offered on macOS (it is the Windows
       default), and the Omni leg, because no Omni row is in this release's
       catalog; the Prompt Engineer leg additionally needs a 700 MB Qwen3.5 2B
