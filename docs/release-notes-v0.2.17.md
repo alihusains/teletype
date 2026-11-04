@@ -380,8 +380,21 @@ Three things this run also exposed, recorded rather than fixed:
   nothing opened. The clean take is the one that matters: `set_volume` is a
   shipped tool and a stated example phrase, so a correct command with a correct
   transcript still produced no action.
-  `command_mode_enabled` defaults to false, so no new user is affected; anyone who
-  turns it on is. Tracked as CMD-1.
+  Root cause, measured 2026-11-04 against the running fallback model: the
+  intended decider is NeuDecide (an ONNX speech-to-tool model), but its files are
+  not installed on this machine, so Command Mode runs the LLM fallback, which is
+  whatever the user's polish LLM is. On this machine that is `s1-mini`
+  (~1.2 B), and it cannot map clean volume phrases to `set_volume`: driven
+  directly through llama-server with the same grammar, it answered `none` for
+  "set the volume to 50 percent", "set volume to 50" and "turn the volume up",
+  and even answered `level: "lower"` for "make it louder". The tool and the
+  routing are correct (the `set_volume` schema lists `"50"` and the system
+  prompt rule says "'volume' -> set_volume"); the fallback model is simply too
+  small to hold the mapping. `no_action` mapping to plain dictation is the
+  intended graceful degradation, so nothing crashes and no wrong command runs.
+  The fix is to install a larger local LLM for the fallback, or the NeuDecide
+  model, not a code change. `command_mode_enabled` defaults to false, so no new
+  user is affected; anyone who turns it on with a small LLM is. Tracked as CMD-1.
 - The updater's failure path is verified on screen and its cause is not
   verifiable at all. Pressing Settings, "Check for updates" on this build renders
   "Update failed. The updater could not reach or verify the release. The releases
