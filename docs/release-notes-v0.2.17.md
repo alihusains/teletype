@@ -528,17 +528,17 @@ Three things this run also exposed, recorded rather than fixed:
       sync at 77 suites, UI vitest 530 passed.
 - [x] CI green on the pushed release branch: macOS arm64, macOS Intel
       cross-compile, Windows, polish gate "not run" notice, aggregate green.
-      **Green on the tip `0f0d06d`, run 41909706632 attempt 2: 16 of 16 gate
-      jobs success, the only skipped job is the weekly non-gate catalog URL
-      check.** The first attempt of that run had 15 jobs pass and one job,
-      `License check (cargo deny + npm)`, cancelled after about 22 minutes on a
-      `macos-latest` runner with an empty step list and no log, the same
-      hosted-runner starvation that has hit this branch before. Re-running just
-      the failed jobs on a fresh runner (attempt 2) made the License check
-      pass and the aggregate gate green. Note that CI does not compile the
-      Swift bridge except on the Apple Silicon job, and does not run `cargo
-      doc`, so a green CI is not evidence that the Apple rows still select
-      different modules: the eval is.
+      **Green on the pushed tip `7b276c2`, run 41915366105: 16 of 16 gate jobs
+      success on the first attempt, the only skipped job the weekly non-gate
+      catalog URL check.** That is the commit the tag is cut from. The run
+      before it, `0f0d06d` (run 41909706632), needed an attempt-2 re-run of the
+      `License check (cargo deny + npm)` job, which had been cancelled after
+      about 22 minutes on a `macos-latest` runner with an empty step list and no
+      log, the same hosted-runner starvation that has hit this branch before;
+      re-running just that job on a fresh runner passed it. Note that CI does
+      not compile the Swift bridge except on the Apple Silicon job, and does not
+      run `cargo doc`, so a green CI is not evidence that the Apple rows still
+      select different modules: the eval is.
 - [ ] Live self-test with sound: 10 takes across the default model, Apple
       speech, one Omni model and one sherpa model; exact paste each time;
       Prompt Engineer and Command Mode one take each. **Run on 2026-11-04 against
