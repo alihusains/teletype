@@ -2,8 +2,14 @@
 //! system action (open an app, set brightness, mute the speaker, etc.).
 //!
 //! Each action is implemented with the simplest platform API available
-//! on macOS. Actions that require confirmation (destructive operations)
-//! are not executed here — the caller must check the risk level first.
+//! on macOS. There is no confirmation step anywhere in this module, and no
+//! caller adds one: the only gate is the `settings.command_mode_enabled`
+//! master switch checked by the dictation pipeline before it calls
+//! [`execute`], and that switch is off by default. A command that resolves
+//! to `send_message` sends, with no preview, exactly as the Command Mode
+//! screen states ("Sends immediately", "No confirmation step"). Do not read
+//! this paragraph as a safety net that exists; a per-tool risk check is a
+//! product decision, not current behavior.
 //!
 //! P2.7: arguments are treated as untrusted. Commands can be produced by
 //! the LLM fallback (`teletype_inference::command_llm`) or transcribed from

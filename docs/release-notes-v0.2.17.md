@@ -277,6 +277,31 @@ request" as "pool request", "auth module" as "off module" and "us east one" as
 - The spoken voice-command text is no longer written to the app log on the
   selection command path (PRIV-1, bbb152b). The log now records only the
   command name and a length count, never the dictated text.
+- Command Mode has no per-tool confirmation, and `send_message` really does
+  send. Verified by reading the call path rather than trusting the module doc:
+  the only gate is the `settings.command_mode_enabled` master switch at
+  `crates/teletype-desktop/src/dictation.rs:6731`, and once that is on,
+  `crates/teletype-desktop/src/dictation.rs:6757` calls
+  `command_executor::execute` directly with no preview step. There is no
+  risk-level concept anywhere in the Rust sources: searching the workspace for
+  `risk_level`, `RiskLevel` and `dangerous` returns nothing outside an unrelated
+  test name.
+  Two facts keep this at a documented limit rather than a blocker. The switch
+  ships off (`crates/teletype-desktop/src/commands.rs:1198`), a test asserts
+  "default off" (`:1659`), and a settings payload missing the key also lands on
+  off (`:1674`). And the Command Mode screen does not hide the consequence: it
+  lists the tool as "Sends immediately" with the note "No confirmation step"
+  (`ui/src/screens/CommandModeScreen.tsx:101`-`:102`), so a user who enables it
+  is told what they are enabling. Wrong-recipient odds are reduced but not
+  removed by the contacts lookup, which errors out on zero, ambiguous, or
+  numberless matches (`command_executor.rs:463`, `:492`, `:498`).
+  The module header used to claim the opposite ("the caller must check the risk
+  level first"). That sentence was false and has been replaced with what the
+  code actually does, because a comment asserting a safety net that no caller
+  implements is how the next person ships it believing the net is there.
+  Open product decision for Ali, not something I will decide by patching: add a
+  confirm step for outward tools (`send_message` especially), or accept
+  immediate send as the design for an opt-in feature.
 
 ## Release gates
 
