@@ -61,6 +61,9 @@ jobs:
     permissions:
       contents: read
       actions: read
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      ALLOW_NO_UPDATER: ${{ vars.ALLOW_NO_UPDATER }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,6 +95,36 @@ jobs:
             exit 1
           fi
           echo "Commit ${GITHUB_SHA} is reachable from a release branch."
+      - name: Preflight - updater signing posture
+        # F-04 makes a zero-platform updater manifest a hard failure, but the
+        # publish job only discovers it after the arm64, Intel and Windows build
+        # jobs have all finished. That failure is not a risk in this case, it is
+        # certain: the build jobs clear the signing env when the key is absent,
+        # so no `.sig` artifact is ever produced, so every manifest entry is
+        # skipped, so `platforms` is empty. Catch it here, on a cheap Linux
+        # runner in seconds, instead of after a full set of macOS build minutes.
+        #
+        # The Apple certificate and notarization credentials are deliberately
+        # not gated: the header of this file documents that an unsigned build
+        # that reaches users beats a signed build that never ships.
+        run: |
+          set -euo pipefail
+          KEY="${TAURI_SIGNING_PRIVATE_KEY:-}"
+          KEY_TRIMMED="$(printf '%s' "$KEY" | tr -d '[:space:]')"
+          ALLOW="${ALLOW_NO_UPDATER:-}"
+          if [ -z "$KEY_TRIMMED" ]; then
+            if [ "$ALLOW" = "true" ]; then
+              echo "::notice::No TAURI_SIGNING_PRIVATE_KEY and ALLOW_NO_UPDATER=true. This release publishes unsigned with a zero-platform updater manifest (in-app updates off) and stays a pre-release."
+              exit 0
+            fi
+            echo "::error::No usable TAURI_SIGNING_PRIVATE_KEY secret (absent or empty) and the repository variable ALLOW_NO_UPDATER is not 'true'. All three build jobs would run and then the publish job would refuse the release for having a zero-platform manifest. Either add the secret, or set ALLOW_NO_UPDATER=true to say you mean to ship an unsigned pre-release."
+            exit 1
+          fi
+          if ! printf '%s\n' "$KEY" | head -1 | grep -q '^#'; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is missing its '#' comment header line. The key must be pasted in full, including the comment line at the top (tauri signer generate)."
+            exit 1
+          fi
+          echo "Updater signing key present and well-formed; this release can produce a signed updater manifest."
 
   release-macos:
     name: Build & publish macOS release
