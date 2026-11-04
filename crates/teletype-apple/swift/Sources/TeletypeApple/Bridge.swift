@@ -8,8 +8,18 @@
 //   tta_installed_locales(out, outCap) -> Int32
 //   tta_supported_locales(out, outCap) -> Int32
 //   tta_install_assets(locale, cb, userData, err, errCap) -> Int32
-//   tta_transcribe(pcm, n, locale, out, outCap, err, errCap) -> Int32
+//   tta_transcribe(pcm, n, locale, module, out, outCap, err, errCap) -> Int32
 //   tta_last_error(out, outCap) -> Int32
+//   tta_module_used(out, outCap) -> Int32
+//
+// `tta_transcribe` module codes (mirrored in the Rust extern block):
+// 0 = SpeechTranscriber, 1 = DictationTranscriber. Codes other than 1 are
+// treated as 0. When the requested module does not support the locale but
+// the other one does, the bridge falls back to the other module and still
+// succeeds; `tta_module_used` reports the class name of the module the last
+// tta_transcribe actually selected ("SpeechTranscriber" or
+// "DictationTranscriber", the same strings the Rust side displays), so the
+// caller can log the substitution.
 //
 // Return contract: 0 = success (the output buffer is empty, valid for
 // `tta_last_error` when there is no error); a positive number is the byte
@@ -53,6 +63,17 @@ private let installTimeout: TimeInterval = 10 * 60
 /// out; the research smoke test measured a median of 88 ms per clip.
 private let transcribeTimeout: TimeInterval = 60
 
+/// Wire code for `tta_transcribe`'s `module` parameter that selects
+/// `DictationTranscriber`; 0 (and any other code) selects
+/// `SpeechTranscriber`. Mirrored in the Rust extern block in
+/// `src/bridge.rs`; change both together.
+private let moduleCodeDictation: Int32 = 1
+
+/// The class names recorded by `tta_module_used`; they must equal the
+/// `AppleModule` `Display` strings on the Rust side.
+private let moduleNameTranscriber = "SpeechTranscriber"
+private let moduleNameDictation = "DictationTranscriber"
+
 // MARK: - Process-wide session state
 
 private final class BridgeState: @unchecked Sendable {
@@ -60,6 +81,9 @@ private final class BridgeState: @unchecked Sendable {
     /// Locale reserved through `AssetInventory.reserve` during an install.
     var reservedLocale: String?
     var lastError = ""
+    /// Module class name the most recent `tta_transcribe` selected (empty
+    /// until the first transcribe call).
+    var lastModuleUsed = ""
 }
 
 private let bridge = BridgeState()
@@ -165,10 +189,13 @@ private func runBlocking<T>(
     return try value.get()
 }
 
-/// The transcriber module for a locale: `SpeechTranscriber` when it supports
-/// the locale, `DictationTranscriber` when only it does (the "older devices"
-/// module covers 9 extra locales, mostly European). The check is async
-/// because `supportedLocales` is an async property.
+/// The transcriber module for a locale when only the locale is known (the
+/// asset-install path, which prepares whatever the OS would use):
+/// `SpeechTranscriber` when it supports the locale, `DictationTranscriber`
+/// when only it does (the "older devices" module covers extra locales, mostly
+/// European and Indic). The check is async because `supportedLocales` is an
+/// async property. `tta_transcribe` does NOT use this; it honors the caller's
+/// requested module through `resolveModule(requested:locale:)`.
 @available(macOS 26.0, *)
 private func module(forLocale locale: String) async -> any SpeechModule {
     let localeValue = Locale(identifier: locale)
@@ -181,6 +208,68 @@ private func module(forLocale locale: String) async -> any SpeechModule {
         return DictationTranscriber(locale: localeValue, preset: .shortDictation)
     }
     return SpeechTranscriber(locale: localeValue, preset: .transcription)
+}
+
+/// The module `tta_transcribe` actually uses: the requested module when it
+/// supports the locale; otherwise the other module when only it does (the
+/// substitution is logged and recorded for `tta_module_used`, never an
+/// error); otherwise the transcriber, keeping the historical behavior where
+/// the failure surfaces from `prepareToAnalyze`. Framework identifiers use
+/// underscores ("en_US") while callers may pass hyphenated BCP-47 tags
+/// ("en-US"), so the membership test normalizes the requested locale.
+///
+/// - Returns: the module and its class name (the `AppleModule` `Display`
+///   string on the Rust side).
+@available(macOS 26.0, *)
+private func resolveModule(
+    requested: Int32,
+    locale: String
+) async -> (module: any SpeechModule, name: String) {
+    let wantsDictation = requested == moduleCodeDictation
+    let localeValue = Locale(identifier: locale)
+    let normalized = locale.replacingOccurrences(of: "-", with: "_")
+    let transcriberLocales = Set(await SpeechTranscriber.supportedLocales.map(\.identifier))
+    let dictationLocales = Set(await DictationTranscriber.supportedLocales.map(\.identifier))
+    let requestedSupports = wantsDictation
+        ? dictationLocales.contains(normalized)
+        : transcriberLocales.contains(normalized)
+    if requestedSupports {
+        if wantsDictation {
+            return (
+                DictationTranscriber(locale: localeValue, preset: .shortDictation),
+                moduleNameDictation
+            )
+        }
+        return (
+            SpeechTranscriber(locale: localeValue, preset: .transcription),
+            moduleNameTranscriber
+        )
+    }
+    let otherSupports = wantsDictation
+        ? transcriberLocales.contains(normalized)
+        : dictationLocales.contains(normalized)
+    if otherSupports {
+        let otherName = wantsDictation ? moduleNameTranscriber : moduleNameDictation
+        log.info(
+            "module code \(requested, privacy: .public) does not support '\(normalized, privacy: .public)'; falling back to \(otherName, privacy: .public)"
+        )
+        if wantsDictation {
+            return (
+                SpeechTranscriber(locale: localeValue, preset: .transcription),
+                moduleNameTranscriber
+            )
+        }
+        return (
+            DictationTranscriber(locale: localeValue, preset: .shortDictation),
+            moduleNameDictation
+        )
+    }
+    // Neither module supports the locale: keep the transcriber default so
+    // the take fails with the same `prepareToAnalyze` error as before.
+    return (
+        SpeechTranscriber(locale: localeValue, preset: .transcription),
+        moduleNameTranscriber
+    )
 }
 
 /// Run the analyzer over the Int16 samples and return the final transcript text.
@@ -457,6 +546,7 @@ public func tta_transcribe(
     _ pcm: UnsafePointer<Float>,
     _ sampleCount: Int,
     _ locale: UnsafePointer<CChar>,
+    _ module: Int32,
     _ out: UnsafeMutablePointer<CChar>,
     _ outCap: Int,
     _ err: UnsafeMutablePointer<CChar>,
@@ -481,8 +571,12 @@ public func tta_transcribe(
             let int16Data = samples.map {
                 Int16((max(-1.0, min(1.0, Double($0))) * 32_767.0).rounded())
             }
-            let module = await module(forLocale: localeId)
-            return try await analyze(int16Data: int16Data, module: module)
+            // Honor the caller's requested module (0 = transcriber,
+            // 1 = dictation) and record the one actually selected so
+            // `tta_module_used` can report a fallback to the caller.
+            let selection = await resolveModule(requested: module, locale: localeId)
+            withBridge { bridge.lastModuleUsed = selection.name }
+            return try await analyze(int16Data: int16Data, module: selection.module)
         }
         return Int32(copyOut(text, to: out, cap: outCap))
     } catch {
@@ -495,4 +589,14 @@ public func tta_last_error(_ out: UnsafeMutablePointer<CChar>, _ outCap: Int) ->
     let message = withBridge { bridge.lastError }
     if message.isEmpty { return 0 }
     return Int32(copyOut(message, to: out, cap: outCap))
+}
+
+/// The module class name the most recent `tta_transcribe` actually selected.
+/// Same return contract as `tta_last_error`; returns 0 before the first
+/// transcribe call.
+@_cdecl("tta_module_used")
+public func tta_module_used(_ out: UnsafeMutablePointer<CChar>, _ outCap: Int) -> Int32 {
+    let name = withBridge { bridge.lastModuleUsed }
+    if name.isEmpty { return 0 }
+    return Int32(copyOut(name, to: out, cap: outCap))
 }

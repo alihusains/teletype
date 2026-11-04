@@ -15,7 +15,7 @@
 //!   10 minute timeout).
 //! - **Everything else** (Windows, Linux, Intel macOS, macOS builds without
 //!   the Swift toolchain): the crate compiles a stub provider that reports
-//!   the platform requirement from [`SpeechProvider::load`]. The crate never
+//!   the platform requirement from [`teletype_speech::SpeechProvider::load`]. The crate never
 //!   silently pretends to work.
 //!
 //! All bridge calls block the calling thread, and the first `load` may
@@ -49,14 +49,21 @@ pub use unsupported::{
 pub enum AppleModule {
     /// `SpeechTranscriber`, the general-purpose module (45 locales).
     Transcriber,
-    /// `DictationTranscriber`, the "older devices" module (54 locales, the
-    /// 9 extra ones mostly European) the catalog offers as a second row.
+    /// `DictationTranscriber`, the "older devices" module the catalog offers
+    /// as a second row. Measured on macOS 27 (Build 26A428): 54 locales, 23
+    /// of them not covered by `SpeechTranscriber` (European plus Arabic,
+    /// Hebrew, Indonesian, Malay, Thai and Vietnamese). It also covers
+    /// `en_US`, so the two rows run genuinely different models for English.
     Dictation,
 }
 
 impl AppleModule {
-    /// The bridge's wire name (`tta_transcribe` takes the locale; this selects
-    /// which module the Swift side picks when both support it).
+    /// The stable short name used for settings and logging. This is not the
+    /// FFI argument: `tta_transcribe` takes the integer code from
+    /// `bridge::module_wire_value` alongside the locale, and the bridge
+    /// honors that request unless only the other module covers the locale.
+    /// Distinct from the `Display` name, which is the framework class name
+    /// the bridge reports back through `tta_module_used`.
     pub fn as_str(self) -> &'static str {
         match self {
             AppleModule::Transcriber => "transcriber",

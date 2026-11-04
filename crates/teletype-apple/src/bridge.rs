@@ -13,11 +13,18 @@
 //!   (network, bounded by a 10 minute timeout in Swift); progress is
 //!   reported through the C callback.
 //! - `tta_transcribe` converts 16 kHz mono f32 samples to Int16
-//!   `AVAudioPCMBuffer`, runs `SpeechAnalyzer` with the transcriber module,
-//!   and returns the transcript. A positive return is the byte count written
-//!   (including the NUL) when the text fits, or the needed capacity when it
-//!   does not. The caller compares the return with the capacity to tell the
-//!   two cases apart.
+//!   `AVAudioPCMBuffer`, runs `SpeechAnalyzer` with the requested module
+//!   (`0` = SpeechTranscriber, `1` = DictationTranscriber; any other code is
+//!   treated as `0`), and returns the transcript. A positive return is the
+//!   byte count written (including the NUL) when the text fits, or the needed
+//!   capacity when it does not. The caller compares the return with the
+//!   capacity to tell the two cases apart. When the requested module does not
+//!   support the locale but the other one does, the bridge falls back to the
+//!   other module and still succeeds; `tta_module_used` then names the module
+//!   that actually ran.
+//! - `tta_module_used` returns the class name of the module the most recent
+//!   `tta_transcribe` selected, with the same return contract as
+//!   `tta_last_error` (0 when no transcribe has run yet).
 //! - `tta_last_error` returns the last error. A positive return is the byte
 //!   count written (including the NUL) when the message fits, or the needed
 //!   capacity when it does not. Returns 0 when there is no error.
@@ -47,16 +54,36 @@ extern "C" {
         err: *mut c_char,
         err_cap: usize,
     ) -> i32;
+    /// Transcribe with the requested module: `module` is the wire code from
+    /// [`module_wire_value`] (0 = transcriber, 1 = dictation, documented in
+    /// `swift/Sources/TeletypeApple/Bridge.swift`); codes other than 1 are
+    /// treated as 0 there.
     fn tta_transcribe(
         pcm: *const f32,
         sample_count: usize,
         locale: *const c_char,
+        module: i32,
         out: *mut c_char,
         out_cap: usize,
         err: *mut c_char,
         err_cap: usize,
     ) -> i32;
     fn tta_last_error(out: *mut c_char, out_cap: usize) -> i32;
+    /// The module class name the most recent `tta_transcribe` actually
+    /// used; same return contract as `tta_last_error`, 0 before the first
+    /// transcribe.
+    fn tta_module_used(out: *mut c_char, out_cap: usize) -> i32;
+}
+
+/// Stable wire encoding of [`AppleModule`] for `tta_transcribe`'s `module`
+/// parameter: 0 = transcriber, 1 = dictation. Mirrored in the Swift
+/// `@_cdecl` signature (`Bridge.swift`); change both together. Any other
+/// code is treated as 0 by the Swift side.
+fn module_wire_value(module: AppleModule) -> i32 {
+    match module {
+        AppleModule::Transcriber => 0,
+        AppleModule::Dictation => 1,
+    }
 }
 
 /// The installed-locale asset status the app reports to the UI.
@@ -165,6 +192,32 @@ fn read_transcript(
                     message
                 }));
             }
+        }
+    }
+}
+
+/// Module class name the most recent bridge transcribe actually used (empty
+/// when none has run). Mirrors [`last_error`]'s read loop against the same
+/// return contract.
+fn module_used() -> String {
+    let mut capacity = 1024usize;
+    loop {
+        let mut buffer = vec![0u8; capacity];
+        // SAFETY: `buffer` is a valid writable region and its length is
+        // passed as the capacity.
+        let code = unsafe { tta_module_used(buffer.as_mut_ptr().cast::<c_char>(), buffer.len()) };
+        match code {
+            0 => return String::new(),
+            code if code > 0 && (code as usize) <= buffer.len() => {
+                return decode_buffer(&buffer);
+            }
+            code if code > 0 => {
+                capacity = code as usize;
+                if capacity > 1 << 20 {
+                    return String::new();
+                }
+            }
+            _ => return String::new(),
         }
     }
 }
@@ -302,6 +355,47 @@ pub fn install_assets(locale: &str, progress: &mut dyn FnMut(f64)) -> Result<(),
     }))
 }
 
+/// What one bridge transcribe produced: the transcript text plus the module
+/// the bridge reports it actually used (`module_used`, empty when the bridge
+/// does not say) and whether that differs from the requested module
+/// (`fell_back`).
+struct Transcription {
+    text: String,
+    module_used: String,
+    fell_back: bool,
+}
+
+/// One transcribe for a requested module: map it to its wire code, run the
+/// bridge through `call` until the result fits, then ask `used` which module
+/// the bridge selected. The production path passes the real FFI functions;
+/// the contract tests pass Swift-behaving mocks so the requested-module
+/// mapping and the fallback reporting are pinned without the framework.
+fn transcribe_with_bridge(
+    module: AppleModule,
+    samples: &[f32],
+    locale: &str,
+    prefix: &str,
+    call: &impl Fn(&[f32], &str, i32, *mut c_char, usize, *mut c_char, usize) -> i32,
+    used: &impl Fn() -> String,
+) -> Result<Transcription, SpeechError> {
+    let module_value = module_wire_value(module);
+    let bridge = |samples: &[f32],
+                  locale: &str,
+                  out: *mut c_char,
+                  cap: usize,
+                  err: *mut c_char,
+                  err_cap: usize|
+     -> i32 { call(samples, locale, module_value, out, cap, err, err_cap) };
+    let text = read_transcript(&bridge, samples, locale, prefix)?;
+    let module_used = used();
+    let fell_back = !module_used.is_empty() && module_used != module.to_string();
+    Ok(Transcription {
+        text,
+        module_used,
+        fell_back,
+    })
+}
+
 /// Apple's on-device speech provider.
 ///
 /// The bridge owns one process-wide session, so use one live instance at a
@@ -312,6 +406,13 @@ pub struct AppleSpeech {
     module: AppleModule,
     loaded: bool,
     locale: Option<String>,
+    /// The module class name the last successful `transcribe` actually used,
+    /// as reported by the bridge (None before the first transcribe or on
+    /// bridges that report nothing).
+    last_module_used: Option<String>,
+    /// True when the last successful `transcribe` could not honor
+    /// [`AppleSpeech::module`] and the bridge fell back to the other module.
+    last_fallback: bool,
 }
 
 impl AppleSpeech {
@@ -322,12 +423,31 @@ impl AppleSpeech {
             module,
             loaded: false,
             locale: None,
+            last_module_used: None,
+            last_fallback: false,
         }
     }
 
     /// The requested transcriber module.
     pub fn module(&self) -> AppleModule {
         self.module
+    }
+
+    /// The module class name (`"SpeechTranscriber"` or
+    /// `"DictationTranscriber"`) the last successful `transcribe` actually
+    /// used, when the bridge reported it. Differs from the requested module's
+    /// `Display` name exactly when the bridge fell back (see
+    /// [`AppleSpeech::last_fallback`]); callers can log it so the
+    /// substitution is visible.
+    pub fn last_module_used(&self) -> Option<&str> {
+        self.last_module_used.as_deref()
+    }
+
+    /// True when the last successful `transcribe` substituted the other
+    /// module for the requested one because the requested module does not
+    /// support the locale. The substitution is never an error.
+    pub fn last_fallback(&self) -> bool {
+        self.last_fallback
     }
 
     /// Whether the provider is loaded and the bridge reports the locale as
@@ -482,12 +602,13 @@ impl SpeechProvider for AppleSpeech {
         let locale_c = CString::new(locale.as_str())
             .map_err(|_| SpeechError::Transcribe("locale contains a NUL byte".to_string()))?;
         let locale_ptr = locale_c.as_ptr();
-        let bridge = |samples: &[f32],
-                      _locale: &str,
-                      out: *mut c_char,
-                      cap: usize,
-                      err: *mut c_char,
-                      err_cap: usize|
+        let call = |samples: &[f32],
+                    _locale: &str,
+                    module_value: i32,
+                    out: *mut c_char,
+                    cap: usize,
+                    err: *mut c_char,
+                    err_cap: usize|
          -> i32 {
             // SAFETY: `samples`, `out` and `err` are valid regions whose
             // lengths are passed as their capacities, and `locale_c` is a
@@ -497,6 +618,7 @@ impl SpeechProvider for AppleSpeech {
                     samples.as_ptr(),
                     samples.len(),
                     locale_ptr,
+                    module_value,
                     out,
                     cap,
                     err,
@@ -504,7 +626,21 @@ impl SpeechProvider for AppleSpeech {
                 )
             }
         };
-        read_transcript(&bridge, samples, locale.as_str(), "Apple speech")
+        let result = transcribe_with_bridge(
+            self.module,
+            samples,
+            locale.as_str(),
+            "Apple speech",
+            &call,
+            &module_used,
+        )?;
+        self.last_module_used = if result.module_used.is_empty() {
+            None
+        } else {
+            Some(result.module_used)
+        };
+        self.last_fallback = result.fell_back;
+        Ok(result.text)
     }
 
     fn transcribe_detailed(
@@ -848,5 +984,277 @@ mod tests {
             calls.load(std::sync::atomic::Ordering::SeqCst) <= 2,
             "the limit must be hit without an unbounded loop"
         );
+    }
+
+    /// The selection table of the fixed Swift `resolveModule` (Bridge.swift),
+    /// reimplemented here over mock locale sets: the requested module when it
+    /// covers the locale, otherwise the other module when it covers it
+    /// (recorded as a fallback), otherwise the transcriber default that keeps
+    /// the historical error path. Like the Swift side it only ever sees the
+    /// integer wire code.
+    fn simulated_swift_selection(
+        module_value: i32,
+        locale: &str,
+        transcriber_locales: &[&str],
+        dictation_locales: &[&str],
+    ) -> &'static str {
+        let normalized = locale.replace('-', "_");
+        let wants_dictation = module_value == 1;
+        let covers = |list: &[&str]| list.contains(&normalized.as_str());
+        let requested_supports = if wants_dictation {
+            covers(dictation_locales)
+        } else {
+            covers(transcriber_locales)
+        };
+        if requested_supports {
+            return if wants_dictation {
+                "DictationTranscriber"
+            } else {
+                "SpeechTranscriber"
+            };
+        }
+        let other_supports = if wants_dictation {
+            covers(transcriber_locales)
+        } else {
+            covers(dictation_locales)
+        };
+        if other_supports {
+            return if wants_dictation {
+                "SpeechTranscriber"
+            } else {
+                "DictationTranscriber"
+            };
+        }
+        "SpeechTranscriber"
+    }
+
+    /// A mock `tta_transcribe` that behaves like the fixed Swift bridge: it
+    /// reads the module wire code exactly as `resolveModule` does, records
+    /// the class name it selected in `used` (the way `tta_module_used` does),
+    /// appends every received code to `seen`, and returns
+    /// "<selected module>:<locale>" text so a test can prove the *requested*
+    /// module drove the selection rather than the locale alone. Call counts
+    /// follow the same result-code contract as the real bridge.
+    fn swift_like_transcribe_responder<'a>(
+        transcriber_locales: &'a [&'a str],
+        dictation_locales: &'a [&'a str],
+        seen: &'a std::sync::Mutex<Vec<i32>>,
+        used: &'a std::sync::Mutex<String>,
+    ) -> impl Fn(&[f32], &str, i32, *mut c_char, usize, *mut c_char, usize) -> i32 + 'a {
+        move |_samples, locale, module_value, out, cap, _err, _err_cap| {
+            seen.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(module_value);
+            let name = simulated_swift_selection(
+                module_value,
+                locale,
+                transcriber_locales,
+                dictation_locales,
+            );
+            *used
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = name.to_string();
+            let text = format!("{name}:{locale}");
+            let bytes = text.into_bytes();
+            let needed = bytes.len() + 1;
+            if cap < needed {
+                return needed as i32;
+            }
+            // SAFETY: the caller guarantees `out` is valid for `cap` bytes
+            // and `cap >= needed`.
+            unsafe { std::ptr::write_bytes(out.cast::<u8>(), 0, needed) };
+            // SAFETY: same guarantee; `bytes` lives until the call returns.
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast::<u8>(), bytes.len()) };
+            needed as i32
+        }
+    }
+
+    /// The module argument contract: the requested provider module must
+    /// reach the bridge as the documented wire code (dictation 1,
+    /// transcriber 0) and that code must drive the Swift-side selection,
+    /// which this mock answers with the selected module's own name in the
+    /// returned text. Swapping the codes or dropping the argument (the
+    /// original defect: locale-only selection that always answered
+    /// "SpeechTranscriber") breaks these assertions, so the test cannot pass
+    /// by merely re-reading a constant the provider was constructed with.
+    #[test]
+    fn transcribe_threads_the_requested_module_to_the_selection() {
+        // Both modules cover en_US (measured on macOS 27), so each row must
+        // get its own module: the only way the mock answers
+        // "DictationTranscriber" is a wire code of 1.
+        let transcriber_locales = ["en_US", "bn_IN"];
+        let dictation_locales = ["en_US"];
+        let seen = std::sync::Mutex::new(Vec::new());
+        let used = std::sync::Mutex::new(String::new());
+        let responder =
+            swift_like_transcribe_responder(&transcriber_locales, &dictation_locales, &seen, &used);
+        let read_used = || {
+            used.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        };
+
+        let dictation = transcribe_with_bridge(
+            AppleModule::Dictation,
+            &[0.1; 160],
+            "en_US",
+            "Apple speech",
+            &responder,
+            &read_used,
+        )
+        .expect("a supported dictation request must succeed");
+        assert_eq!(dictation.text, "DictationTranscriber:en_US");
+        assert_eq!(
+            *seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            vec![1],
+            "the dictation row must send wire code 1"
+        );
+        assert_eq!(dictation.module_used, "DictationTranscriber");
+        assert!(!dictation.fell_back);
+
+        let transcriber = transcribe_with_bridge(
+            AppleModule::Transcriber,
+            &[0.1; 160],
+            "en_US",
+            "Apple speech",
+            &responder,
+            &read_used,
+        )
+        .expect("a supported transcriber request must succeed");
+        assert_eq!(transcriber.text, "SpeechTranscriber:en_US");
+        assert_eq!(
+            *seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            vec![1, 0],
+            "the transcriber row must send wire code 0"
+        );
+        assert_eq!(transcriber.module_used, "SpeechTranscriber");
+        assert!(!transcriber.fell_back);
+    }
+
+    /// The fallback contract: requesting dictation for a locale only the
+    /// transcriber covers (bn_IN is real: on macOS 27 it is in
+    /// `SpeechTranscriber.supportedLocales` and not in
+    /// `DictationTranscriber.supportedLocales`) must (a) still produce text
+    /// and (b) report that the transcriber was used, flagged as a fallback.
+    #[test]
+    fn dictation_falls_back_to_the_transcriber_and_reports_it() {
+        let transcriber_locales = ["en_US", "bn_IN"];
+        let dictation_locales = ["en_US"];
+        let seen = std::sync::Mutex::new(Vec::new());
+        let used = std::sync::Mutex::new(String::new());
+        let responder =
+            swift_like_transcribe_responder(&transcriber_locales, &dictation_locales, &seen, &used);
+        let read_used = || {
+            used.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        };
+
+        let result = transcribe_with_bridge(
+            AppleModule::Dictation,
+            &[0.1; 160],
+            "bn_IN",
+            "Apple speech",
+            &responder,
+            &read_used,
+        )
+        .expect("a fallback must never fail the take");
+        assert_eq!(
+            result.text, "SpeechTranscriber:bn_IN",
+            "the take must still produce text"
+        );
+        assert_eq!(
+            *seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            vec![1],
+            "the request still went out as the dictation code"
+        );
+        assert_eq!(result.module_used, "SpeechTranscriber");
+        assert!(
+            result.fell_back,
+            "the substitution must be flagged for the caller to log"
+        );
+    }
+
+    /// The fallback is symmetric: a transcriber request for a locale only
+    /// dictation covers (vi_VN on macOS 27) must succeed on the dictation
+    /// module and report it.
+    #[test]
+    fn transcriber_falls_back_to_dictation_and_reports_it() {
+        let transcriber_locales = ["en_US"];
+        let dictation_locales = ["en_US", "vi_VN"];
+        let used = std::sync::Mutex::new(String::new());
+        let seen = std::sync::Mutex::new(Vec::new());
+        let responder =
+            swift_like_transcribe_responder(&transcriber_locales, &dictation_locales, &seen, &used);
+        let read_used = || {
+            used.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone()
+        };
+
+        let result = transcribe_with_bridge(
+            AppleModule::Transcriber,
+            &[0.1; 160],
+            "vi_VN",
+            "Apple speech",
+            &responder,
+            &read_used,
+        )
+        .expect("a fallback must never fail the take");
+        assert_eq!(result.text, "DictationTranscriber:vi_VN");
+        assert_eq!(result.module_used, "DictationTranscriber");
+        assert!(result.fell_back);
+    }
+
+    /// End-to-end against the real Swift bridge on a host that has the
+    /// framework: after a transcribe the bridge must report the module it
+    /// actually selected through `tta_module_used`, and the name must match
+    /// the `AppleModule` `Display` string exactly (the cross-language
+    /// contract the fallback detection relies on). On a host where the
+    /// framework cannot run the take at all the contract tests above pin the
+    /// behavior instead.
+    #[test]
+    fn real_bridge_reports_the_module_it_used_in_rust_display_shape() {
+        let _guard = ffi_lock();
+        if available().is_err() {
+            return;
+        }
+        for module in [AppleModule::Transcriber, AppleModule::Dictation] {
+            let mut provider = AppleSpeech::new(module);
+            // A loaded en_US provider: the same state a successful `load`
+            // leaves behind, driven with a 0.1 s silent take.
+            provider.loaded = true;
+            provider.locale = Some("en_US".to_string());
+            let Ok(_) = provider.transcribe(&[0.0f32; 1600], "en") else {
+                // No assets / framework not runnable here: nothing to check.
+                continue;
+            };
+            let used = provider
+                .last_module_used()
+                .unwrap_or_else(|| panic!("{}: the bridge must report the module it used", module));
+            if provider.last_fallback() {
+                let other = match module {
+                    AppleModule::Transcriber => AppleModule::Dictation,
+                    AppleModule::Dictation => AppleModule::Transcriber,
+                };
+                assert_eq!(
+                    used,
+                    other.to_string(),
+                    "{module}: fallback must name the other module"
+                );
+            } else {
+                assert_eq!(
+                    used,
+                    module.to_string(),
+                    "{module}: a honored request must report the requested module"
+                );
+            }
+        }
     }
 }
