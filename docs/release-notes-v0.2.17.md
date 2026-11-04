@@ -525,6 +525,17 @@ Three things this run also exposed, recorded rather than fixed:
       compile the Swift bridge except on the Apple Silicon job, and does not run
       `cargo doc`, so a green CI is not evidence that the Apple rows still
       select different modules: the eval is.
+      Re-run on the SCRATCH-1 tip (2026-11-04): 10 of 16 jobs passed,
+      including the full `Lint (fmt + clippy)` job, the macOS release link, the
+      macOS Intel and Windows compile checks, and the core, speech and
+      inference test jobs. Five macOS-arm64 test-heavy jobs (desktop tests,
+      coverage, checks, polish gate, benches) were cancelled after about 30
+      minutes, and the aggregate gate failed only because those inputs were
+      cancelled. This is the same hosted-runner starvation as before, not a
+      code failure: the code that job would run is green locally on the same
+      tip (fmt clean, clippy `-D warnings` clean, 558 desktop lib tests, 21
+      core trace tests, 11 ipc_contract). The gate stays open until a push
+      lands on a window where the arm64 runners are not saturated.
 - [ ] Live self-test with sound: 10 takes across the default model, Apple
       speech, one Omni model and one sherpa model; exact paste each time;
       Prompt Engineer and Command Mode one take each. **Run on 2026-11-04 against
