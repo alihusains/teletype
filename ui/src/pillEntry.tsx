@@ -7,13 +7,19 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Pill } from "./pill";
 import { installBrowserPreview } from "./dev/browserPreview";
+import { trackPillRoot } from "./dev/pillRootRegistry";
 
 // Same dev-only shim as main.tsx: opening pill.html in a normal browser
 // otherwise has no IPC, so the pill never gets settings or events.
 if (import.meta.env.DEV) installBrowserPreview();
 
-createRoot(document.getElementById("root")!).render(
+const root = createRoot(document.getElementById("root")!);
+root.render(
   <StrictMode>
     <Pill />
   </StrictMode>,
 );
+
+// The tests run under vitest with DEV set, and every root mounted here is
+// invisible to testing-library's cleanup, so it has to be tracked for teardown.
+if (import.meta.env.DEV) trackPillRoot(() => root.unmount());
