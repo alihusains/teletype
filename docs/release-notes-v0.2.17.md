@@ -339,11 +339,20 @@ request" as "pool request", "auth module" as "off module" and "us east one" as
          `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) secret holding the private key
          matching the committed `pubkey`. Then payloads sign, the manifest
          advertises `darwin-aarch64` and `windows-x86_64`, and in-app updates
-         work for the first time. The key must be the original one: a freshly
-         generated pair would sign payloads that existing installs cannot
-         verify, because the old public key is baked into every shipped binary.
-         If that private key is genuinely lost, rotating the pair still works,
-         but the first release after the rotation has to be installed by hand.
+         work for the first time. `docs/signing-and-updates.md:67` records that
+         this keypair was already generated and that the private half lives
+         outside the repository, so it should exist somewhere rather than
+         needing to be created. It is not on this machine: the documented path
+         `~/.teletype-updater.key` does not exist, there is no `~/.tauri`
+         directory, and nothing updater-related is in the `com.teletype.app`
+         keychain. Find it in the password manager the doc recommends and paste
+         it into the secret.
+         The key must be that original one, not a new one. A freshly generated
+         pair would sign payloads that existing installs cannot verify, because
+         the old public key is baked into every shipped binary
+         (`docs/signing-and-updates.md:71`). If it really is lost, rotating the
+         pair still works, but the first release after rotation must be
+         installed by hand.
       2. Set the repository variable `ALLOW_NO_UPDATER=true` to publish as it
          is now, deliberately unsigned. The release then ships DMG and EXE for
          manual download and in-app updates stay unavailable, which is the
