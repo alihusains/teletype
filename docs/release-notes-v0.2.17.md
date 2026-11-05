@@ -528,19 +528,24 @@ Three things this run also exposed, recorded rather than fixed:
       sync at 77 suites, UI vitest 530 passed.
 - [x] CI green on the pushed release branch: macOS arm64, macOS Intel
       cross-compile, Windows, polish gate "not run" notice, aggregate green.
-      **Green on the current tip `eeb9834` (run 41926881317, 16/16 jobs
-      including the aggregate fail-closed gate).** The previous green tip was
-      `ba1e2e9` (run 41925567043), which fixes the `recovery::tests` spool
-      flake: `quit_mid_take_leaves_recoverable_spool` arms the global
-      `quit-mid-take` fault, so any spool writer running concurrently hit it
-      and exited early, truncating its file to 0 bytes; all five spool tests
-      now share one lock so they run one at a time. Verified locally: full
-      `teletype-desktop` suite 564 passed / 0 failed across 6 runs at 12
-      threads. The earlier green tips `7b276c2` (run 41915366105) and
-      `0f0d06d` (run 41909706632) are recorded as history. Note that CI does
-      not compile the Swift bridge except on the Apple Silicon job, and does
-      not run `cargo doc`, so a green CI is not evidence that the Apple rows
-      still select different modules: the eval is.
+      **Green on the current tip `eeb9834` (run 41926881317): 16 jobs success,
+      including the aggregate fail-closed gate, verified job by job.** That run
+      carries the `recovery::tests` spool fix, so the gate covers it: `ba1e2e9`
+      is an ancestor of `eeb9834` (checked with
+      `git merge-base --is-ancestor`). The flake was that
+      `quit_mid_take_leaves_recoverable_spool` arms the global `quit-mid-take`
+      fault, so any spool writer running concurrently hit it and exited early,
+      truncating its file to 0 bytes; all five spool tests now share one lock so
+      they run one at a time. Verified locally: full `teletype-desktop` suite
+      564 passed / 0 failed across 6 runs at 12 threads.
+      Correcting an earlier false citation in this file: `ba1e2e9` and
+      `b1e451d` were recorded here as green tips (runs 41925567043 and
+      41925715761), but both runs ended **cancelled**, not success. The
+      genuinely green tips are `0f0d06d` (run 41909706632), `7b276c2` (run
+      41915366105) and `eeb9834` (run 41926881317). Note that CI does not
+      compile the Swift bridge except on the Apple Silicon job, and does not run
+      `cargo doc`, so a green CI is not evidence that the Apple rows still
+      select different modules: the eval is.
 - [ ] Live self-test with sound: 10 takes across the default model, Apple
       speech, one Omni model and one sherpa model; exact paste each time;
       Prompt Engineer and Command Mode one take each. **Run on 2026-11-04 against
