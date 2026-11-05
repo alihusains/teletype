@@ -85,16 +85,31 @@ jobs:
           fi
           echo "CI run ${GOOD} succeeded for ${GITHUB_SHA}."
       - name: Verify the tagged commit is reachable from main or a release branch
+        # A tag is pushed independently of any branch, so the checkout here is
+        # the tag commit, which sits ABOVE the branch tip. `git branch -r
+        # --contains` only sees the checkout's local remote-tracking refs and
+        # finds no branch containing a tag that is ahead of them, so it fails
+        # for every tag. Use the API's compare endpoint instead: it checks
+        # reachability against the live remote branch, which is what we mean.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          BRANCHES="$(git branch -r --contains "$GITHUB_SHA" | awk '{print $2}')"
-          echo "Remote branches containing ${GITHUB_SHA}:"
-          printf '    %s\n' "$BRANCHES"
-          if ! printf '%s\n' "$BRANCHES" | grep -Eq '^origin/(main|release/.+)$'; then
+          FOUND=""
+          for BRANCH in main release/v0.2.17 release/v0.2.16 release/v0.2.15; do
+            STATUS="$(gh api "repos/${{ github.repository }}/compare/${BRANCH}...${GITHUB_SHA}" \
+              --jq '.status' 2>/dev/null || echo "missing")"
+            echo "compare ${BRANCH}...${GITHUB_SHA} => ${STATUS}"
+            if [ "$STATUS" = "behind" ] || [ "$STATUS" = "identical" ]; then
+              FOUND="$BRANCH"
+              break
+            fi
+          done
+          if [ -z "$FOUND" ]; then
             echo "::error::Commit ${GITHUB_SHA} is not reachable from main or a release/* branch. Refusing to build or publish a release from an unverified commit."
             exit 1
           fi
-          echo "Commit ${GITHUB_SHA} is reachable from a release branch."
+          echo "Commit ${GITHUB_SHA} is reachable from ${FOUND}."
       - name: Preflight - updater signing posture
         # F-04 makes a zero-platform updater manifest a hard failure, but the
         # publish job only discovers it after the arm64, Intel and Windows build
