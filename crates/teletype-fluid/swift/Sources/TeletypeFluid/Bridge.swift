@@ -24,6 +24,7 @@
 // Support folder (recorded in PROGRESS.md, P3-A).
 
 import Foundation
+import CoreML
 import FluidAudio
 import os.log
 
@@ -39,6 +40,12 @@ private final class BridgeState: @unchecked Sendable {
     var manager: AsrManager?
     var boostSession: VocabularyBoostingSession?
     var lastError = ""
+    /// Everything needed to reload the ASR models on a different encoder
+    /// compute unit after a Core ML specialization failure (G038).
+    var asrVersion: AsrModelVersion?
+    var asrBase: URL?
+    var encoderUnits = MLComputeUnits.cpuAndNeuralEngine
+    var faultFired = false
 }
 
 private let bridge = BridgeState()
@@ -148,17 +155,29 @@ private func languageHint(_ code: String) -> Language? {
 }
 
 /// Load (downloading when needed) the Parakeet models into an `AsrManager`.
-private func loadASR(version: AsrModelVersion, base: URL) async throws -> AsrManager {
+///
+/// `encoderUnits` selects the compute device for the conformer encoder.
+/// `.cpuAndNeuralEngine` (FluidAudio's default) is the fastest arm measured on
+/// macOS 27 / M4 Pro: 37 ms p50 over 100 live AMI clips, versus 86 ms on
+/// `.cpuOnly` and 393 ms on `.cpuAndGPU`. It is also the arm that
+/// intermittently fails ANE specialization (G038), so callers must be able to
+/// reload the same models on `.cpuOnly` and retry, which is why this is a
+/// parameter and not a constant.
+private func loadASR(
+    version: AsrModelVersion,
+    base: URL,
+    encoderUnits: MLComputeUnits
+) async throws -> AsrManager {
     let folder = base.appendingPathComponent(repoFolder(version), isDirectory: true)
     try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
 
     let models: AsrModels
     if AsrModels.modelsExist(at: folder, version: version) {
         log.info("fluid: loading \(repoFolder(version), privacy: .public) from \(folder.path, privacy: .public)")
-        models = try await AsrModels.load(from: folder, version: version)
+        models = try await AsrModels.load(from: folder, version: version, encoderComputeUnits: encoderUnits)
     } else {
         log.info("fluid: downloading \(repoFolder(version), privacy: .public) to \(base.path, privacy: .public)")
-        models = try await AsrModels.downloadAndLoad(to: folder, version: version)
+        models = try await AsrModels.downloadAndLoad(to: folder, version: version, encoderComputeUnits: encoderUnits)
     }
 
     let manager = AsrManager()
@@ -268,6 +287,83 @@ private func encodeJSON(
 
 // MARK: - C ABI
 
+/// Decode one PCM buffer with the loaded `AsrManager`, returning the
+/// transcript JSON. Split out of `ttf_transcribe` so the same take can be
+/// retried against a reloaded engine after an encoder specialization failure.
+private func runTranscribe(
+    manager: AsrManager,
+    boost: VocabularyBoostingSession?,
+    samples: [Float],
+    languageCode: String
+) throws -> String {
+    try runBlocking { () async throws -> String in
+        var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
+        let result = try await manager.transcribe(
+            samples,
+            decoderState: &state,
+            language: languageHint(languageCode)
+        )
+
+        var text = result.text
+        var detected: [String] = []
+        var applied: [String] = []
+        if let boost, let timings = result.tokenTimings, !timings.isEmpty {
+            if let rescored = await boost.rescore(
+                text: text, tokenTimings: timings, audioSamples: samples
+            ) {
+                text = rescored.text
+                detected = rescored.detectedTerms
+                applied = rescored.replacements
+                    .filter(\.shouldReplace)
+                    .compactMap(\.replacementWord)
+            }
+        }
+
+        return try encodeJSON(
+            text: text,
+            confidence: result.confidence,
+            duration: result.duration,
+            timings: result.tokenTimings ?? [],
+            detected: detected,
+            applied: applied
+        )
+    }
+}
+
+/// True for the Core ML error raised when the encoder cannot be specialized
+/// for its compute devices. FluidAudio raises it as an `NSError` from the
+/// `MLModel` compile/specialize step (`com.apple.CoreML` Code 3, with an
+/// `ANECCompile() FAILED` underlayer) and it surfaces at transcribe time, not
+/// at load time, so it is matched on the rendered message.
+private func isEncoderSpecializationFailure(_ error: Error) -> Bool {
+    let message = String(describing: error)
+    return message.contains("Failed to specialize the model")
+        || message.contains("ANECCompile() FAILED")
+}
+
+/// Fault injection for the recovery path above. `TELETYPE_FLUID_FAULT=specialize`
+/// makes the first decode of the session fail exactly the way an ANE
+/// specialization failure does, so the reload-and-retry can be exercised on
+/// hardware where the real failure is intermittent. Fires once, so the retry
+/// runs against a healthy engine; inert when the variable is unset.
+private func injectedSpecializationFault() -> Error? {
+    guard ProcessInfo.processInfo.environment["TELETYPE_FLUID_FAULT"] == "specialize" else {
+        return nil
+    }
+    let shouldFire = withBridge { () -> Bool in
+        if bridge.faultFired { return false }
+        bridge.faultFired = true
+        return true
+    }
+    guard shouldFire else { return nil }
+    return NSError(
+        domain: "com.apple.CoreML",
+        code: 3,
+        userInfo: [NSLocalizedDescriptionKey:
+            "Failed to specialize the model Encoder for the compute device(s): CPU, NeuralEngine. It can be an unsupported model."]
+    )
+}
+
 @_cdecl("ttf_init")
 public func ttf_init(
     _ version: UnsafePointer<CChar>,
@@ -281,14 +377,18 @@ public func ttf_init(
             "ttf_init: unknown FluidAudio model version '\(rawVersion)' (expected ultra|v3|v2)")
     }
     let base = URL(fileURLWithPath: String(cString: modelsDir), isDirectory: true)
+    let units = withBridge { bridge.encoderUnits }
     do {
         let manager = try runBlocking {
-            try await loadASR(version: requested, base: base)
+            try await loadASR(version: requested, base: base, encoderUnits: units)
         }
         withBridge {
             bridge.manager = manager
             bridge.boostSession = nil
             bridge.lastError = ""
+            bridge.asrVersion = requested
+            bridge.asrBase = base
+            bridge.encoderUnits = units
         }
         return 0
     } catch {
@@ -360,43 +460,39 @@ public func ttf_transcribe(
     }
     let samples = Array(UnsafeBufferPointer(start: pcm, count: sampleCount))
     let languageCode = String(cString: lang)
-    let snapshot = withBridge { (bridge.manager, bridge.boostSession) }
+    let snapshot = withBridge {
+        (bridge.manager, bridge.boostSession, bridge.asrVersion, bridge.asrBase)
+    }
     guard let manager = snapshot.0 else {
         return fail(nil, 0, "ttf_transcribe: ASR models are not loaded")
     }
     let boost = snapshot.1
 
     do {
-        let json = try runBlocking { () async throws -> String in
-            var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
-            let result = try await manager.transcribe(
-                samples,
-                decoderState: &state,
-                language: languageHint(languageCode)
+        let json: String
+        do {
+            if let fault = injectedSpecializationFault() { throw fault }
+            json = try runTranscribe(
+                manager: manager, boost: boost, samples: samples, languageCode: languageCode
             )
-
-            var text = result.text
-            var detected: [String] = []
-            var applied: [String] = []
-            if let boost, let timings = result.tokenTimings, !timings.isEmpty {
-                if let rescored = await boost.rescore(
-                    text: text, tokenTimings: timings, audioSamples: samples
-                ) {
-                    text = rescored.text
-                    detected = rescored.detectedTerms
-                    applied = rescored.replacements
-                        .filter(\.shouldReplace)
-                        .compactMap(\.replacementWord)
-                }
+        } catch let specializationError where isEncoderSpecializationFailure(specializationError) {
+            // The take must survive an encoder that cannot be specialized for
+            // its compute devices (G038). Reload the same models on CPU and
+            // decode the audio we already hold; the sample buffer is still
+            // valid here, so nothing captured is lost.
+            guard let version = snapshot.2, let base = snapshot.3,
+                  withBridge({ bridge.encoderUnits }) != .cpuOnly
+            else { throw specializationError }
+            log.warning("fluid: encoder specialization failed, retrying this take on CPU")
+            let reloaded = try runBlocking {
+                try await loadASR(version: version, base: base, encoderUnits: .cpuOnly)
             }
-
-            return try encodeJSON(
-                text: text,
-                confidence: result.confidence,
-                duration: result.duration,
-                timings: result.tokenTimings ?? [],
-                detected: detected,
-                applied: applied
+            withBridge {
+                bridge.manager = reloaded
+                bridge.encoderUnits = .cpuOnly
+            }
+            json = try runTranscribe(
+                manager: reloaded, boost: boost, samples: samples, languageCode: languageCode
             )
         }
         let written = copyOut(json, to: out, cap: outCap)
