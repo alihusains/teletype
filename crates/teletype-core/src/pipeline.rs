@@ -625,8 +625,7 @@ impl<'a> Pipeline<'a> {
                                         // history row 39c86ce7, the Apple on-device
                                         // engine emitted "I mean Monday.." and a
                                         // guard reject returned it verbatim.
-                                        result.text =
-                                            engine::sanitize_punctuation(&protected.text);
+                                        result.text = engine::sanitize_punctuation(&protected.text);
                                         result.transformed = false;
                                         result.metrics.fell_back = true;
                                         result.metrics.skip_reason =
@@ -2440,7 +2439,10 @@ mod tests {
             },
             None,
         );
-        let skip = format!("{:?}", result.transform.as_ref().map(|t| &t.metrics.skip_reason));
+        let skip = format!(
+            "{:?}",
+            result.transform.as_ref().map(|t| &t.metrics.skip_reason)
+        );
         assert!(
             skip.contains("ValidationRejected"),
             "expected a guard rejection in this take, got: {skip}"
