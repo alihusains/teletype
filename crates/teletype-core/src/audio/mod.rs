@@ -502,6 +502,18 @@ fn run_capture(
         tracing::warn!("[audio] stream error: {err}");
         err_flag.store(true, Ordering::SeqCst);
     });
+    // VDFRAME-1: the DFN3 branch below owns the hook and rebuilds the stream
+    // with it, but when there is no slot this first stream is the only one,
+    // so the hook has to be inside it. Handing every arm `None` (what the
+    // P5.5 DFN3 split left behind, while its comment claimed Off mode kept
+    // the legacy behaviour) silently starved the callback of every frame: no
+    // VAD auto-stop, no recovery spool, no streaming mid-take commits, for
+    // any take recorded with noise reduction turned off.
+    let first_build_hook = if dfn3.is_some() {
+        None
+    } else {
+        on_frame.take()
+    };
     let stream = match format {
         SampleFormat::I8 => build_stream::<i8>(
             &device,
@@ -509,7 +521,7 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            None,
+            first_build_hook,
             noise_reduction,
             false,
         ),
@@ -519,7 +531,7 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            None,
+            first_build_hook,
             noise_reduction,
             false,
         ),
@@ -529,7 +541,7 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            None,
+            first_build_hook,
             noise_reduction,
             false,
         ),
@@ -539,7 +551,7 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            None,
+            first_build_hook,
             noise_reduction,
             false,
         ),
@@ -549,7 +561,7 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            None,
+            first_build_hook,
             noise_reduction,
             false,
         ),
@@ -559,7 +571,7 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            None,
+            first_build_hook,
             noise_reduction,
             false,
         ),
@@ -569,7 +581,7 @@ fn run_capture(
             buf_clone,
             level_clone,
             err_fn,
-            None,
+            first_build_hook,
             noise_reduction,
             false,
         ),
@@ -2489,59 +2501,112 @@ mod tests {
             .expect("capture done message")
     }
 
-    /// P0: a 48 kHz take must hand the final transcription 16 kHz audio of
-    /// the same duration. `run_capture` resamples the whole buffer once at
-    /// stop time; this pins the sample count and the take's duration so a
-    /// rate mix-up (double resample, device-rate leak) fails here.
+    /// The default input device's rate: what `run_capture` publishes and
+    /// resamples against. A test that drives the real loop has to pre-fill at
+    /// this rate, not at an assumed 48 kHz, or it is asserting about the
+    /// runner's audio hardware instead of about this code.
+    fn default_input_rate() -> u32 {
+        cpal::default_host()
+            .default_input_device()
+            .and_then(|d| d.default_input_config().ok())
+            .map(|c| c.sample_rate())
+            .expect("these tests drive the real capture loop and need a default input device")
+    }
+
+    /// P0: at stop time `run_capture` resamples the shared buffer exactly
+    /// once, from the device rate it latched, into 16 kHz audio. The pure
+    /// `resample_48k_to_16k` and `resample_passband_tone_survives` tests pin
+    /// the "4 s in = 4 s out" arithmetic; this one pins the wiring at the
+    /// production seam, which those tests cannot see.
+    ///
+    /// The sample count is bounded, not pinned, on purpose: the cpal callback
+    /// appends live audio into the same buffer while the stream is open, so
+    /// the take is the pre-fill plus whatever the device delivered (measured
+    /// 18432 samples in a 200 ms window). Asserting an exact count is what
+    /// made this test fail only under the instrumented coverage job, where a
+    /// single 4800-sample burst landed before the stop was observed: 65600
+    /// against an expected 64000.
     #[test]
-    fn capture_finish_resamples_48k_buffer_to_16k_duration() {
-        // 4 s of a 1 kHz tone at 48 kHz (speech-like, well above the
-        // no-speech energy floor).
-        let n = 4 * 48_000;
+    fn capture_finish_resamples_the_buffer_once_at_the_device_rate() {
+        let device_rate = default_input_rate();
+        // 4 s of a 1 kHz tone (speech-like, well above the no-speech energy
+        // floor).
+        let n = 4 * device_rate as usize;
         let buffer: Vec<f32> = (0..n)
             .map(|i| {
-                0.5 * (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / 48_000.0).sin() as f32
+                0.5 * (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / device_rate as f64).sin()
+                    as f32
             })
             .collect();
         let buffer: Buf = Arc::new(Mutex::new(buffer));
         let out_rate = Arc::new(AtomicU32::new(0));
-        let captured = run_capture_with_prefilled(buffer, 48_000, None, Some(out_rate.clone()));
+        let captured =
+            run_capture_with_prefilled(buffer.clone(), device_rate, None, Some(out_rate.clone()));
         assert_eq!(
+            out_rate.load(Ordering::Relaxed),
+            device_rate,
+            "the published rate must be the device rate"
+        );
+        // Every pre-filled second must be represented in the delivered audio.
+        assert!(
+            captured.samples.len() >= 4 * 16_000,
+            "4 s of captured audio must not shrink below 4 s at 16 kHz (got {} samples)",
+            captured.samples.len()
+        );
+        // And nothing more than one pass over the bytes that were actually
+        // there. The finish clones the buffer instead of draining it, and the
+        // stream is stopped by now, so the buffer still holds the take at the
+        // device rate: re-resampling it is the ceiling for a single pass. A
+        // second resample lands under the floor; delivering the buffer
+        // un-resampled (the device-rate leak, 3x at 48 kHz) breaks the ceiling.
+        let raw = buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let one_pass = resample_to_target(&raw, device_rate)
+            .unwrap_or_default()
+            .len();
+        assert!(
+            captured.samples.len() <= one_pass,
+            "delivered {} samples exceed one resample pass over the {} raw samples the take held ({one_pass})",
             captured.samples.len(),
-            4 * 16_000,
-            "4 s at 48 kHz must become exactly 4 s at 16 kHz (got {} samples)",
+            raw.len()
+        );
+        assert!(
+            (captured.duration_secs - captured.samples.len() as f64 / TARGET_SAMPLE_RATE as f64)
+                .abs()
+                < 1e-9,
+            "the take's duration must be the delivered samples at the target rate, got {} s for {} samples",
+            captured.duration_secs,
             captured.samples.len()
         );
         assert!(
-            (captured.duration_secs - 4.0).abs() < 0.08,
-            "duration {} s must be within 2% of 4 s",
-            captured.duration_secs
-        );
-        assert!(
-            (0.49..=0.51).contains(&captured.peak),
+            captured.peak >= 0.49,
             "tone peak {} must survive the resample",
             captured.peak
-        );
-        assert_eq!(
-            out_rate.load(Ordering::Relaxed),
-            48_000,
-            "the published rate must be the device rate"
         );
     }
 
     /// P0: the capture frame callback (what `start_with_vad` hands to
-    /// capture) must be called with the take's full device-rate audio once
-    /// the stream is live. In production the cpal callback appends every
-    /// frame to the shared buffer AND calls `on_frame` with the same frame
-    /// (build_stream); `run_capture` must not silently drop the hook, or
-    /// the spool, the streaming feed and the VAD get no audio at all and
-    /// the take transcribes nothing.
+    /// capture) must receive the audio the live stream delivers. In
+    /// production the cpal callback appends every frame to the shared buffer
+    /// AND calls `on_frame` with the same frame (build_stream); if
+    /// `run_capture` dropped the hook, the spool, the streaming feed and the
+    /// VAD would get no audio at all and the take would transcribe nothing.
+    ///
+    /// The stop is sent only after the stream reports ready, so the take is
+    /// genuinely live for 200 ms and the frames counted here come from the
+    /// device. Stopping before the stream starts is what made the earlier
+    /// version of this test call its own hook by hand: it passed no matter
+    /// whether the wiring worked.
     #[test]
     fn capture_frame_callback_receives_frames_while_recording() {
-        let n = 48_000; // 1 s at 48 kHz
+        let device_rate = default_input_rate();
+        let n = device_rate as usize; // 1 s pre-filled so the take has audio
         let buffer: Vec<f32> = (0..n)
             .map(|i| {
-                0.5 * (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / 48_000.0).sin() as f32
+                0.5 * (2.0 * std::f64::consts::PI * 1_000.0 * i as f64 / device_rate as f64).sin()
+                    as f32
             })
             .collect();
         let buffer: Buf = Arc::new(Mutex::new(buffer));
@@ -2561,26 +2626,16 @@ mod tests {
         let rate: Arc<AtomicU32> = Arc::new(AtomicU32::new(0));
         let rate_for_thread = Arc::clone(&rate);
         let buffer_for_thread = Arc::clone(&buffer);
+        let stop_for_main = stop_tx.clone();
         let handle = thread::Builder::new()
             .name("teletype-audio-test".into())
             .spawn(move || {
                 // The capture thread latches the device rate before the
                 // first callback (next to the stream build in production).
-                rate_for_thread.store(48_000, Ordering::Relaxed);
-                // One frame from the cpal callback: the same frame build_stream
-                // appends to the shared buffer and hands to `on_frame`.
-                let frame: Vec<f32> = buffer_for_thread
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .iter()
-                    .copied()
-                    .take(1_024)
-                    .collect();
-                if let Some(c) = cb.as_ref() {
-                    c(&frame);
-                }
-                // The loop body only polls `stop_rx` and the level meter.
-                let _ = stop_tx.send(());
+                rate_for_thread.store(device_rate, Ordering::Relaxed);
+                // `stop_tx` stays alive in this thread until `run_capture`
+                // returns; the main thread sends the stop once the stream is
+                // live.
                 run_capture(
                     "",
                     stop_rx,
@@ -2597,32 +2652,51 @@ mod tests {
                 );
             })
             .expect("capture test thread");
+        let ready = ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("capture ready message")
+            .unwrap_or_else(|e| {
+                panic!("the input device must open for a live capture window: {e}")
+            });
+        assert_eq!(
+            ready, device_rate,
+            "the ready message must carry the device rate"
+        );
+        thread::sleep(Duration::from_millis(200));
+        let _ = stop_for_main.send(());
         let _ = handle.join();
-        let _ = ready_rx.try_recv();
         let captured = done_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("capture done message");
-        let totals: usize = seen
+        let frames: Vec<usize> = seen
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
-            .sum();
-        assert_eq!(
-            totals, 1_024,
-            "the frame callback must receive the frame the stream delivered"
+            .copied()
+            .collect();
+        assert!(
+            !frames.is_empty(),
+            "the live stream must feed the frame callback `run_capture` was handed"
         );
-        // The final buffer still holds the whole take at the device rate,
-        // resampled to 16 kHz on finish: the callback feed and the buffer
-        // are two views of the same audio, not competing copies.
-        assert_eq!(
-            captured.samples.len(),
-            16_000,
-            "1 s at 48 kHz must become exactly 1 s at 16 kHz (got {})",
+        assert!(
+            frames.iter().all(|&f| f > 0),
+            "a delivered frame is never empty: {frames:?}"
+        );
+        let totals: usize = frames.iter().sum();
+        assert!(
+            totals >= 1_024,
+            "a 200 ms live window must deliver real audio to the hook, got {totals} samples"
+        );
+        // The finish resamples the same buffer the callback was fed: the hook
+        // and the buffer are two views of one take, not competing copies.
+        assert!(
+            captured.samples.len() >= 16_000,
+            "1 s pre-filled plus the live window must reach the finish (got {})",
             captured.samples.len()
         );
         assert_eq!(
             out_rate.load(Ordering::Relaxed),
-            48_000,
+            device_rate,
             "the published rate must be the device rate"
         );
     }
