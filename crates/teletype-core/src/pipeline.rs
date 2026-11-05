@@ -619,7 +619,14 @@ impl<'a> Pipeline<'a> {
                                     }
                                     crate::transforms::guard::GuardResult::Reject { reason } => {
                                         tracing::info!(reason = %reason, "guard_rejected_polish_output");
-                                        result.text = protected.text.clone();
+                                        // The fallback hands the user the text
+                                        // before the transform, so it never sees
+                                        // the engine-exit sanitizer. Live shape:
+                                        // history row 39c86ce7, the Apple on-device
+                                        // engine emitted "I mean Monday.." and a
+                                        // guard reject returned it verbatim.
+                                        result.text =
+                                            engine::sanitize_punctuation(&protected.text);
                                         result.transformed = false;
                                         result.metrics.fell_back = true;
                                         result.metrics.skip_reason =
@@ -644,6 +651,11 @@ impl<'a> Pipeline<'a> {
                                 self.system_autotext,
                             );
                         }
+                        // Same fallback hole as the guard-reject arm: the user
+                        // asked for polish, no model answered, and the text
+                        // delivered here is the engine's own, so it never
+                        // reached the engine-exit sanitizer.
+                        let expanded = engine::sanitize_punctuation(&expanded);
                         // P1-16: flag the skip so the UI can tell the user why
                         // nothing was polished.
                         let result = engine::TransformResult {
@@ -2400,6 +2412,103 @@ mod tests {
         assert_eq!(result.final_text, "regards Ali Husain");
         assert!(!result.transformed);
         assert!(result.autotext_expanded);
+    }
+
+    /// G041: a guard-rejected polish falls back to the text *before* the
+    /// transform, which never passed the engine-exit sanitizer. Live shape:
+    /// history row 39c86ce7 (Apple on-device row), the engine emitted
+    /// "I mean Monday.." and the reject returned it verbatim into the user's
+    /// document.
+    #[test]
+    fn guard_rejected_fallback_does_not_paste_doubled_punctuation() {
+        let input_text = "please send the summary to Alex, sorry Alice, before the deadline on Friday, I mean Monday.. and copy Bob, cc Carol too, thanks Dana";
+        // The model drops only the capitalized tokens, which is under the
+        // 40 percent change budget the validator checks, so the validator
+        // accepts and the protected-token guard is what rejects.
+        let output = "please send the summary, sorry, before the deadline on, I mean Monday.. and copy, cc too, thanks";
+        let pipeline = pipeline_with(
+            normalize("com.apple.TextEdit", "TextEdit"),
+            output,
+            None,
+            &[],
+        );
+        let mut pipeline = pipeline;
+        let result = pipeline.run(
+            UnifiedInput {
+                source: InputSource::Voice,
+                text: input_text.into(),
+            },
+            None,
+        );
+        let skip = format!("{:?}", result.transform.as_ref().map(|t| &t.metrics.skip_reason));
+        assert!(
+            skip.contains("ValidationRejected"),
+            "expected a guard rejection in this take, got: {skip}"
+        );
+        assert!(
+            !result.final_text.contains("..") && !result.final_text.contains(",,"),
+            "guard-rejected fallback carried doubled punctuation: {}",
+            result.final_text
+        );
+        assert!(
+            result.final_text.contains("Monday."),
+            "fallback must still carry the sentence: {}",
+            result.final_text
+        );
+    }
+
+    /// The other fallback that hands the user the engine's own text: polish
+    /// was asked for and no model answered.
+    #[test]
+    fn no_model_fallback_does_not_paste_doubled_punctuation() {
+        let platform = MockPlatform::with_app(normalize("com.google.gmail", "Gmail"));
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: None,
+            decision: None,
+            force_command: false,
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &[],
+            word_checker: &CHECKER,
+        };
+        let result = pipeline.run(
+            UnifiedInput {
+                source: InputSource::Voice,
+                text: "the build passes now, or does it.. I mean the suite fails".into(),
+            },
+            None,
+        );
+        assert!(
+            !result.final_text.contains("..") && !result.final_text.contains(",,"),
+            "no-model fallback carried doubled punctuation: {}",
+            result.final_text
+        );
     }
 
     #[test]
