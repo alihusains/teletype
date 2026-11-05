@@ -136,6 +136,29 @@ pub const SAFETY_CORPUS: &[Case] = &[
         input: "I mean business",
         expected: "I mean business",
     },
+    // ── Spoken self-repair: "X, MARKER Y," ────────────────────────────────
+    // The marker introduces the correction, so the fragment before it is the
+    // retracted one. Stripping only the marker welds the retracted fact onto
+    // the correction ("on Friday Thursday"), which states something the
+    // speaker explicitly took back. The pass must leave the whole repair
+    // intact; the gate treats these markers as evidence the take needs the
+    // model.
+    Case {
+        input: "So basically we need to ship this on Friday, I mean Thursday, because the client meeting is on Monday.",
+        expected: "So basically we need to ship this on Friday, I mean Thursday, because the client meeting is on Monday.",
+    },
+    Case {
+        input: "the release is Monday, I mean Tuesday, at ten",
+        expected: "the release is Monday, I mean Tuesday, at ten",
+    },
+    Case {
+        input: "invite Frank, sorry Gordon, to the review",
+        expected: "invite Frank, sorry Gordon, to the review",
+    },
+    Case {
+        input: "the client, you know Sarah, will call later",
+        expected: "the client, you know Sarah, will call later",
+    },
     Case {
         input: "well that is a good question",
         expected: "well that is a good question",
@@ -743,6 +766,11 @@ fn safety_pass_rate() -> f64 {
     let total = SAFETY_CORPUS.len();
     let mut passed = 0;
     for case in SAFETY_CORPUS {
+        // One mismatch at any strength fails the case: the table is a
+        // must-pass gate, so the unit is the case, not the case-strength
+        // pair. Counting pairs against a fixed divisor lets a failing case
+        // bank credits from the strengths it clears.
+        let mut clean = true;
         for strength in [
             FillerStrength::None,
             FillerStrength::Hesitations,
@@ -760,17 +788,18 @@ fn safety_pass_rate() -> f64 {
                 strength,
             );
             if out != case.expected {
-                // Safety corpus must be 100% at every strength.
                 eprintln!(
                     "SAFETY FAIL [{:?}] {}\n  expected: {}\n  got:      {}",
                     strength, case.input, case.expected, out
                 );
-                break;
+                clean = false;
             }
+        }
+        if clean {
             passed += 1;
         }
     }
-    passed as f64 / (total * 3) as f64
+    passed as f64 / total as f64
 }
 
 /// Returns the general-corpus pass rate at [`FillerStrength::Fillers`].

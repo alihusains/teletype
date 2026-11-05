@@ -180,10 +180,17 @@ struct Token {
 }
 
 impl Token {
+    /// The punctuation glued to the **leading** edge of the token, or `\0`.
+    /// Only the first character counts: a token like `Thursday,` ends with a
+    /// comma but does not begin with one, and reading its interior punctuation
+    /// as a leading mark makes the rule see a comma-bracketed filler in
+    /// `X, I mean Y,` (a spoken self-repair) and splice the retracted `X` onto
+    /// the correction `Y`.
     fn leading_punct(&self) -> char {
         self.text
             .chars()
-            .find(|c| !c.is_alphanumeric())
+            .next()
+            .filter(|c| !c.is_alphanumeric())
             .unwrap_or('\0')
     }
 
