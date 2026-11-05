@@ -368,6 +368,17 @@ jobs:
     runs-on: macos-latest
     env:
       CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
+      # The cmake crate 0.1.58 derives CMAKE_C_FLAGS and CMAKE_CXX_FLAGS from an
+      # internal cc::Build (src/lib.rs 809 to 810), so the deployment floor on the
+      # vendored ggml compile line comes from cc, not from CMAKE_OSX_DEPLOYMENT
+      # _TARGET. cc resolves it in this order: MACOSX_DEPLOYMENT_TARGET env, then
+      # xcrun --show-sdk-version, then a last resort default (cc 1.4.7 src/lib.rs
+      # 4443 to 4545). The v0.2.17 release runner composed 10.13, under the 10.15
+      # floor of std::filesystem. Setting the env wins the order: measured cold on
+      # this crate, it emits exactly one -mmacosx-version-min=15.0. transcribe-cpp
+      # -sys does forward TRANSCRIBE_CMAKE_ARGS, so the cache var goes there too.
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
+      TRANSCRIBE_CMAKE_ARGS: "-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0"
       RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
       SCCACHE_DIR: ${{ github.workspace }}/.sccache-cache
       CARGO_TARGET_DIR: ${{ github.workspace }}/.cargo-target-cache
@@ -433,6 +444,79 @@ jobs:
         with:
           name: teletype-release-arm64
           path: ${{ github.workspace }}/.cargo-target-cache/release/teletype
+          retention-days: 7
+
+  # 5c) Cold native build. link-macos restores its cargo target from the cache,
+  #     so the vendored transcribe-cpp-sys ggml C++ often never compiles there
+  #     and a broken native build can still show green. This job builds
+  #     teletype-speech from a scratch target dir with no cargo or sccache
+  #     cache, then asserts the build log shows cmake configuring the vendored
+  #     crate with a deployment target at or above the 15.0 floor.
+  native-cold-macos:
+    name: macOS native cold build
+    runs-on: macos-latest
+    env:
+      CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
+      # Same cc / MACOSX_DEPLOYMENT_TARGET mechanism as link-macos above.
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
+      TRANSCRIBE_CMAKE_ARGS: "-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0"
+      CMAKE_OSX_ARCHITECTURES: arm64
+      # Scratch dir under the runner temp, never touched by a cache step.
+      CARGO_TARGET_DIR: /tmp/teletype-native-cold
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.90"
+      - name: Cold build the native speech dependencies
+        # -vv so the cmake configure command line lands in the log for the
+        # assertions below. No RUSTC_WRAPPER, no sccache, no cargo cache: a
+        # compiler cache would hide the compile this job exists to prove.
+        run: |
+          LOG="$GITHUB_WORKSPACE/native-cold-macos.log"
+          # The default shell here is bash -e, so a bare failing cargo would abort
+          # this step before the diagnostics below ever ran and the log would be
+          # uploaded with no explanation. Take the status through if/else instead.
+          if cargo build --release -p teletype-speech -vv > "$LOG" 2>&1; then
+            EXIT=0
+          else
+            EXIT=$?
+          fi
+          echo "cargo build exit code: $EXIT"
+          if [ "$EXIT" -ne 0 ]; then
+            tail -40 "$LOG"
+            echo "::error::cold build of teletype-speech failed (exit $EXIT); see native-cold-macos.log"
+            exit 1
+          fi
+      - name: Assert the vendored ggml really compiled with the 15.0 floor
+        run: |
+          set -euo pipefail
+          LOG="$GITHUB_WORKSPACE/native-cold-macos.log"
+          # (a) cmake must have configured the vendored crate in this run:
+          # a "cmake" token followed by a path containing transcribe-cpp-sys.
+          if ! grep -E '"cmake" "[^"]*transcribe-cpp-sys[^"]*"' "$LOG" >/dev/null; then
+            echo "::error::no cmake configure of transcribe-cpp-sys found in the build log; the vendored ggml C++ was not compiled in this run"
+            exit 1
+          fi
+          # (b) no CMAKE_*FLAGS string may carry a -mmacosx-version-min below
+          # the 10.15 floor of std::filesystem; the release floor is 15.0.
+          # -e is required: a pattern that starts with a dash is read by BSD
+          # grep as an option and the whole extraction fails silently.
+          BAD=$(grep -oE -e 'CMAKE_(C|CXX|ASM)_FLAGS=[^"]*-mmacosx-version-min=[0-9]+(\.[0-9]+)?' "$LOG" \
+            | grep -oE -e '-mmacosx-version-min=[0-9]+(\.[0-9]+)?' \
+            | sed 's/-mmacosx-version-min=//' \
+            | awk -F. '$1 < 15 || $1 == 10 || $1 == 11 || $1 == 12 || $1 == 13 || $1 == 14' || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::deployment target below floor in cmake configure flags: $(echo "$BAD" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "cold build configured transcribe-cpp-sys with a deployment target at or above the floor"
+      - name: Upload native cold log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-cold-macos-log
+          path: ${{ github.workspace }}/native-cold-macos.log
           retention-days: 7
 
   # 2) Dictation quality gate: replay eval harness against committed hypotheses.
