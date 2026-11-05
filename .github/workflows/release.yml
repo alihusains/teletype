@@ -153,6 +153,12 @@ jobs:
       # std::filesystem requirement. whisper-rs-sys forwards any CMAKE_* env
       # var to CMake, so set the deployment target there.
       CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
+      # transcribe-cpp-sys does NOT forward CMAKE_OSX_DEPLOYMENT_TARGET to CMake
+      # (unlike whisper-rs-sys); without it its vendored ggml C++ compiles with
+      # an empty deployment target, below 10.15, where std::filesystem's
+      # fs::path is marked unavailable and the build fails. Its build.rs does
+      # forward TRANSCRIBE_CMAKE_ARGS, so pass the floor through there.
+      TRANSCRIBE_CMAKE_ARGS: "-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0"
       # Match the final Rust link to the same deployment target.
       RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
       # sccache: cache C/C++/Rust object files across runs. The whisper.cpp +
@@ -465,6 +471,11 @@ jobs:
       CXXFLAGS_x86_64_apple_darwin: "-arch x86_64 -mmacosx-version-min=15.0"
       CMAKE_OSX_ARCHITECTURES: x86_64
       CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
+      # Same transcribe-cpp-sys gap as the arm64 job: its build.rs does not
+      # forward CMAKE_OSX_DEPLOYMENT_TARGET, so pin the floor via the
+      # TRANSCRIBE_CMAKE_ARGS passthrough or its vendored ggml C++ fails below
+      # the 10.15 std::filesystem requirement.
+      TRANSCRIBE_CMAKE_ARGS: "-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0"
       RUSTFLAGS: "-C link-arg=-mmacosx-version-min=15.0"
       # Consumed by scripts/build-llama-server.sh.
       TELETYPE_TARGET_TRIPLE: x86_64-apple-darwin
