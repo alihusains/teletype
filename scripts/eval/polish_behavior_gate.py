@@ -488,19 +488,26 @@ def _structural_punct_findings(out: str) -> list[str]:
       * decimals (`1.5`, `0.2`) and version strings (`v0.2.17`, `1.2.3`)
       * times (`9:15`) and URLs (`https://example.com`)
       * a normal sentence end (`word.`)
+      * `!!` and `??` (intended emphasis; the product sanitizer keeps them)
     """
     findings: list[str] = []
 
     # 1. Two or more identical adjacent punctuation marks.
-    #    Catches `,,`, `!!`, `;;`, `::`, `..`, `....`, etc.
+    #    Catches `,,`, `;;`, `..`, `....`, etc.
     #    A run of exactly three dots (`...`) is a legal ellipsis and is
     #    allowed; any other run of 2+ identical marks is malformed.
     # `:` is excluded on purpose: code identifiers dictated by developers use
     # the path separator `::` (std::vector), and a gate that calls that
     # malformed would fail legitimate output.
-    for ch in ",.!?;":
-        for m in re.finditer(re.escape(ch) + r"+" + re.escape(ch), out):
+    # `!` and `?` are excluded for the opposite reason: a repeated mark there
+    # is intended emphasis, and sanitize_punctuation in the product
+    # deliberately preserves it, so a gate that flagged it would contradict
+    # the shipped contract.
+    for ch in ",.;":
+        for m in re.finditer(re.escape(ch) + r"+", out):
             run = m.group(0)
+            if len(run) < 2:
+                continue
             if ch == "." and len(run) == 3:
                 continue  # legal ellipsis
             findings.append(f"doubled punctuation: {run!r}")
