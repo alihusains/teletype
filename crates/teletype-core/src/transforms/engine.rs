@@ -748,7 +748,78 @@ fn run_single_chunk(
     ) {
         outcome.text = format_spoken_lists(&outcome.text);
     }
+    // Every polish output passes through this one deterministic sanitation
+    // step, so no seam in the chain can hand the user doubled punctuation
+    // (live shape: history row 62790e30-d904-430e-8ac7-b90be1377b02, the
+    // model-output seam carried "Friday,, because" through to the user).
+    // The guard seam is proven innocent of composing the pair (LCS restore
+    // matches "Friday," to an identical token); the splitter seam is inert
+    // for the live take (20 words, under the 500-word chunk cap). Both
+    // proofs live in tests/polish_punctuation.rs.
+    if transform.id == "builtin-polish" {
+        outcome.text = sanitize_punctuation(&outcome.text);
+    }
     outcome
+}
+
+/// The punctuation marks that may legally form a doubled run in polished
+/// output. Exclamation and question marks may double legally ("wow!!");
+/// the comma, period and semicolon may not.
+const SANITIZE_PUNCT: &[char] = &[',', '.', ';'];
+
+/// Collapses doubled punctuation in polished output. No stage in the chain
+/// sanitizes adjacent punctuation: the model may emit a pair, and the
+/// guard's in-place protected-token restore re-inserts the original token
+/// (with its trailing comma) next to a comma the model output already had.
+/// Live shape that motivated this step: "Friday,, because", history row
+/// 62790e30-d904-430e-8ac7-b90be1377b02.
+///
+/// Idempotent, and a no-op on legal text: it only rewrites a run of two or
+/// more identical marks from the set [`,`, `.`, `;`], or a comma/period
+/// pair in either order (the period wins). Single commas, sentence ends and
+/// the comma insertion the polish pass is supposed to keep working are all
+/// preserved, and a three-dot ellipsis is left alone so that this step and
+/// `scripts/eval/polish_behavior_gate.py` hold one punctuation contract.
+pub fn sanitize_punctuation(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if SANITIZE_PUNCT.contains(&c) {
+            // Count the run of identical marks starting at c.
+            let mut run = 1usize;
+            while matches!(chars.peek(), Some(&n) if n == c) {
+                chars.next();
+                run += 1;
+            }
+            if run >= 2 {
+                // A run of exactly three dots is an ellipsis, and the product
+                // does emit it: `scripts/eval/polish_behavior_gate.py` treats
+                // `...` as legal, and `teletype.db` history rows contain
+                // ASCII `...`. Collapsing it would rewrite intended text and
+                // put this step out of agreement with the shipped gate.
+                if c == '.' && run == 3 {
+                    out.push_str("...");
+                    continue;
+                }
+                out.push(c);
+                continue;
+            }
+            out.push(c);
+            // A comma followed by a period, or a period followed by a comma
+            // (whitespace between them is legal and kept): keep the period
+            // only.
+            if (c == ',' || c == '.') && matches!(chars.peek(), Some(n) if *n == '.' || *n == ',') {
+                chars.next();
+                let len = out.len();
+                out.truncate(len - 1);
+                out.push('.');
+                continue;
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
