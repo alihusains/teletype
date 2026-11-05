@@ -153,6 +153,13 @@ jobs:
       # std::filesystem requirement. whisper-rs-sys forwards any CMAKE_* env
       # var to CMake, so set the deployment target there.
       CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
+      # The real source of the too-low floor. The `cc` crate reads
+      # MACOSX_DEPLOYMENT_TARGET (not CMAKE_OSX_DEPLOYMENT_TARGET) and, when it
+      # is unset, emits its own fallback of 10.13 straight into the
+      # CMAKE_C_FLAGS/CMAKE_CXX_FLAGS it hands to every CMake build script.
+      # Set it so 10.13 never reaches the command line at all, instead of
+      # relying on a later -mmacosx-version-min winning over it.
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
       # transcribe-cpp-sys does NOT forward CMAKE_OSX_DEPLOYMENT_TARGET to CMake
       # (unlike whisper-rs-sys); without it its vendored ggml C++ compiles with
       # an empty deployment target, below 10.15, where std::filesystem's
@@ -471,6 +478,9 @@ jobs:
       CXXFLAGS_x86_64_apple_darwin: "-arch x86_64 -mmacosx-version-min=15.0"
       CMAKE_OSX_ARCHITECTURES: x86_64
       CMAKE_OSX_DEPLOYMENT_TARGET: "15.0"
+      # See the arm64 job: `cc` reads this var, not CMAKE_OSX_DEPLOYMENT_TARGET,
+      # and injects its own 10.13 fallback into the CMake flags when unset.
+      MACOSX_DEPLOYMENT_TARGET: "15.0"
       # Same transcribe-cpp-sys gap as the arm64 job: its build.rs does not
       # forward CMAKE_OSX_DEPLOYMENT_TARGET, so pin the floor via the
       # TRANSCRIBE_CMAKE_ARGS passthrough or its vendored ggml C++ fails below
