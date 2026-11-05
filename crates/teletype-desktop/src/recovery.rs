@@ -700,27 +700,28 @@ mod tests {
     }
 
     #[test]
-    fn row9_spool_bounds_at_five_minutes_and_counts_the_whole_take() {
+    fn row9_spool_counts_the_whole_take_and_reports_truncation() {
         let _guard = spool_drain_guard();
         let d = tmpdir();
         let mut spool = Spool::begin(d.path()).unwrap();
         // Hold a writer clone like production, so the channel stays open for
         // the whole write burst (see begin_write_abandoned_leaves_file_with_size).
         let _w = spool.clone_writer().expect("spool has a writer");
-        // Write 10 minutes of 1-second frames. Only 300 s may be stored on
-        // disk; the total counter (Arc<AtomicU64>) sees all 600 s because
-        // Spool::write increments it before the bound check.
-        for _ in 0..600 {
+        // Write CHANNEL_DEPTH seconds of 1-second frames. That is the largest
+        // burst that fits the bounded writer channel, so no frame is dropped
+        // and the on-disk file, the sidecar total, and the claimed seconds
+        // are all exactly CHANNEL_DEPTH. A larger burst (like the 600 frames
+        // this test used before) could overflow the channel on a saturated
+        // CI runner before the writer drained it, dropping frames and making
+        // the sidecar total nondeterministic.
+        for _ in 0..CHANNEL_DEPTH {
             spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
         }
         let path = spool.path.clone();
         drop(_w);
         spool.abandoned_drained();
-        // The writer is joined (deterministic) so the on-disk file is exactly
-        // the oldest 300 s; we assert the upper bound (it must not exceed 300 s)
-        // and the total counter below.
-        // must not exceed 300 s). The lower bound is verified by the
-        // find_pending call below, which checks pending.seconds is in [200, 300].
+        // No frame is dropped, so the on-disk file, the sidecar total, and
+        // the claimed seconds are all exactly CHANNEL_DEPTH seconds.
         let expected_max = MAX_SECONDS * TARGET_SAMPLE_RATE as u64 * 4;
         let meta = fs::metadata(&path).unwrap();
         assert!(
@@ -729,7 +730,9 @@ mod tests {
             meta.len(),
             expected_max
         );
-        // The sidecar meta file records the total byte count.
+        // The sidecar meta file records the total byte count. Right after a
+        // clean drain it equals the on-disk size, so nothing is truncated
+        // yet.
         let meta_path = path.with_extension("meta");
         assert!(
             meta_path.exists(),
@@ -740,24 +743,40 @@ mod tests {
             .trim()
             .parse()
             .unwrap();
-        let total_seconds = total_bytes / (4 * TARGET_SAMPLE_RATE as u64);
         assert_eq!(
-            total_seconds, 600,
-            "expected 600 s total, got {total_seconds}"
+            total_bytes,
+            meta.len(),
+            "a clean drain writes exactly what is on disk"
         );
-        // The spool must not exceed the 300 s bound, the total counter must
-        // reflect all 600 s, and the spool must be marked truncated. The
-        // on-disk seconds are timing-dependent (the writer drains in the
-        // background), so we only assert the upper bound.
         set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
         let pending = find_pending(d.path()).expect("spool must be offered");
-        assert!(
-            pending.seconds <= 300,
-            "spool must not exceed 300 s bound, got {}",
-            pending.seconds
+        assert_eq!(
+            pending.seconds, CHANNEL_DEPTH as u64,
+            "on-disk seconds must be exactly the burst"
         );
-        assert_eq!(pending.total_seconds, 600, "expected 600 s total");
-        assert!(pending.truncated, "spool must be marked truncated");
+        assert_eq!(
+            pending.total_seconds, CHANNEL_DEPTH as u64,
+            "total must equal on-disk after a clean drain"
+        );
+        assert!(!pending.truncated, "a clean drain is not truncation");
+        // Now simulate a take that really was longer than what drained to
+        // disk: the sidecar claims more audio than the file holds. This is
+        // the loss the spool bound exists to detect, and it must be
+        // reported as truncated. Setting the sidecar directly is
+        // deterministic (no writer thread racing), unlike the old 600-frame
+        // burst which relied on the bound check and could drop frames.
+        let claimed_bytes = (CHANNEL_DEPTH as u64 + 100) * TARGET_SAMPLE_RATE as u64 * 4;
+        fs::write(&meta_path, claimed_bytes.to_string()).unwrap();
+        let pending = find_pending(d.path()).expect("spool must be offered");
+        assert_eq!(
+            pending.total_seconds,
+            (CHANNEL_DEPTH + 100) as u64,
+            "the sidecar total must be reported"
+        );
+        assert!(
+            pending.truncated,
+            "a take longer than what is on disk must be reported truncated"
+        );
     }
 
     #[test]
@@ -768,8 +787,16 @@ mod tests {
         // Hold a writer clone like production, so the channel stays open for
         // the whole write burst (see begin_write_abandoned_leaves_file_with_size).
         let _w = spool.clone_writer().expect("spool has a writer");
-        // Write 90 seconds of 1-second frames. Well under the 300 s bound.
-        for _ in 0..90 {
+        // Write CHANNEL_DEPTH seconds of 1-second frames. That is the
+        // largest burst that fits the bounded writer channel, so no frame is
+        // ever dropped and the on-disk file, the sidecar total, and the
+        // claimed seconds are all exactly CHANNEL_DEPTH. A larger burst
+        // (like the 90 s this test used before) could overflow the channel
+        // on a saturated CI runner before the writer drained it, dropping
+        // frames and making the sidecar total exceed the on-disk seconds
+        // past the 15 s tolerance, which flipped `truncated` (the flake that
+        // red the v0.2.17 release gate). Well under the 300 s bound.
+        for _ in 0..CHANNEL_DEPTH {
             spool.write(&vec![0.1f32; TARGET_SAMPLE_RATE as usize]);
         }
         let path = spool.path.clone();
@@ -784,16 +811,22 @@ mod tests {
         );
         set_mtime(&path, SystemTime::now() - (Duration::from_secs(11 * 60)));
         let pending = find_pending(d.path()).expect("spool must be offered");
-        // The on-disk seconds are timing-dependent (the writer drains in the
-        // background), so we only assert the upper bound. The total counter
-        // and truncated flag are deterministic.
+        // The burst fits the channel, so nothing is dropped and the on-disk
+        // seconds, the sidecar total, and the truncated flag are all
+        // deterministic: exactly CHANNEL_DEPTH seconds, whole, not truncated.
         assert!(
-            pending.seconds <= 90,
-            "spool must not exceed 90 s, got {}",
+            pending.seconds <= CHANNEL_DEPTH as u64,
+            "spool must not exceed {CHANNEL_DEPTH} s, got {}",
             pending.seconds
         );
-        assert_eq!(pending.total_seconds, 90, "expected 90 s total (no loss)");
-        assert!(!pending.truncated, "90 s spool must not be truncated");
+        assert_eq!(
+            pending.total_seconds, CHANNEL_DEPTH as u64,
+            "expected {CHANNEL_DEPTH} s total (no loss)"
+        );
+        assert!(
+            !pending.truncated,
+            "{CHANNEL_DEPTH} s spool must not be truncated"
+        );
     }
 
     /// HARD-4 row 9: a spool left by a kill that never ran the stop path has
