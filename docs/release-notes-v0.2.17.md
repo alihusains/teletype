@@ -249,14 +249,23 @@ Three things this run also exposed, recorded rather than fixed:
 
 ## Known limits
 
-- F-02c is not closed. The take traces show streaming rarely committing a
-  segment on real takes of 4 s or longer: 0 of 12 on 2026-10-28, 2 of 5 on
-  2026-10-31, 0 of 2 on 2026-11-01, and 0 of 14 on 2026-11-04 (7 takes on
-  Parakeet TDT v3, 4 on Granite, 3 on Moonshine, 2 on the Apple rows). Every
-  engine that took part committed nothing. A take that commits nothing still
-  delivers text, but it decodes the whole clip after release, so long takes
-  feel slower than the streaming path is meant to. Dictation works; the
-  streaming promise is the open part.
+- F-02c (a streaming take committing zero segments) is fixed in this build.
+  The root cause was that the streaming take received device-rate audio (48 kHz
+  on most Macs) while its `Segmenter` and `VadDetector` were built for 16 kHz,
+  so the 350 ms commit-pause and 12 s max-segment thresholds were computed
+  against the wrong clock and a real take never cut. `0da8a59` feeds
+  block-resampled 16 kHz audio to the streaming path, the spool and the VAD.
+  Proven by `f02_real_six_second_take_drains_spool_and_commits_a_segment`, which
+  drives a 6 s take through the real `stop()` path and the real `StreamingTake`
+  and asserts the take commits at least one segment (the log shows "1 segments
+  committed mid-take, tail 2000 ms"). The historical "rarely committing" traces
+  (0 of 12 on 2026-10-28, 2 of 5 on 2026-10-31, 0 of 14 on 2026-11-04) predate
+  or run on that fix, and a short take that commits 0 is the documented
+  whole-take fallback (dictation.rs:6432), not the defect: a take under the
+  segment cut still delivers text, it just decodes the whole clip after release
+  instead of streaming. The one part still open is a live-microphone
+  confirmation of mid-take commits on a long (15 s or more) take, which needs
+  Ali's mic.
 - Apple speech now has live microphone verification on macOS 27 Apple Silicon, and
   a new limit came out of it. The code defect that
   blocked it is fixed in this build, and the fix is proven by contract tests
