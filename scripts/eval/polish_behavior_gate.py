@@ -23,7 +23,10 @@ Prompt source:
 
 Severity classes:
   * critical — changed a number/name/identifier, invented content, dropped an
-    AUTOTEXT placeholder, or produced no output.
+    AUTOTEXT placeholder, produced no output, or emitted malformed punctuation
+    (doubled marks, comma adjacent to a period outside a numeric context,
+    broken ellipsis, space before terminal punctuation, doubled mark across
+    a space).
   * major    — dropped real content (a real word removed).
   * minor    — style drift (register/wording change without content loss).
 
@@ -472,6 +475,84 @@ def expected_wins_suppress(case: dict, fb: str) -> bool:
     return False
 
 
+def _structural_punct_findings(out: str) -> list[str]:
+    """Return a list of malformed-punctuation descriptors found in `out`.
+
+    This is a structural check: it inspects the SHAPE of the punctuation in
+    the output, not its content. It catches broken text that reaches the
+    user verbatim (e.g. a doubled comma from a live microphone take) even
+    when the model faithfully preserved every word.
+
+    Legal text passes untouched. The following are NOT flagged:
+      * `...` (exactly three dots, a normal ellipsis)
+      * decimals (`1.5`, `0.2`) and version strings (`v0.2.17`, `1.2.3`)
+      * times (`9:15`) and URLs (`https://example.com`)
+      * a normal sentence end (`word.`)
+    """
+    findings: list[str] = []
+
+    # 1. Two or more identical adjacent punctuation marks.
+    #    Catches `,,`, `!!`, `;;`, `::`, `..`, `....`, etc.
+    #    A run of exactly three dots (`...`) is a legal ellipsis and is
+    #    allowed; any other run of 2+ identical marks is malformed.
+    # `:` is excluded on purpose: code identifiers dictated by developers use
+    # the path separator `::` (std::vector), and a gate that calls that
+    # malformed would fail legitimate output.
+    for ch in ",.!?;":
+        for m in re.finditer(re.escape(ch) + r"+" + re.escape(ch), out):
+            run = m.group(0)
+            if ch == "." and len(run) == 3:
+                continue  # legal ellipsis
+            findings.append(f"doubled punctuation: {run!r}")
+
+    # 2. A comma adjacent to a period in either order, where the pair is
+    #    not part of a decimal number or version string.
+    #    `.,` and `,.` are both malformed when not inside a numeric context.
+    for m in re.finditer(r"[.,]", out):
+        i = m.start()
+        # Check the pair starting at i (two consecutive chars).
+        if i + 1 < len(out):
+            pair = out[i:i + 2]
+            if pair in (".,", ",."):
+                # Exclude decimal / version contexts: a digit on at least
+                # one side of the pair (e.g. `1.2`, `v0.2.17`).
+                left = out[i - 1] if i > 0 else ""
+                right = out[i + 2] if i + 2 < len(out) else ""
+                if not (left.isdigit() or right.isdigit()):
+                    findings.append(f"comma adjacent to period: {pair!r}")
+                # Also check the reverse: if pair is `,.`, the period is
+                # at i+1; if pair is `.,`, the comma is at i+1. Both
+                # directions are covered by the same pair check.
+
+    # 3. An ellipsis that is not exactly three dots.
+    #    `..` (two dots) and `....` (four or more dots) are malformed.
+    #    Exactly `...` is legal and already handled above (not flagged).
+    for m in re.finditer(r"\.{2}", out):
+        # Find the full run of dots.
+        start = m.start()
+        end = m.end()
+        while end < len(out) and out[end] == ".":
+            end += 1
+        run = out[start:end]
+        if len(run) != 3:
+            findings.append(f"malformed ellipsis: {run!r}")
+
+    # 4. A space before a terminal comma or period, judged per line so that a
+    #    line break is not mistaken for a stray space. A line that merely
+    #    starts with a mark has no preceding word on that line, so it is not
+    #    flagged: a space INSIDE a line before a mark always is.
+    for line in out.splitlines():
+        for m in re.finditer(r"\S\s+[,.;:!?]", line):
+            findings.append(f"space before terminal punctuation: {m.group(0)!r}")
+
+    # 5. A doubled punctuation mark across a single space.
+    #    `, ,` is malformed.
+    for m in re.finditer(r"([,.!?;]) \1", out):
+        findings.append(f"doubled punctuation across space: {m.group(0)!r}")
+
+    return findings
+
+
 def grade_case(case: dict, output: str) -> list[dict]:
     """Grade one case's model output. Returns a list of findings, each
     {"severity": "critical"|"major"|"minor", "detail": str}. An empty list
@@ -581,7 +662,20 @@ def grade_case(case: dict, output: str) -> list[dict]:
                 })
                 dropped_major = True
 
-    # --- 6. Style drift (minor) -------------------------------------------
+    # --- 6. Structural punctuation (critical) ------------------------------
+    # The output's punctuation SHAPE is malformed: doubled marks (`,,`, `!!`),
+    # a comma adjacent to a period outside a numeric context, a broken
+    # ellipsis (`..`, `....`), a space before a terminal comma or period, or
+    # a doubled mark across a single space. This is a concrete failure signal
+    # (the user's document receives broken text verbatim), so it is critical
+    # like the other concrete failure signals (changed number, forbidden
+    # signal, preamble leak). It is checked on the raw output, not the
+    # normalized form, so the raw punctuation shape is what is inspected.
+    punct_findings = _structural_punct_findings(out)
+    for pf in punct_findings:
+        findings.append({"severity": "critical", "detail": f"malformed punctuation: {pf}"})
+
+    # --- 7. Style drift (minor) -------------------------------------------
     # Heuristic: output shares few tokens with input (heavy rewrite). We
     # only flag when there are NO critical/major findings, so a clean
     # over-rewrite surfaces as minor rather than being drowned.
@@ -773,6 +867,65 @@ def self_test() -> int:
         assert rc == 1, f"real corpus vs over-polished must FAIL (exit 1), gate exited {rc}"
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # 13b. Structural punctuation: a doubled comma (the live defect shape)
+    #     must be flagged as critical, and the 17 real goldens must still
+    #     pass with the new check active (positive control).
+    #
+    # (a) Negative: take one real corpus entry's correct output and inject
+    #     the `,,` shape from the live defect. Grading it must produce the
+    #     new critical finding, and the gate must treat it as a failure the
+    #     same way an over-polished derivative already is (exit 1).
+    live_defect_output = (
+        "So basically we need to ship this on Friday,, "
+        "because the client meeting is on Monday."
+    )
+    # Use the num-quantity case as the host (its correct output is a
+    # complete sentence; injecting `,,` produces the live defect shape).
+    host_case = next(c for c in real_cases if c["id"] == "num-quantity")
+    f = grade_case(host_case, live_defect_output)
+    punct_crit = [x for x in f if x["severity"] == "critical" and "malformed punctuation" in x["detail"]]
+    assert punct_crit, f"live defect `,,` not flagged as critical: {f}"
+    assert any("doubled punctuation" in x["detail"] for x in punct_crit), \
+        f"expected 'doubled punctuation' in finding, got: {punct_crit}"
+
+    # Run the full gate with the defect injected: must exit 1 (failure),
+    # the same way the over-polished derivative does.
+    defect_map = dict(correct_map)
+    defect_map["num-quantity"] = live_defect_output
+    tmpdir = tempfile.mkdtemp(prefix="polish-gate-selftest-")
+    defect_path = os.path.join(tmpdir, "defect.json")
+    try:
+        with open(defect_path, "w", encoding="utf-8") as f:
+            json.dump(defect_map, f)
+        ns = argparse.Namespace(
+            corpus=DEFAULT_CORPUS, prompt_variant=None, base_url=None,
+            model=None, api_key=None, language="en",
+            max_score=DEFAULT_MAX_SCORE, timeout=DEFAULT_TIMEOUT,
+            json=None, fail_on_skip=False, list_corpus=False,
+            self_test=False, stub_responses=defect_path,
+        )
+        rc = run_gate(ns)
+        assert rc == 1, f"live defect must FAIL (exit 1), gate exited {rc}"
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # (b) Positive control: all 17 real goldens still pass with the new
+    #     structural check active. This is the acceptance test that the
+    #     rule does not false-positive on legal punctuation (decimals,
+    #     version strings, times, normal sentence ends).
+    #     (Already proven by check 13a above, which runs the real corpus
+    #     against correct-outputs.json and asserts exit 0. Re-assert here
+    #     for clarity.)
+    ns = argparse.Namespace(
+        corpus=DEFAULT_CORPUS, prompt_variant=None, base_url=None,
+        model=None, api_key=None, language="en",
+        max_score=DEFAULT_MAX_SCORE, timeout=DEFAULT_TIMEOUT,
+        json=None, fail_on_skip=False, list_corpus=False,
+        self_test=False, stub_responses=DEFAULT_CORRECT_OUTPUTS,
+    )
+    rc = run_gate(ns)
+    assert rc == 0, f"real corpus vs correct-outputs must still PASS with structural check (exit 0), gate exited {rc}"
 
     # 14. Synthetic unit-style check of the over-polishing logic (kept as an
     #     extra; the real-corpus run above is the primary proof). The set
