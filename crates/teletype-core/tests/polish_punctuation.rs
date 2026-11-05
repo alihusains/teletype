@@ -1,3 +1,5 @@
+//! claim: text-integrity
+//!
 //! PP-POLISH-1: the polish stage can emit doubled punctuation into the
 //! user's document.
 //!
