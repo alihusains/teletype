@@ -9874,6 +9874,26 @@ mod tests {
         }
     }
 
+    /// True when running on a CI runner. Real-take integration tests block on
+    /// a wall-clock deadline for the release worker + tail decode + spool
+    /// drain to finish; on a loaded macos-latest runner (the Coverage job runs
+    /// the whole workspace suite at once) that can exceed the local deadline
+    /// for pure scheduling reasons, so those tests relax the bound on CI.
+    fn is_ci_runner() -> bool {
+        matches!(std::env::var("CI"), Ok(v) if !v.is_empty() && v != "false")
+    }
+
+    /// Wall-clock deadline for a real-take integration test: generous on CI
+    /// (the whole-workspace Coverage job is heavily loaded), tight locally so
+    /// a genuine hang is still caught quickly.
+    fn take_deadline() -> std::time::Duration {
+        if is_ci_runner() {
+            std::time::Duration::from_secs(60)
+        } else {
+            std::time::Duration::from_secs(15)
+        }
+    }
+
     /// CMCP-1. Granite and Moonshine answer a live take with the text and no
     /// word rows at all, while claiming `word_timings`. The delivery path
     /// rebuilds the sentence from the word rows, so an empty word list joined
@@ -12636,7 +12656,7 @@ mod tests {
         // Pump the worker's events until the take is idle: the release
         // worker sent its terminal `Transcribed` (the headless path idles
         // the take), and the counter has advanced past this take.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + take_deadline();
         loop {
             if session.phase == Phase::Idle {
                 break;
@@ -13013,7 +13033,7 @@ mod tests {
         // sends its terminal `Event::Transcribed` on the pump channel; the
         // controller handles it (the headless path returns before the
         // platform pipeline and idles the take). Block on the next event.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + take_deadline();
         loop {
             if session.phase == Phase::Idle {
                 break;
@@ -13187,7 +13207,7 @@ mod tests {
         drop(cb);
         session.stop(false);
         // Drain the worker's terminal event; the mirror channel carries it.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + take_deadline();
         let mut got_terminal = false;
         loop {
             if got_terminal {
@@ -13315,7 +13335,7 @@ mod tests {
         }
         drop(cb);
         session.stop(false);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + take_deadline();
         loop {
             if std::time::Instant::now() >= deadline {
                 panic!(
@@ -13413,7 +13433,7 @@ mod tests {
         }
         drop(cb);
         session.stop(false);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + take_deadline();
         let mut got_terminal = false;
         loop {
             if got_terminal {
