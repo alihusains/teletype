@@ -338,4 +338,32 @@ describe("Prompt Engineer: the card shows the 10-section example and a customize
       document.querySelector("textarea[style*='monospace']");
     expect(textarea).toBeTruthy();
   });
+
+  it("marks Prompt Engineer as needing a general model on a cleanup-only model", async () => {
+    mockListenCapture();
+    const PE_TRANSFORM = {
+      id: "builtin-prompt-engineer",
+      name: "Prompt Engineer",
+      description: "Turn rough instructions into a clear, structured AI prompt.",
+      instruction: "Convert the rough instruction into a structured prompt.",
+      shortcut: "",
+      enabled: true,
+      builtIn: true,
+      autoApply: false,
+    };
+    program({
+      list_transforms: [PE_TRANSFORM],
+      get_settings: { autoApplyTransform: true, listStyle: "bullets", polishRules: {}, polishCustomInstructions: [] },
+      get_runtime_status: {
+        speech: { state: "ready", label: "Speech", modelId: "t", detail: "ready", blocking: false },
+        llm: { state: "loaded", label: "LLM", modelId: "s1-mini", detail: "loaded", blocking: false },
+      },
+    });
+    render(<TransformsScreen />);
+
+    // s1-mini is a transcript cleaner: the eval scored it 0/10 on the
+    // Prompt Engineer headings, so the card must say the preset needs a
+    // general model before the user runs it.
+    await waitFor(() => expect(screen.getAllByText("Needs a general model").length).toBe(1));
+  });
 });
