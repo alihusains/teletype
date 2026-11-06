@@ -27,6 +27,23 @@ use teletype_core::injector::ClipboardSnapshot;
 /// cascade goes straight to the set-value fallback. Mirrors the core constant.
 const MAX_TYPED_CHARS: usize = 2000;
 
+/// How long the paste key holds the character key down before releasing it.
+///
+/// A key-down and key-up posted in the same instant is a press no physical
+/// keyboard makes, and some destinations (terminals, certain web editors)
+/// misread it: they drop the press, double it, or garble it. Holding the key
+/// for a few milliseconds makes the synthetic chord look like a normal
+/// human keypress.
+///
+/// 20 ms is the value measured to be safe: a 0 ms gap (down and up in the
+/// same instant) was observed doubling the paste in a live editor, a 1-2 ms
+/// gap doubled about half the time, and 5-20 ms never failed on a calm
+/// machine. The reference product (Wispr Flow) holds 5 ms; 20 ms keeps a
+/// margin over the 1-2 ms failures. A synthetic key held for longer than this
+/// does not auto-repeat (a 2 s letter hold typed once), so 20 ms is well
+/// inside the safe range.
+const PASTE_KEY_HOLD: std::time::Duration = std::time::Duration::from_millis(20);
+
 /// Item 3 (`settings.keep_text_on_clipboard`): what the restore should leave
 /// on the pasteboard as an extra item, or `None` for a clean restore.
 ///
@@ -295,9 +312,25 @@ mod macos {
             return false;
         };
         // ⌘V: Meta + ANSI 'V' keycode 9 (same as the injector).
+        //
+        // The 'V' is pressed and released as a separate pair with a short
+        // hold in between, rather than a single `Direction::Click`. A
+        // down+up posted in the same instant is a press no physical keyboard
+        // makes, and some destinations (terminals, certain web editors)
+        // misread it — dropping, doubling, or garbling the paste. Holding the
+        // key for `PASTE_KEY_HOLD` makes the chord look like a normal human
+        // keypress. See the constant's doc for the measured rationale.
+        //
+        // The Meta modifier is released after the 'V' key-up, matching the
+        // injector's order (modifier held down for the whole chord, released
+        // last). The hold sleeps on the calling thread, which is fine: the
+        // cascade already blocks on clipboard and verification work here, and
+        // 20 ms is far below any perceived-latency threshold.
         let result = (|| {
             enigo.key(Key::Meta, Direction::Press)?;
-            let r = enigo.key(Key::Other(9), Direction::Click);
+            enigo.key(Key::Other(9), Direction::Press)?;
+            std::thread::sleep(PASTE_KEY_HOLD);
+            let r = enigo.key(Key::Other(9), Direction::Release);
             enigo.key(Key::Meta, Direction::Release)?;
             r
         })();

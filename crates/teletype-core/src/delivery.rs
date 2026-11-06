@@ -1523,7 +1523,9 @@ mod tests {
     #[test]
     fn cascade_policy_type_mode_skips_clipboard() {
         // A policy that says "type" for an app must skip the clipboard
-        // entirely and go straight to the typer.
+        // entirely and go straight to the typer. Forced via with_override so
+        // the test does not depend on which real app the checked-in table
+        // maps to "type" (terminals now paste, not type).
         let (io, _field, (_set, type_calls, clip_set, restore), _typed) = make_io(
             "",
             false,
@@ -1534,9 +1536,12 @@ mod tests {
             true,
             None,
         );
-        let policy = default_policy();
-        // "com.apple.Terminal" is mapped to "type" in the policy table.
-        let outcome = deliver("ls -la", Some("com.apple.Terminal"), &policy, &io);
+        let policy = default_policy().with_override(
+            "com.example.typedapp",
+            DeliveryMode::Type,
+            None,
+        );
+        let outcome = deliver("ls -la", Some("com.example.typedapp"), &policy, &io);
         assert_eq!(outcome, DeliveryOutcome::Typed);
         assert_eq!(type_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(
@@ -1644,13 +1649,16 @@ mode = "bogus"
     fn policy_builtin_parses() {
         // The checked-in table must parse and have the expected entries.
         let policy = DeliveryPolicy::builtin();
+        // Terminals paste (clipboard + ⌘V) rather than typing character-by-
+        // character: a synthetic key stream mangles in a terminal (stuck key
+        // -> "aaaaa"), while a single paste lands cleanly. See the policy file.
         assert_eq!(
             policy.mode_for(Some("com.apple.Terminal")),
-            DeliveryMode::Type
+            DeliveryMode::PasteVerify
         );
         assert_eq!(
             policy.mode_for(Some("com.googlecode.iterm2")),
-            DeliveryMode::Type
+            DeliveryMode::PasteVerify
         );
         assert_eq!(
             policy.mode_for(Some("com.microsoft.Word")),

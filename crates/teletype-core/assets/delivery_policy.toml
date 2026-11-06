@@ -42,13 +42,34 @@
 [default]
 mode = "paste_verify"
 
-# Terminals paste-verify can read back poorly and where the paste key
-# behaves differently; typing is the reliable route.
+# Terminals: paste, don't type.
+#
+# The old route was "type" (character-by-character) because a terminal's AX
+# value reads back poorly for paste-verify. But typing a synthetic
+# character stream into a terminal is the unreliability: a key-down held a
+# fraction too long (or a lost key-up) makes the terminal echo the last
+# character repeatedly, mangling dictation into "aaaaa".
+#
+# The reference product (Wispr Flow) and its open-source competitor
+# (EnviousWispr) both paste into terminals: put the text on the clipboard and
+# fire one ⌘V, with a short hold between the key-down and key-up so the
+# chord reads as a normal human keypress. A terminal accepts a single paste
+# cleanly and never sees a key stream, so the mangling cannot happen.
+#
+# paste_verify is the right mode here even though the terminal's field is
+# often unreadable: the ⌘V fires, the text lands, and the unreadable read-back
+# resolves to PastedUnverified (quiet, no pill, clipboard restored as usual)
+# rather than a second copy. The cascade never falls back to typing after a
+# paste whose landing is unknown (F-19), so there is no double-delivery.
+#
+# Multi-line dictation into a terminal is still refused upstream
+# (refuse_newline_in_terminal) because a newline submits the line; single-line
+# text — the common case — is what this route carries.
 ["com.apple.Terminal"]
-mode = "type"
+mode = "paste_verify"
 
 ["com.googlecode.iterm2"]
-mode = "type"
+mode = "paste_verify"
 
 # Word resists keyboard simulation of long runs; paste + verify works.
 ["com.microsoft.Word"]
