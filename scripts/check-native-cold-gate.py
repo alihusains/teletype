@@ -13,6 +13,12 @@ that merely mentions the crate name (a `cmake --build` line, a Compiling
 line, a path of some other crate) cannot satisfy the gate. The executable
 may be the bare word `cmake` or an absolute path, as cargo -vv prints it.
 
+A cmake configure is recognized in two line shapes: cargo's own
+``Running `... cmake ...` `` for build scripts it runs, and the cmake crate's
+``[crate] running: cd <dir> && <env> "cmake" ...`` lines (cmake 0.1.58
+prints each command through the build script's stdout, which is the shape
+the vendored transcribe-cpp-sys configure actually takes in the CI log).
+
 Usage: check-native-cold-gate.py LOG [FLOOR]
 Exit 0 when the floor is proven, exit 1 with a reason on stderr otherwise.
 Stdlib only, no network.
@@ -41,44 +47,85 @@ def is_cmake_exec(token):
     return token == "cmake" or (token.startswith("/") and token.endswith("/cmake"))
 
 
-def is_cmake_line(line):
-    """A cargo -vv Running line whose command is cmake (bare or absolute)."""
-    if "Running" not in line:
-        return False
+def cmake_command(line):
+    """Return the cmake command string for a line that runs cmake, else None.
+
+    Two emitters print a cmake invocation in a `cargo build -vv` log:
+
+      * cargo itself, for a build script it runs, prints
+        ``Running `... cmake ...```; and
+      * the cmake crate (0.1.58) prints every command it runs through
+        ``println!``, which cargo -vv attributes to the build script as
+        ``[transcribe-cpp-sys 0.4.1] running: cd <dir> && "cmake" ...``.
+
+    The vendored transcribe-cpp-sys configure is emitted by the second form,
+    which the first check alone would miss and fail the gate on a correct
+    build, so both are recognized.
+    """
     m = re.search(r"Running `([^`]+)`", line)
+    if m:
+        cmd = m.group(1)
+        if is_cmake_exec(cmd.split()[0]):
+            return cmd
+        return None
+    m = re.search(r"running:\s*(.+)$", line)
     if not m:
-        return False
-    first = m.group(1).split()[0]
-    return is_cmake_exec(first)
+        return None
+    # The command follows `cd "<dir>" &&`; strip it. The executable may be
+    # quoted ("cmake") or bare, and an absolute path, so shlex the rest.
+    cmd = m.group(1)
+    if "&&" in cmd:
+        cmd = cmd.split("&&", 1)[1]
+    try:
+        tokens = shlex.split(cmd.strip())
+    except ValueError:
+        return None
+    # The cmake crate prefixes the command with environment assignments
+    # (CMAKE_PREFIX_PATH="" LC_ALL="C" ...); skip them to reach the
+    # executable.
+    for tok in tokens:
+        if "=" in tok and not tok.startswith("-"):
+            continue
+        return cmd if is_cmake_exec(tok) else None
+    return None
 
 
 def configure_records(lines):
     """Yield the argument tokens of every cmake configure line in the log.
 
-    A configure line is a cargo -vv `Running` line whose program is cmake
-    and which carries a source dir argument (positional or -S). The build
-    line (`cmake --build ...`) has no source dir and is not a configure.
+    A configure line is a cmake invocation that carries a source dir
+    argument (positional or -S). The build line (`cmake --build ...`) has no
+    source dir and is not a configure.
     """
     for line in lines:
-        if not is_cmake_line(line):
+        cmd = cmake_command(line)
+        if not cmd:
             continue
         # shlex.split would choke on the trailing backtick cargo prints
         # after the last argument, so tokenize the command inside the
         # backticks only.
-        m = re.search(r"Running `([^`]+)`", line)
-        if not m:
-            continue
         try:
-            tokens = shlex.split(m.group(1))
+            tokens = shlex.split(cmd)
         except ValueError:
             continue
         if len(tokens) < 2:
             continue
+        # Skip leading env assignments, then the cmake executable, to reach
+        # the first real argument.
+        args = tokens[1:]
+        while args and "=" in args[0] and not args[0].startswith("-"):
+            args = args[1:]
+        if args and is_cmake_exec(args[0]):
+            args = args[1:]
+        # A `cmake --build <dir> ...` line is a build, not a configure: it
+        # runs the install target and has no -D flags. Reject it outright so
+        # its positional build dir cannot masquerade as a source dir.
+        if args and args[0] == "--build":
+            continue
         # A configure carries a source dir: -S <dir> or a positional path.
-        # The build line (`cmake --build <dir> ...`) has none.
         has_source = False
-        for i, tok in enumerate(tokens[1:]):
-            if tok == "-S" and i + 1 < len(tokens) - 1:
+        for i, tok in enumerate(args):
+            if tok == "-S" and i + 1 < len(args) - 1:
                 has_source = True
             elif not tok.startswith("-"):
                 has_source = True

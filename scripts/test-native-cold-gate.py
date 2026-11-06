@@ -67,6 +67,28 @@ CONFIGURE_ABS = (
 )
 NOISE = "   Compiling teletype-speech v0.2.17\n"
 
+# The cmake crate (0.1.58) does not let cargo print its commands as `Running`
+# lines. It prints them through the build script's stdout, which cargo -vv
+# attributes to the script as `[crate] running: cd <dir> && <env> "cmake" ...`.
+# The vendored transcribe-cpp-sys configure arrives in this shape, not the
+# `Running` shape above, so the gate must recognize both.
+BUILD_SCRIPT_CONFIGURE = (
+    '[transcribe-cpp-sys 0.4.1] running: cd "/tmp/teletype-native-cold/release/build/'
+    'transcribe-cpp-sys-84953261480dc422/out/build" && CMAKE_PREFIX_PATH="" LC_ALL="C" '
+    '"cmake" "/Users/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/'
+    'transcribe-cpp-sys-0.4.1" "-B" "/tmp/teletype-native-cold/release/build/'
+    'transcribe-cpp-sys-84953261480dc422/out/build" "-DCMAKE_BUILD_TYPE=Release" '
+    '{flags}'
+)
+# Same crate, the cmake --build line: a build, not a configure. Its positional
+# build dir must not be mistaken for a source dir.
+BUILD_SCRIPT_BUILD = (
+    '[transcribe-cpp-sys 0.4.1] running: cd "/tmp/teletype-native-cold/release/build/'
+    'transcribe-cpp-sys-84953261480dc422/out/build" && LC_ALL="C" "cmake" "--build" '
+    '"/tmp/teletype-native-cold/release/build/transcribe-cpp-sys-84953261480dc422/out/build" '
+    '"--target" "install" "--config" "Release" "--parallel" "3"'
+)
+
 
 def step_script():
     """Extract the raw `run:` block of the floor assert step from ci.yml."""
@@ -185,6 +207,17 @@ def main():
         # as cargo -vv prints it when CMAKE points at a full path.
         ("abs path executable valid", [NOISE, CONFIGURE_ABS.format(flags='"-DCMAKE_CXX_FLAGS=-mmacosx-version-min=15.0"')], True),
         ("abs path executable low", [NOISE, CONFIGURE_ABS.format(flags='"-DCMAKE_CXX_FLAGS=-mmacosx-version-min=10.13"')], False),
+        # --- the cmake crate's real `[crate] running:` line shape (2026-11-06) ---
+        # The CI cold build prints the configure this way, not as a `Running`
+        # line. The old gate missed it and failed a correct build.
+        ("build-script configure valid", [NOISE, BUILD_SCRIPT_CONFIGURE.format(flags='"-DCMAKE_CXX_FLAGS= -ffunction-sections -fPIC --target=arm64-apple-macosx -mmacosx-version-min=15.0 -w"')], True),
+        ("build-script configure low", [NOISE, BUILD_SCRIPT_CONFIGURE.format(flags='"-DCMAKE_CXX_FLAGS= -ffunction-sections -fPIC --target=arm64-apple-macosx -mmacosx-version-min=10.13 -w"')], False),
+        # the --build line of the same crate is not a configure and must not
+        # satisfy the gate on its own.
+        ("build-script build line only", [NOISE, BUILD_SCRIPT_BUILD], False),
+        # a configure plus the build line of the same crate: the build line
+        # must be ignored and the configure judged on its own.
+        ("build-script configure plus build", [NOISE, BUILD_SCRIPT_CONFIGURE.format(flags='"-DCMAKE_CXX_FLAGS= -mmacosx-version-min=15.0 -w"'), BUILD_SCRIPT_BUILD], True),
     ]
 
     failures = 0
