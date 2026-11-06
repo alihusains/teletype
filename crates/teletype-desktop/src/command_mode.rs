@@ -416,6 +416,33 @@ pub fn take_speech_ms(pcm16k: &[f32]) -> Option<u64> {
     Some(vad_speech_ms(&mut d, pcm16k))
 }
 
+/// The command take's VAD gate. Returns the one measurement (reused by the
+/// diagnostic log even when the take passes) and the silent `no_action`
+/// decision when the take is under the speech floor.
+pub(crate) fn vad_gate(pcm16k: &[f32]) -> (Option<u64>, Option<Decision>) {
+    let vad_ms = take_speech_ms(pcm16k);
+    let rejected = vad_ms
+        .is_some_and(|ms| ms < MIN_SPEECH_MS)
+        .then(|| Decision {
+            tool: "no_action".into(),
+            args: Map::new(),
+            args_source: "none".into(),
+            decider_ms: 0,
+        });
+    (vad_ms, rejected)
+}
+
+/// The model-side outcome label: distinct from the gate's `vad_reject`.
+pub(crate) fn decide_outcome_label(call_count: usize, tool: &str) -> &'static str {
+    if call_count == 0 {
+        "empty_calls"
+    } else if tool == "no_action" {
+        "model_no_action"
+    } else {
+        "none"
+    }
+}
+
 impl CommandDecider for NeuDecideDecider {
     fn kind(&self) -> DeciderKind {
         DeciderKind::NeuDecide
@@ -423,9 +450,10 @@ impl CommandDecider for NeuDecideDecider {
 
     fn decide(&self, pcm16k: &[f32], transcript: &str) -> Result<Decision, String> {
         let started = std::time::Instant::now();
-        // VAD gate: skip the model for takes with < ~300 ms of speech.
-        let vad_ms = take_speech_ms(pcm16k);
-        if vad_ms.is_some_and(|ms| ms < MIN_SPEECH_MS) {
+        // VAD gate: skip the model for takes with < ~300 ms of speech, and
+        // keep the one measurement for the diagnostic below.
+        let (vad_ms, rejected) = vad_gate(pcm16k);
+        if let Some(mut decision) = rejected {
             let samples = pcm16k.len();
             let speech = vad_ms
                 .map(|ms| format!("{ms}ms"))
@@ -434,12 +462,8 @@ impl CommandDecider for NeuDecideDecider {
                 crate::LogLevel::Info,
                 format!("neudecide: vad_reject samples={samples} speech={speech} calls=0 tool=no_action"),
             );
-            return Ok(Decision {
-                tool: "no_action".into(),
-                args: Map::new(),
-                args_source: "none".into(),
-                decider_ms: started.elapsed().as_millis() as u32,
-            });
+            decision.decider_ms = started.elapsed().as_millis() as u32;
+            return Ok(decision);
         }
         let mut model = self.ensure_loaded()?;
         let calls = model
@@ -459,9 +483,10 @@ impl CommandDecider for NeuDecideDecider {
             .unwrap_or_else(|| "unavail".into());
         let call_count = calls.len();
         let first_tool = &call.name;
+        let outcome = decide_outcome_label(call_count, first_tool);
         crate::log_entry(
             crate::LogLevel::Info,
-            format!("neudecide: samples={samples} speech={speech} gen=1 calls={call_count} tool={first_tool}"),
+            format!("neudecide: {outcome} samples={samples} speech={speech} gen=1 calls={call_count} tool={first_tool}"),
         );
         let mut decision = Decision {
             tool: call.name,
@@ -1310,21 +1335,124 @@ mod tests {
         let names: Vec<&str> = menu.iter().map(|t| t.name.as_str()).collect();
         for name in shipping_tool_names() {
             assert!(
-                names.iter().any(|n| *n == name.as_str()),
+                names.contains(&name.as_str()),
                 "the decider's menu is missing {name}: {names:?}"
             );
         }
         for unsupported in ["media", "edit_text", "draft_message", "web_search"] {
             assert!(
-                !names.iter().any(|n| *n == unsupported),
+                !names.contains(&unsupported),
                 "the decider advertises {unsupported}, which the executor cannot dispatch"
             );
         }
-        assert!(names.iter().any(|n| *n == "no_action"));
+        assert!(names.contains(&"no_action"));
         assert!(
             d.tools_json.starts_with("[{\"name\": \"open_app\""),
             "the menu must keep the Python-serialized tool list shape: {}",
             &d.tools_json[..d.tools_json.len().min(40)]
         );
+    }
+
+    /// CMD-PIPELINE-REPAIR E: the VAD-reject diagnostic must name the
+    /// outcome `vad_reject`, carry the take's sample count and the one
+    /// existing VAD measurement, and report zero parsed calls. It must not
+    /// be indistinguishable from a model `no_action`, and it must not run a
+    /// second VAD pass (one measurement, reused in the message and the
+    /// decision).
+    #[test]
+    fn vad_reject_diagnostic_is_distinct_and_metadata_only() {
+        let before = crate::logs_snapshot().len();
+        // A silent take: under the 300 ms speech floor, so the gate rejects
+        // before any model work. Drive the production `decide` path, because
+        // the diagnostic record belongs to the gate inside `decide`, not to
+        // the pure helper it calls.
+        let dir = tempfile::tempdir().expect("model dir");
+        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
+        let decider = NeuDecideDecider::new(dir.path()).expect("the decider builds");
+        let samples = vec![0.0f32; 16_000];
+        let decision = decider
+            .decide(&samples, "ignored")
+            .expect("the gate rejects");
+        assert!(decision.is_no_action());
+        assert_eq!(decision.args_source, "none");
+        // The diagnostic must report the one measurement the gate already
+        // took, not a second probe (the gate returns the same reading).
+        let (vad_ms, rejected) = crate::command_mode::vad_gate(&samples);
+        assert!(rejected.is_some(), "the gate rejects the silent take");
+        assert!(
+            vad_ms.is_some_and(|ms| ms < MIN_SPEECH_MS),
+            "the gate must carry the one VAD measurement under the floor"
+        );
+        // The log is process-global and tests run in parallel: inspect only
+        // the entries this take appended.
+        let logs = crate::logs_snapshot();
+        let entry = logs[before..]
+            .iter()
+            .rev()
+            .find(|l| l.message.starts_with("neudecide:") && l.message.contains("vad_reject"))
+            .expect("the reject must log one diagnostic record");
+        assert!(
+            entry.message.contains("vad_reject"),
+            "the diagnostic must name the outcome vad_reject: {}",
+            entry.message
+        );
+        assert!(
+            entry
+                .message
+                .contains(&format!("samples={}", samples.len())),
+            "the diagnostic must carry the sample count: {}",
+            entry.message
+        );
+        assert!(
+            entry.message.contains("calls=0"),
+            "the diagnostic must report zero parsed calls: {}",
+            entry.message
+        );
+        assert!(
+            entry.message.contains("tool=no_action"),
+            "the diagnostic must name the safe tool identifier: {}",
+            entry.message
+        );
+        assert!(
+            entry.message.contains("speech="),
+            "the diagnostic must carry the VAD measurement: {}",
+            entry.message
+        );
+        // Metadata only: no transcript, no arguments, no raw model output.
+        assert!(
+            !entry.message.contains("transcript"),
+            "the diagnostic must not carry a transcript: {}",
+            entry.message
+        );
+    }
+
+    /// CMD-PIPELINE-REPAIR E: a model `no_action` (the model ran and
+    /// answered do-nothing) must read as `model_no_action`, and an empty
+    /// call list as `empty_calls` in the diagnostic, so the three outcomes
+    /// are not confused in the log. Pinned against the pure formatter the
+    /// production path uses.
+    #[test]
+    fn model_outcome_labels_are_distinct_from_vad_reject() {
+        // The model ran, answered no_action: one call, the sentinel tool.
+        let model = crate::command_mode::decide_outcome_label(1, "no_action");
+        assert_eq!(
+            model, "model_no_action",
+            "a model no_action must read as model_no_action"
+        );
+        // The model ran but returned no calls at all.
+        let empty = crate::command_mode::decide_outcome_label(0, "no_action");
+        assert_eq!(
+            empty, "empty_calls",
+            "a zero-call generation must read as empty_calls"
+        );
+        // The model ran and produced a real tool call: no outcome label at
+        // all (the log line names the tool instead).
+        let real = crate::command_mode::decide_outcome_label(1, "open_app");
+        assert_eq!(real, "none", "a real tool call needs no outcome label");
+        // The VAD reject is the only outcome the formatter never produces:
+        // it is stamped by the gate's own record, so the labels cannot
+        // collide.
+        assert_ne!(model, "vad_reject");
+        assert_ne!(empty, "vad_reject");
     }
 }

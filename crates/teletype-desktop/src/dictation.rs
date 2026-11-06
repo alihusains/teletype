@@ -3190,8 +3190,12 @@ impl Session {
     /// P0.2: make sure the in-flight take has a trace, stamping hotkey-down
     /// when the trace is created. Idempotent: a take that already has one
     /// (e.g. double-tap switching to hands-free mid-take) keeps its marks.
+    ///
+    /// CMD-PIPELINE-REPAIR B: a take already re-keyed to its session id
+    /// (`trace_key` cleared by `stop_with_note`) must not mint a second trace
+    /// when the chord unwind's redundant edges arrive while it transcribes.
     fn ensure_trace(&mut self) {
-        if self.trace_key.is_none() {
+        if self.trace_key.is_none() && self.phase != Phase::Transcribing {
             let key = self.next_id;
             let mut trace = DictationTrace::new(key, "");
             trace.mark(|s, now| s.t_hotkey_down = Some(now));
@@ -5291,6 +5295,9 @@ impl Session {
                                     message: DEVICE_LOSS_MESSAGE.to_string(),
                                 });
                             }
+                            // CMD-PIPELINE-REPAIR C: the streaming terminal
+                            // must carry the take's real 16 kHz PCM; the
+                            // command decider's VAD gate needs it.
                             let streaming_pcm = trim_silence_vad(&asr_samples);
                             exit_guard.terminal(Event::Transcribed {
                                 session,
@@ -5826,6 +5833,8 @@ impl Session {
                     });
                     #[cfg(test)]
                     if let (Some(tx), Some(transcript)) = (&test_events, test_outcome) {
+                        // CMD-PIPELINE-REPAIR C: mirror the production
+                        // terminal's real PCM, not a synthetic substitute.
                         let _ = tx.send(Event::Transcribed {
                             session,
                             transcript,
@@ -5834,7 +5843,7 @@ impl Session {
                             asr_end_us,
                             device_lost: device_lost_ms > 0,
                             device_lost_ms,
-                            pcm: None,
+                            pcm: Some(trimmed.to_vec()),
                             losses: None,
                             take_audio: None,
                             segment_polished: false,
@@ -7800,6 +7809,8 @@ impl Session {
             // P0.2: same marks and paste stamp as production; the write is
             // skipped (no app handle in tests — see `finish_trace`).
             let audio_ms = self.speech_ms.get(&session).copied().unwrap_or(0) as u32;
+            // CMD-PIPELINE-REPAIR B: restamp the route the take actually ran.
+            let restamp_command = payload.decider.is_some() || payload.tool.is_some();
             let decider_marks = (
                 payload.decider,
                 payload.decider_ms,
@@ -7815,6 +7826,9 @@ impl Session {
                     decider_marks.2,
                     decider_marks.3,
                 );
+                if restamp_command {
+                    t.take_kind = Some(TakeKind::Command.label().to_string());
+                }
                 t.audio_ms = audio_ms;
                 t.mark(|s, now| s.t_paste_sent = Some(now));
                 // T10b: the test path mirrors the production trace mutation
@@ -8235,6 +8249,8 @@ impl Session {
             payload.tool.clone(),
             payload.args_source.clone(),
         );
+        // CMD-PIPELINE-REPAIR B: restamp the route the take actually ran.
+        let restamp_command = payload.decider.is_some() || payload.tool.is_some();
         let audio_ms = self.speech_ms.get(&session).copied().unwrap_or(0) as u32;
         match refused {
             Some(reason) => self.finish_trace(session, |t| {
@@ -8246,6 +8262,9 @@ impl Session {
                     decider_marks.2,
                     decider_marks.3,
                 );
+                if restamp_command {
+                    t.take_kind = Some(TakeKind::Command.label().to_string());
+                }
                 t.audio_ms = audio_ms;
                 t.errors.push(reason);
             }),
@@ -8258,6 +8277,9 @@ impl Session {
                     decider_marks.2,
                     decider_marks.3,
                 );
+                if restamp_command {
+                    t.take_kind = Some(TakeKind::Command.label().to_string());
+                }
                 t.audio_ms = audio_ms;
                 t.delivered_to = delivered.map(str::to_string);
                 if matches!(delivered, Some("inject")) {
@@ -12287,14 +12309,15 @@ mod tests {
         // Idle (the old take was already discarded, so this is not a
         // takeover). In real time the chord comes >100 ms after the settle,
         // so the bounce guard does not suppress it.
-        session.last_release = Some(
-            std::time::Instant::now() - std::time::Duration::from_millis(150),
-        );
+        session.last_release =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(150));
         session.command_hotkey_down_event();
         assert_eq!(session.take_kind(), TakeKind::Command);
         assert_eq!(session.phase, Phase::Listening);
         // The fresh command take has its own trace, armed at the chord.
-        let key = session.trace_key.expect("the fresh command take has a trace");
+        let key = session
+            .trace_key
+            .expect("the fresh command take has a trace");
         let trace = session.traces.get(&key).expect("trace for the take");
         assert!(trace.t_hotkey_down.is_some(), "the fresh trace is armed");
         assert_eq!(
@@ -12303,10 +12326,7 @@ mod tests {
             "the fresh take is tagged command"
         );
         assert!(
-            trace
-                .command_mode
-                .iter()
-                .any(|e| e == "armed"),
+            trace.command_mode.iter().any(|e| e == "armed"),
             "the trace must show the command armed at start: {:?}",
             trace.command_mode
         );
@@ -12321,8 +12341,8 @@ mod tests {
         let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
         session.phase = Phase::Idle;
         session.hotkey_down_event();
-        session.started_at_ms = teletype_core::storage::now_ms()
-            - (COMMAND_TAKEOVER_WINDOW.as_millis() as u64 + 1);
+        session.started_at_ms =
+            teletype_core::storage::now_ms() - (COMMAND_TAKEOVER_WINDOW.as_millis() as u64 + 1);
         session.command_hotkey_down_event();
         assert_eq!(
             session.take_kind(),
@@ -12420,6 +12440,257 @@ mod tests {
             "the next take must not inherit the command route: {:?}",
             trace.command_mode
         );
+    }
+
+    /// CMD-PIPELINE-REPAIR B: the redundant edge that rides the chord
+    /// unwind (Option-up, which the tap reports as a bare-Ctrl re-edge)
+    /// must not allocate a second trace and replace the pending one. After
+    /// `stop()` re-keys the take's trace to the session id and clears
+    /// `trace_key`, a redundant press through the real event path used to
+    /// call `ensure_trace()` and mint a fresh trace, so the worker's
+    /// `PipelineReady` found no trace under the session id and the take's
+    /// marks (including `take_kind`) were written to a phantom trace that
+    /// is never finished. The surviving trace must be the original one:
+    /// same id, same armed/start marks, no second trace.
+    #[test]
+    fn redundant_edges_after_stop_do_not_replace_the_pending_trace() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        // The real stop path needs a take to finish: plant a synthetic
+        // recording with audio, or `stop` takes the "mic never opened"
+        // branch and drops the pending trace before the assertions below.
+        let recording = teletype_core::audio::Recording::synthetic();
+        RECORDING.with(|slot| {
+            slot.borrow_mut().replace(recording);
+        });
+        let tone: Vec<f32> = (0..16_000)
+            .map(|i| 0.3 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / 16_000.0).sin() as f32)
+            .collect();
+        RECORDING.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .expect("recording planted")
+                .push(&tone);
+        });
+        session.recording_started = Some(std::time::Instant::now());
+        // Ctrl down starts the dictation take; its trace is allocated here.
+        session.hotkey_down_event();
+        let original_key = session.trace_key.expect("the take has a trace");
+        let original_down = session
+            .traces
+            .get(&original_key)
+            .and_then(|t| t.t_hotkey_down)
+            .expect("the trace is armed at the first press");
+        // The chord takes the young take over, then the chord's release
+        // stops it: `stop` re-keys the trace to the session id it advances
+        // the counter to, and clears `trace_key`. A command take's release
+        // is never a quick tap (the tap path is dictation-only), so the
+        // hold length does not change the stop route.
+        session.started_at_ms = teletype_core::storage::now_ms() - 80;
+        session.hotkey_up_event_measured(Some(80));
+        session.command_hotkey_down_event();
+        assert_eq!(session.take_kind(), TakeKind::Command);
+        session.hotkey_up_event_measured(Some(900));
+        assert!(
+            !matches!(session.phase, Phase::Listening),
+            "the chord's release must stop the command take"
+        );
+        assert!(
+            session.trace_key.is_none(),
+            "a finished take must not keep a pending trace key"
+        );
+        // The re-key target is not the counter captured at the press: `stop`
+        // advances the counter to the re-key target, so it may have moved by
+        // the time the chord's release stops the take. Derive the finished
+        // id from the surviving trace instead.
+        assert_eq!(
+            session.traces.len(),
+            1,
+            "the finished take keeps exactly one pending trace: {:?}",
+            session.traces.keys().collect::<Vec<_>>()
+        );
+        // The unwind's redundant edges, through the real event paths:
+        // Option-up arrives as a bare-Ctrl re-edge (a press while the take
+        // is transcribing), and Ctrl-up follows.
+        session.hotkey_down_event();
+        session.hotkey_up_event_measured(Some(900));
+        assert_eq!(
+            session.traces.len(),
+            1,
+            "a redundant edge minted a second trace: {:?}",
+            session.traces.keys().collect::<Vec<_>>()
+        );
+        let finished_id = *session.traces.keys().next().expect("one trace");
+        let surviving = session
+            .traces
+            .get(&finished_id)
+            .expect("the pending trace must survive the redundant edges");
+        assert_eq!(
+            surviving.t_hotkey_down,
+            Some(original_down),
+            "the surviving trace must keep the original armed mark"
+        );
+        assert_eq!(
+            surviving.session, finished_id,
+            "the surviving trace must still be re-keyed to the session"
+        );
+        // The worker's `PipelineReady` now finds the trace: the command
+        // take's route and marks land on it, and no phantom recording is
+        // left behind.
+        let mut payload = test_payload(finished_id, "open safari");
+        payload.decider = Some("neudecide".into());
+        payload.decider_ms = Some(46);
+        payload.tool = Some("open_app".into());
+        payload.args_source = Some("neudecide".into());
+        let mut injected = false;
+        drive(
+            &mut session,
+            &mut |p| {
+                let _ = p;
+                injected = true;
+            },
+            Event::PipelineReady {
+                session: finished_id,
+                payload,
+            },
+        );
+        assert!(injected, "a headless session injects by design");
+        assert_eq!(
+            session.traces.len(),
+            1,
+            "the pipeline must not mint a trace of its own: {:?}",
+            session.traces.keys().collect::<Vec<_>>()
+        );
+        let finished = session
+            .traces
+            .get(&finished_id)
+            .expect("the finished take's trace survives the pipeline");
+        assert_eq!(
+            finished.take_kind.as_deref(),
+            Some("command"),
+            "the surviving trace must carry the command route"
+        );
+        assert_eq!(finished.decider.as_deref(), Some("neudecide"));
+        assert_eq!(
+            finished.decider_ms,
+            Some(46),
+            "the decider marks must land on the surviving trace"
+        );
+    }
+
+    /// CMD-PIPELINE-REPAIR B: a Dictation take the pipeline re-routes to a
+    /// command (the classifier/wake-word path, not the chord takeover) must
+    /// carry `take_kind = "command"` in its finished trace, stamped at the
+    /// actual executed route. Before the fix the kind was only written
+    /// before classification, so a classifier-produced command finished
+    /// with the stale "dictation" label.
+    ///
+    /// The take runs the real stop path (a synthetic recording stands in
+    /// for the mic, the scripted ASR stands in for the engine): the trace
+    /// re-key and the redundant-edge guard run exactly as in production,
+    /// and the take's finished trace stays pending (the headless path
+    /// keeps it for the `PipelineReady` that follows). The command verdict
+    /// rides the payload (decider and tool), the way the classifier
+    /// produces it.
+    #[test]
+    fn classifier_routed_take_finishes_with_command_kind() {
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<Event>();
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.test_events = Some(events_tx);
+        session.phase = Phase::Idle;
+        session.mock_asr = Some(Ok(("turn up the volume".to_string(), None)));
+        // The take: a synthetic recording stands in for the mic (the real
+        // stop path needs a buffer to finish), and the scripted ASR
+        // replaces the engine in the release worker. The buffer must hold
+        // audio: a zero-sample take is a capture failure, which ends the
+        // take before the pipeline would run.
+        let recording = teletype_core::audio::Recording::synthetic();
+        RECORDING.with(|slot| {
+            slot.borrow_mut().replace(recording);
+        });
+        // 1 s of a 440 Hz tone: the release worker's VAD gate runs on the
+        // real audio (the scripted outcome replaces the engine, not the
+        // gate), so the buffer must carry something the gate can pass.
+        let tone: Vec<f32> = (0..16_000)
+            .map(|i| 0.3 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / 16_000.0).sin() as f32)
+            .collect();
+        RECORDING.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .expect("recording planted")
+                .push(&tone);
+        });
+        // Ctrl down starts the dictation take (no chord, no wake phrase at
+        // the controller level): its trace is allocated here.
+        session.hotkey_down_event();
+        // The chord-free release, a long hold through the real stop path:
+        // the trace is re-keyed to the session id `stop` advances the
+        // counter to, and the release worker is spawned.
+        session.started_at_ms = teletype_core::storage::now_ms() - 900;
+        session.recording_started = Some(std::time::Instant::now());
+        session.hotkey_up_event_measured(Some(900));
+        assert!(
+            !matches!(session.phase, Phase::Listening),
+            "the release must stop the take"
+        );
+        // Pump the worker's events until the take is idle: the release
+        // worker sent its terminal `Transcribed` (the headless path idles
+        // the take), and the counter has advanced past this take.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if session.phase == Phase::Idle {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("the take never went idle; phase = {:?}", session.phase);
+            }
+            match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => session.handle(event),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        // The finished take's trace is pending under the session id the
+        // worker reported with: `stop` advanced the counter past the take's
+        // own start, so the finished id is the one just before.
+        let session_id = session.next_id - 1;
+        assert!(
+            session.traces.contains_key(&session_id),
+            "the finished take keeps its pending trace: {:?}",
+            session.traces.keys().collect::<Vec<_>>()
+        );
+        // The worker's `PipelineReady` now finds the trace: the command
+        // verdict (decider and tool) rides the payload, the way the
+        // classifier produces it.
+        let mut payload = test_payload(session_id, "turn up the volume");
+        payload.decider = Some("neudecide".into());
+        payload.decider_ms = Some(46);
+        payload.tool = Some("set_volume".into());
+        payload.args_source = Some("neudecide".into());
+        let mut injected = false;
+        drive(
+            &mut session,
+            &mut |p| {
+                let _ = p;
+                injected = true;
+            },
+            Event::PipelineReady {
+                session: session_id,
+                payload,
+            },
+        );
+        assert!(injected, "the classifier-routed command must inject");
+        let trace = session
+            .traces
+            .get(&session_id)
+            .expect("the finished take's trace");
+        assert_eq!(
+            trace.take_kind.as_deref(),
+            Some("command"),
+            "a classifier-produced command must finish with the command route: {:?}",
+            trace.take_kind
+        );
+        assert_eq!(trace.decider.as_deref(), Some("neudecide"));
     }
 
     // ------------------------------------------------------------------
@@ -12930,7 +13201,10 @@ mod tests {
             }
             match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                 Ok(event) => {
-                    if let Event::Transcribed { session: s, pcm, .. } = &event {
+                    if let Event::Transcribed {
+                        session: s, pcm, ..
+                    } = &event
+                    {
                         if *s == session.next_id - 1 || *s == session.next_id {
                             got_terminal = true;
                             // The terminal event must carry the take's actual
@@ -12957,6 +13231,225 @@ mod tests {
                             assert!(
                                 pcm.iter().any(|s| (s - 0.25).abs() < 0.5),
                                 "the PCM must be the take's actual audio"
+                            );
+                        }
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    }
+
+    /// CMD-PIPELINE-REPAIR C: the streaming-success-to-decider proof. The
+    /// captured terminal event of a take that streamed mid-take must carry
+    /// the take's actual 16 kHz PCM, nonempty and the right length, so the
+    /// command decider can classify the audio (the whole-take path already
+    /// carries it; the streaming path is the one that must). Before the fix
+    /// the streaming mirror sent a synthetic substitute.
+    #[test]
+    fn streaming_success_to_decider_proof_carries_nonempty_pcm() {
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<Event>();
+        let (controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.test_events = Some(events_tx);
+        session.headless_flash = true;
+        session.mock_asr = Some(Ok(("streamed command words".to_string(), None)));
+        // A take with an internal pause: the segmenter commits one segment
+        // mid-take, so the release takes the streaming fold path.
+        let mut vad_script: Vec<f32> = Vec::new();
+        vad_script.extend(std::iter::repeat_n(0.9f32, 125)); // 4 s speech
+        vad_script.extend(std::iter::repeat_n(0.0f32, 32)); // 1 s pause
+        vad_script.extend(std::iter::repeat_n(0.9f32, 32)); // 1 s speech (tail)
+        let take = streaming_take_with_mock("streamed command words", vad_script);
+        session.streaming = Some(Arc::new(Mutex::new(Some(take))));
+        let rate_slot = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let resampler = Arc::new(Mutex::new(None));
+        session.take_resampler = Some(resampler.clone());
+        let cb = session
+            .build_frame_callback(
+                None,
+                Arc::new(Mutex::new(None)),
+                session.streaming.clone(),
+                None,
+                controller.clone(),
+                1,
+                rate_slot.clone(),
+            )
+            .expect("frame callback built");
+        let recording = teletype_core::audio::Recording::synthetic();
+        RECORDING.with(|slot| {
+            slot.borrow_mut().replace(recording);
+        });
+        session.phase = Phase::Listening;
+        session.started_at_ms = teletype_core::storage::now_ms() - 6_000;
+        session.recording_started = Some(std::time::Instant::now());
+        rate_slot.store(48_000, std::sync::atomic::Ordering::Relaxed);
+        let frame = vec![0.25f32; 128];
+        for _ in 0..(6 * 48_000 / 128) {
+            cb(&frame);
+        }
+        {
+            let r16 = teletype_core::audio::resample_to_target(&vec![0.25f32; 6 * 48_000], 48_000)
+                .unwrap_or_default();
+            RECORDING.with(|slot| {
+                slot.borrow()
+                    .as_ref()
+                    .expect("recording planted")
+                    .push(&r16);
+            });
+        }
+        // The take must have committed a segment mid-take, so the release
+        // takes the streaming fold path (the defect's path).
+        {
+            let g = session
+                .streaming
+                .as_ref()
+                .expect("streaming take planted")
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let marks = g.as_ref().expect("take present").streaming_marks();
+            assert!(
+                marks.is_some(),
+                "the take must commit a segment mid-take to take the streaming path"
+            );
+        }
+        drop(cb);
+        session.stop(false);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "streaming take never delivered; phase = {:?}",
+                    session.phase
+                );
+            }
+            match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => {
+                    if let Event::Transcribed {
+                        session: s, pcm, ..
+                    } = &event
+                    {
+                        if *s == session.next_id - 1 || *s == session.next_id {
+                            let pcm = pcm.clone().unwrap_or_default();
+                            assert!(
+                                !pcm.is_empty(),
+                                "the streaming fold's terminal event must carry the take's PCM"
+                            );
+                            assert!(
+                                pcm.len() >= 16_000,
+                                "the streaming PCM must be the take's audio, got {} samples",
+                                pcm.len()
+                            );
+                            // Nonempty correct samples: the fed audio is a
+                            // 0.25 constant, so the trimmed take carries it.
+                            assert!(
+                                pcm.iter().any(|s| (s - 0.25).abs() < 0.5),
+                                "the PCM must be the take's actual audio, not a substitute"
+                            );
+                            return;
+                        }
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        panic!("the streaming fold's terminal event never arrived");
+    }
+
+    /// CMD-PIPELINE-REPAIR C: silence rejection is preserved. A take with
+    /// under 300 ms of speech (the VAD gate's floor) still gets
+    /// `no_action` from the audio decider, so a silent command press never
+    /// runs the model and never executes a tool.
+    #[test]
+    fn streaming_silence_take_still_rejects_at_the_vad_gate() {
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<Event>();
+        let (controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.test_events = Some(events_tx);
+        session.headless_flash = true;
+        session.mock_asr = Some(Ok(("streamed command words".to_string(), None)));
+        // 200 ms of speech (6.25 chunks) then silence: well under the
+        // 300 ms VAD floor, so the decider must reject without the model.
+        let mut vad_script: Vec<f32> = Vec::new();
+        vad_script.extend(std::iter::repeat_n(0.9f32, 6)); // 192 ms speech
+        vad_script.extend(std::iter::repeat_n(0.0f32, 188)); // ~6 s silence
+        let take = streaming_take_with_mock("streamed command words", vad_script);
+        session.streaming = Some(Arc::new(Mutex::new(Some(take))));
+        let rate_slot = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let resampler = Arc::new(Mutex::new(None));
+        session.take_resampler = Some(resampler.clone());
+        let cb = session
+            .build_frame_callback(
+                None,
+                Arc::new(Mutex::new(None)),
+                session.streaming.clone(),
+                None,
+                controller.clone(),
+                1,
+                rate_slot.clone(),
+            )
+            .expect("frame callback built");
+        let recording = teletype_core::audio::Recording::synthetic();
+        RECORDING.with(|slot| {
+            slot.borrow_mut().replace(recording);
+        });
+        session.phase = Phase::Listening;
+        session.started_at_ms = teletype_core::storage::now_ms() - 6_000;
+        session.recording_started = Some(std::time::Instant::now());
+        rate_slot.store(48_000, std::sync::atomic::Ordering::Relaxed);
+        let frame = vec![0.25f32; 128];
+        for _ in 0..(6 * 48_000 / 128) {
+            cb(&frame);
+        }
+        {
+            let r16 = teletype_core::audio::resample_to_target(&vec![0.25f32; 6 * 48_000], 48_000)
+                .unwrap_or_default();
+            RECORDING.with(|slot| {
+                slot.borrow()
+                    .as_ref()
+                    .expect("recording planted")
+                    .push(&r16);
+            });
+        }
+        drop(cb);
+        session.stop(false);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let mut got_terminal = false;
+        loop {
+            if got_terminal {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "streaming take never delivered; phase = {:?}",
+                    session.phase
+                );
+            }
+            match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => {
+                    if let Event::Transcribed {
+                        session: s, pcm, ..
+                    } = &event
+                    {
+                        if *s == session.next_id - 1 || *s == session.next_id {
+                            got_terminal = true;
+                            // The terminal event still carries the take's
+                            // audio (the decider needs it to measure);
+                            // the VAD gate inside `decide` is what rejects
+                            // it, not a missing payload.
+                            let pcm = pcm.clone().unwrap_or_default();
+                            assert!(
+                                !pcm.is_empty(),
+                                "a silence take's terminal event must still carry the take's PCM"
+                            );
+                            // The decider's own VAD measurement over the
+                            // take's audio must sit under the gate's floor:
+                            // that is the rejection the model never sees.
+                            let speech = crate::command_mode::take_speech_ms(&pcm)
+                                .expect("the VAD engine must initialize");
+                            assert!(
+                                speech < crate::command_mode::MIN_SPEECH_MS,
+                                "the take must have under 300 ms of speech (got {speech} ms), so the decider rejects with no_action"
                             );
                         }
                     }
