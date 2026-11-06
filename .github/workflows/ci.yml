@@ -492,25 +492,18 @@ jobs:
         run: |
           set -euo pipefail
           LOG="$GITHUB_WORKSPACE/native-cold-macos.log"
-          # (a) cmake must have configured the vendored crate in this run:
-          # a "cmake" token followed by a path containing transcribe-cpp-sys.
-          if ! grep -E '"cmake" "[^"]*transcribe-cpp-sys[^"]*"' "$LOG" >/dev/null; then
-            echo "::error::no cmake configure of transcribe-cpp-sys found in the build log; the vendored ggml C++ was not compiled in this run"
+          # The stdlib validator tokenizes every cargo -vv Running line with
+          # shlex, finds each cmake configure of transcribe-cpp-sys (bare or
+          # absolute executable, source dir present), and checks that every
+          # -mmacosx-version-min= target in the C/CXX/ASM flag values is
+          # well formed and at or above the 15.0 floor. Other tokens in
+          # those values (-O2, -isysroot, ...) are compiler flags and are
+          # accepted. A line that merely mentions the crate, a configure of
+          # another crate, or the cmake --build line cannot satisfy it.
+          if ! python3 "$GITHUB_WORKSPACE/scripts/check-native-cold-gate.py" "$LOG" 15.0; then
+            echo "::error::deployment floor not proven for the vendored ggml C++; see the reason above and native-cold-macos.log"
             exit 1
           fi
-          # (b) no CMAKE_*FLAGS string may carry a -mmacosx-version-min below
-          # the 10.15 floor of std::filesystem; the release floor is 15.0.
-          # -e is required: a pattern that starts with a dash is read by BSD
-          # grep as an option and the whole extraction fails silently.
-          BAD=$(grep -oE -e 'CMAKE_(C|CXX|ASM)_FLAGS=[^"]*-mmacosx-version-min=[0-9]+(\.[0-9]+)?' "$LOG" \
-            | grep -oE -e '-mmacosx-version-min=[0-9]+(\.[0-9]+)?' \
-            | sed 's/-mmacosx-version-min=//' \
-            | awk -F. '$1 < 15 || $1 == 10 || $1 == 11 || $1 == 12 || $1 == 13 || $1 == 14' || true)
-          if [ -n "$BAD" ]; then
-            echo "::error::deployment target below floor in cmake configure flags: $(echo "$BAD" | tr '\n' ' ')"
-            exit 1
-          fi
-          echo "cold build configured transcribe-cpp-sys with a deployment target at or above the floor"
       - name: Upload native cold log
         if: always()
         uses: actions/upload-artifact@v4
