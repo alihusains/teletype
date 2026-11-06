@@ -1,4 +1,10 @@
-//! FFI bindings for the Cactus Compute Needle 3 C API.
+//! FFI bindings for the Cactus runtime 4.0.0 C API (the renamed Needle 3
+//! engine).
+//!
+//! The build script downloads the prebuilt `libcactus.a` static library and
+//! `cactus.h` header; the C symbols are `cactus_*`, so each declaration below
+//! keeps the Rust-facing `needle_*` name and maps to its `cactus_*` symbol
+//! with `#[link_name]`.
 //!
 //! The Needle 3 engine is a process-global, non-thread-safe C ABI. One text
 //! model and one speech model can be loaded per process. All functions are
@@ -42,13 +48,16 @@ extern "C" {
     /// Returns `>= 0` on success, `< 0` on failure (call `needle_last_error`).
     /// The engine sniffs the file and loads whichever kind (text/speech) it
     /// holds, keeping the other slot free.
+    #[link_name = "cactus_load"]
     pub fn needle_load(cact: *const u8, n: c_ulonglong) -> c_int;
 
     /// Bitmask of loaded model kinds: `NEEDLE_TEXT` (1), `NEEDLE_SPEECH` (2).
+    #[link_name = "cactus_models"]
     pub fn needle_models() -> c_int;
 
     /// Last process-global error string. Owned by the runtime, valid until
     /// the next API call.
+    #[link_name = "cactus_last_error"]
     pub fn needle_last_error() -> *const c_char;
 
     /// Initializes the engine with a system prompt and tool schemas.
@@ -59,6 +68,7 @@ extern "C" {
     ///
     /// Returns the tokenized static-prefix length on success; negative on
     /// failure (system prompt + tools exceed the context window).
+    #[link_name = "cactus_init"]
     pub fn needle_init(
         system_prompt: *const c_char,
         tools_json: *const c_char,
@@ -73,6 +83,7 @@ extern "C" {
     /// a NUL-terminated JSON object.
     ///
     /// Returns `>= 0` on success, `< 0` on failure (error message in `out`).
+    #[link_name = "cactus_complete"]
     pub fn needle_complete(
         input: *const c_char,
         pcm: *const c_float,
@@ -87,6 +98,7 @@ extern "C" {
     /// `language`: "en", "de", "fr", "es", "it", "nl", "pl", or null (detect).
     /// `keywords`: newline-separated biasing words, or null.
     /// `word_timestamps`: non-zero to include per-word timestamps.
+    #[link_name = "cactus_set_audio"]
     pub fn needle_set_audio(
         language: *const c_char,
         keywords: *const c_char,
@@ -94,12 +106,14 @@ extern "C" {
     );
 
     /// Resets the conversation (keeps loaded tools and model).
+    #[link_name = "cactus_reset"]
     pub fn needle_reset();
 
     /// Transcribes 16 kHz mono float32 PCM in [-1, 1].
     ///
     /// Returns the number of tokens in the transcript on success. `out`
     /// receives JSON: `{"text":"...","language":"en","ttft_ms":0.0,...}`.
+    #[link_name = "cactus_transcribe"]
     pub fn needle_transcribe(
         pcm: *const c_float,
         samples: c_int,
@@ -111,6 +125,7 @@ extern "C" {
     ) -> c_int;
 
     /// Live transcription: appends ~1 s of PCM, returns committed words.
+    #[link_name = "cactus_stream_transcribe_process"]
     pub fn needle_stream_transcribe_process(
         pcm: *const c_float,
         samples: c_int,
@@ -121,6 +136,7 @@ extern "C" {
     ) -> c_int;
 
     /// Ends the live transcription stream.
+    #[link_name = "cactus_stream_transcribe_stop"]
     pub fn needle_stream_transcribe_stop(out: *mut c_char, out_capacity: c_int) -> c_int;
 
     /// Embeds text or speech.
@@ -128,6 +144,7 @@ extern "C" {
     /// Exactly one of `input` and `pcm` must be non-null. Text returns the
     /// model's embedding dimension; speech returns one row per 80 ms frame.
     /// A null `out` returns the float count without computing.
+    #[link_name = "cactus_embed"]
     pub fn needle_embed(
         input: *const c_char,
         pcm: *const c_float,
@@ -141,7 +158,7 @@ extern "C" {
 
 /// Pure-Rust stand-in for the native engine on Windows.
 ///
-/// The upstream `windows-x86_64/libneedle.a` is built with LLVM-MinGW and
+/// The upstream `windows-x86_64/libcactus.a` is built with LLVM-MinGW and
 /// libc++ (Itanium ABI). It cannot be linked into the MSVC Tauri binary:
 /// `link.exe` rejects its COMDATs with `LNK1143`, and `lld-link` still needs
 /// the MinGW libc++/libc++abi runtime. Keeping the same raw signatures lets
@@ -277,9 +294,9 @@ pub use stub::*;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/// Bitmask: a text model is loaded.
+/// Bitmask: a text model is loaded. Matches `CACTUS_TEXT` in `cactus.h`.
 pub const NEEDLE_TEXT: c_int = 1;
-/// Bitmask: a speech model is loaded.
+/// Bitmask: a speech model is loaded. Matches `CACTUS_SPEECH` in `cactus.h`.
 pub const NEEDLE_SPEECH: c_int = 2;
 
 /// Default output buffer size (64 KB), matching the Python reference.

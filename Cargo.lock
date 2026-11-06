@@ -3734,7 +3734,6 @@ version = "0.2.7"
 dependencies = [
  "thiserror 2.0.20",
  "ureq",
- "zip 2.4.2",
 ]
 
 [[package]]

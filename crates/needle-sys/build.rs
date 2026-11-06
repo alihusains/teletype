@@ -1,6 +1,11 @@
-//! Downloads the prebuilt `libneedle.a` static library and `needle.h` header
-//! for the current platform from the HuggingFace `Cactus-Compute/needle3`
-//! repo, and emits the link flags for the `needle-sys` bindings.
+//! Downloads the prebuilt `libcactus.a` static library and `cactus.h` header
+//! for the current platform from the HuggingFace `Cactus-Compute/cactus`
+//! repo (`releases/4.0.0`), and emits the link flags for the `needle-sys`
+//! bindings.
+//!
+//! The Cactus runtime 4.0.0 is the renamed Needle 3 engine: the engine, the
+//! C symbols, and the artifacts were renamed from `needle_*`/`libneedle.a`
+//! to `cactus_*`/`libcactus.a`. The C signatures are unchanged.
 //!
 //! On Windows the upstream prebuilt is built with LLVM-MinGW + libc++ (the
 //! Itanium C++ ABI). MSVC `link.exe` rejects its COMDATs with `LNK1143`, and
@@ -8,19 +13,22 @@
 //! undefined. Windows therefore compiles the pure-Rust stub in `src/lib.rs`
 //! (`cfg(needle_stub)`) and never downloads or links the archive.
 //!
-//! Each platform folder on HF ships:
-//!   - `libneedle.a`  (static library, ~1.5–2.2 MB)
-//!   - `needle.h`     (C header, identical across platforms)
-//!   - `needle`       (CLI runner, not needed for the FFI crate)
+//! Each platform folder under `releases/4.0.0` on HF ships:
+//!   - `libcactus.a`  (static library, ~1.5–2.2 MB)
+//!   - `cactus.h`     (C header, identical across platforms)
+//!   - `cactus`       (CLI runner, not needed for the FFI crate)
+//!
+//! The 4.0.0 release has no per-platform zips; the individual files above
+//! are downloaded directly.
 //!
 //! The `.cact` model file (29–35 MB) is NOT downloaded here — it is managed
 //! by `teletype-inference`'s download pipeline, same as GGUF models.
 
 use std::path::{Path, PathBuf};
 
-const HF_BASE: &str = "https://huggingface.co/Cactus-Compute/needle3/resolve/main";
+const HF_BASE: &str = "https://huggingface.co/Cactus-Compute/cactus/resolve/main/releases/4.0.0";
 
-/// Map the Rust target triple to the Needle 3 platform folder name.
+/// Map the Rust target triple to the Cactus 4.0.0 platform folder name.
 fn platform_folder() -> &'static str {
     let target = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
@@ -29,16 +37,14 @@ fn platform_folder() -> &'static str {
     match (os.as_str(), target.as_str(), env.as_str()) {
         ("macos", "aarch64", _) => "macos-arm64",
         ("macos", "x86_64", _) => "macos-x86_64",
-        ("linux", "x86_64", "musl") => "linux-x86_64-musl",
         ("linux", "x86_64", _) => "linux-x86_64",
-        ("linux", "aarch64", "musl") => "linux-arm64-musl",
         ("linux", "aarch64", _) => "linux-arm64",
         ("windows", "x86_64", _) => "windows-x86_64",
         ("windows", "aarch64", _) => "windows-arm64",
         (other_os, other_arch, _) => {
             panic!(
                 "needle-sys: unsupported target {other_os}/{other_arch}. \
-                 Supported: macos-arm64, macos-x86_64, linux-x86_64, linux-arm64, \
+                 Supported: macos-arm64, linux-x86_64, linux-arm64, \
                  windows-x86_64, windows-arm64"
             )
         }
@@ -53,32 +59,43 @@ fn main() {
         println!("cargo:rustc-cfg=needle_stub");
         println!(
             "cargo:warning=needle-sys: Windows uses the pure-Rust stub; \
-             the upstream libneedle.a is a MinGW/libc++ archive"
+             the upstream libcactus.a is a MinGW/libc++ archive"
         );
         println!("cargo:rerun-if-changed=build.rs");
         println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
         return;
     }
-
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let folder = platform_folder();
-    // Upstream (HF Cactus-Compute/needle3, tree inspected 18 Oct 2026) ships
-    // NO darwin-x86_64 prebuilt: macos-arm64, ios/tvos/watchos-arm64, and
-    // linux/windows x86_64 exist, darwin-x86_64 does not. `cargo check` on
-    // that target never links the FFI symbols, so skip the download and the
-    // link flags instead of panicking; a real x86_64 BUILD is unsupported
-    // until upstream publishes the folder.
+    // Upstream (HF Cactus-Compute/cactus, releases/4.0.0) ships NO
+    // macos-x86_64 prebuilt: the supported folders are macos-arm64,
+    // ios/tvos/watchos-arm64, linux/windows x86_64 and arm64. `cargo check`
+    // on that target never links the FFI symbols, so skip the download and
+    // the link flags instead of panicking; a real x86_64 BUILD is
+    // unsupported until upstream publishes the folder.
     if folder == "macos-x86_64" {
         println!(
-            "cargo:warning=needle-sys: no upstream darwin-x86_64 prebuilt; \
-             emitting no link flags (cargo-check-only target)"
+            "cargo:warning=needle-sys: no upstream macos-x86_64 prebuilt in \
+             Cactus-Compute/cactus 4.0.0; emitting no link flags \
+             (cargo-check-only target)"
         );
         return;
     }
-    // Both delivery folders currently ship the same static-library name;
-    // revisit if a Windows build starts shipping a different artifact.
-    let lib_name = "libneedle.a";
-    let header_name = "needle.h";
+    // The 4.0.0 release ships no musl prebuilts (no linux-*-musl folders).
+    // Do not silently map musl to the glibc archive. `cargo check` on a musl
+    // target never links the FFI symbols, so skip the download and the link
+    // flags, same as the macos-x86_64 path above.
+    if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("musl") {
+        println!(
+            "cargo:warning=needle-sys: no upstream musl prebuilt in \
+             Cactus-Compute/cactus 4.0.0; emitting no link flags \
+             (cargo-check-only target)"
+        );
+        return;
+    }
+
+    let lib_name = "libcactus.a";
+    let header_name = "cactus.h";
 
     let lib_path = out.join(folder).join(lib_name);
     let header_path = out.join(folder).join(header_name);
@@ -86,13 +103,13 @@ fn main() {
     // Reuse a previously downloaded library if present (avoids re-download
     // on every incremental build).
     if !lib_path.exists() || !header_path.exists() {
-        download_platform_folder(folder, &out);
+        download_platform_folder(folder, &out, lib_name, header_name);
     }
 
     // Emit link flags.
     let lib_dir = out.join(folder);
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    println!("cargo:rustc-link-lib=static=needle");
+    println!("cargo:rustc-link-lib=static=cactus");
 
     // On macOS, the C++ engine needs the C++ standard library and CoreFoundation.
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
@@ -116,36 +133,24 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ENV");
 }
 
-fn download_platform_folder(folder: &str, out: &Path) {
-    let url = format!("{HF_BASE}/{folder}.zip");
-    // Fallback: try individual file downloads if the zip isn't available.
-    let lib_url = format!("{HF_BASE}/{folder}/libneedle.a");
-    let header_url = format!("{HF_BASE}/{folder}/needle.h");
+fn download_platform_folder(folder: &str, out: &Path, lib_name: &str, header_name: &str) {
+    let lib_url = format!("{HF_BASE}/{folder}/{lib_name}");
+    let header_url = format!("{HF_BASE}/{folder}/{header_name}");
 
     let dest_dir = out.join(folder);
     std::fs::create_dir_all(&dest_dir)
         .unwrap_or_else(|e| panic!("needle-sys: cannot create {dest_dir:?}: {e}"));
 
-    // Try the zip first (single download), fall back to individual files.
-    let zip_path = out.join(format!("{folder}.zip"));
-    let zip_ok = download_file(&url, &zip_path).is_ok();
-
-    if zip_ok {
-        extract_zip(&zip_path, &dest_dir);
-        let _ = std::fs::remove_file(&zip_path);
-    } else {
-        // Individual file downloads.
-        if let Err(e) = download_file(&lib_url, &dest_dir.join("libneedle.a")) {
-            panic!("needle-sys: failed to download {lib_url}: {e}");
-        }
-        if let Err(e) = download_file(&header_url, &dest_dir.join("needle.h")) {
-            panic!("needle-sys: failed to download {header_url}: {e}");
-        }
+    if let Err(e) = download_file(&lib_url, &dest_dir.join(lib_name)) {
+        panic!("needle-sys: failed to download {lib_url}: {e}");
+    }
+    if let Err(e) = download_file(&header_url, &dest_dir.join(header_name)) {
+        panic!("needle-sys: failed to download {header_url}: {e}");
     }
 
     // Verify the library landed.
-    if !dest_dir.join("libneedle.a").exists() {
-        panic!("needle-sys: libneedle.a not found after download for {folder}");
+    if !dest_dir.join(lib_name).exists() {
+        panic!("needle-sys: {lib_name} not found after download for {folder}");
     }
 }
 
@@ -161,28 +166,4 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     std::fs::write(dest, &data).map_err(|e| e.to_string())?;
     Ok(())
-}
-
-fn extract_zip(zip_path: &Path, dest: &Path) {
-    let file = std::fs::File::open(zip_path).expect("open zip");
-    let mut archive = zip::ZipArchive::new(file).expect("invalid zip");
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).expect("zip entry");
-        let raw_name = entry.name().to_string();
-        // Strip the top-level folder prefix if present.
-        let name = raw_name.split_once('/').map(|x| x.1).unwrap_or(&raw_name);
-        if name.is_empty() {
-            continue;
-        }
-        let out_path = dest.join(name);
-        if entry.is_dir() {
-            std::fs::create_dir_all(&out_path).ok();
-        } else {
-            if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            let mut f = std::fs::File::create(&out_path).expect("create file");
-            std::io::copy(&mut entry, &mut f).expect("extract file");
-        }
-    }
 }
