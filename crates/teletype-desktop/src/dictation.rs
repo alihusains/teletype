@@ -419,6 +419,19 @@ pub enum TakeKind {
     Transform,
 }
 
+impl TakeKind {
+    /// The trace label for this kind (CMD-2): the word written to
+    /// [`DictationTrace::take_kind`], so a trace line states the route without
+    /// needing the Rust type name.
+    pub fn label(self) -> &'static str {
+        match self {
+            TakeKind::Dictation => "dictation",
+            TakeKind::Command => "command",
+            TakeKind::Transform => "transform",
+        }
+    }
+}
+
 /// Which speech engine loads a model, derived from the catalog entry in
 /// [`resolve_speech_model`]. Replaces the old `use_parakeet` boolean so the
 /// app can route to FluidAudio (Core ML), sherpa-onnx, or Whisper/Parakeet
@@ -672,8 +685,7 @@ pub enum Event {
         device_lost_ms: u32,
         /// A.3.3: the take audio at 16 kHz mono f32 (the same buffer the
         /// final transcribe consumed). Empty when the take had no audio
-        /// (audio finish failed) or the streaming path was taken (the
-        /// committer consumed the segments). The command decider classifies
+        /// (audio finish failed). The command decider classifies
         /// this audio; `None`/empty PCM degrades to the transcript-only
         /// fallback (the Needle/LLM deciders ignore PCM anyway).
         pcm: Option<Vec<f32>>,
@@ -1946,6 +1958,14 @@ fn is_quick_tap(
 /// twice.
 const HOTKEY_BOUNCE_DEBOUNCE: Duration = Duration::from_millis(100);
 
+/// CMD-2: how young a dictation take has to be for a Command chord press to
+/// take it over. A physical three-key chord costs roughly 150 ms of key
+/// travel (Ctrl down, then Option, then Space), so the window has to be
+/// several times that to cover a real hand. Past it, the recording is
+/// content the user is speaking, and re-routing it to the command decider
+/// would throw away a take they can hear themselves giving.
+const COMMAND_TAKEOVER_WINDOW: Duration = Duration::from_millis(500);
+
 /// Dev-only artificial delay (ms) inserted into the pipeline worker between
 /// finishing its bookkeeping and sending `PipelineReady` to the controller.
 ///
@@ -3210,6 +3230,16 @@ impl Session {
         }
     }
 
+    /// CMD-2: write the route this take is on into its trace. Called at
+    /// `start` and again whenever a later stage re-routes the take, so the
+    /// value a finished trace carries is the route the pipeline ran, not the
+    /// route the first keypress suggested.
+    fn trace_take_kind(&mut self, key: u64, kind: TakeKind) {
+        if let Some(t) = self.traces.get_mut(&key) {
+            t.take_kind = Some(kind.label().to_string());
+        }
+    }
+
     fn hotkey_down_event(&mut self) {
         // P0.2: the press is the first stage boundary of a take.
         self.ensure_trace();
@@ -3395,6 +3425,43 @@ impl Session {
                     return;
                 }
             }
+        }
+        // CMD-2: a bare-modifier dictation hotkey makes the command chord
+        // unreachable. The Control of the chord arms the dictation tap
+        // first, so by the time the chord fires the take is already Listening
+        // and `decide` has no `Start` to give: the command press is swallowed
+        // and the take delivers the words as dictated text. The chord wins.
+        // The recording is live, so re-tagging the take keeps everything the
+        // user has said since the press, and the release that follows stops it
+        // through the same hotkey latch. Two details carry the fix:
+        //   - the added modifier is read by the tap as a release inside the
+        //     bounce window, which armed the settle watchdog; this press is
+        //     that follow-up press, so bump the sequence or the watchdog ends
+        //     the command take 120 ms after the chord.
+        //   - only a take younger than COMMAND_TAKEOVER_WINDOW is re-routed.
+        //     Past the window the buffer holds a dictation the user is
+        //     deliberately giving, and stealing it would silently throw it
+        //     away.
+        if self.phase == Phase::Listening
+            && self.take_kind == TakeKind::Dictation
+            && self.started_at_ms != 0
+            && teletype_core::storage::now_ms().saturating_sub(self.started_at_ms)
+                <= COMMAND_TAKEOVER_WINDOW.as_millis() as u64
+        {
+            self.bounce_settle_seq = self.bounce_settle_seq.wrapping_add(1);
+            self.take_kind = TakeKind::Command;
+            if let Some(key) = self.trace_key {
+                // P2.9: the recording began at the dictation press, so this
+                // adds `armed` (the command route starts here) without a
+                // second `started`.
+                self.trace_take_kind(key, TakeKind::Command);
+                self.trace_command_event(key, "armed(chord takeover)");
+            }
+            crate::log_entry(
+                crate::LogLevel::Info,
+                "command chord took over the in-flight dictation take",
+            );
+            return;
         }
         self.input_with_kind(Input::HotkeyDown, TakeKind::Command);
     }
@@ -3606,9 +3673,12 @@ impl Session {
         if kind == TakeKind::Command {
             self.ensure_trace();
             if let Some(key) = self.trace_key {
+                self.trace_take_kind(key, kind);
                 self.trace_command_event(key, "armed");
                 self.trace_command_event(key, "started");
             }
+        } else if let Some(key) = self.trace_key {
+            self.trace_take_kind(key, kind);
         }
         #[cfg(test)]
         if self.headless_flash {
@@ -5221,6 +5291,7 @@ impl Session {
                                     message: DEVICE_LOSS_MESSAGE.to_string(),
                                 });
                             }
+                            let streaming_pcm = trim_silence_vad(&asr_samples);
                             exit_guard.terminal(Event::Transcribed {
                                 session,
                                 transcript: outcome,
@@ -5229,7 +5300,7 @@ impl Session {
                                 asr_end_us,
                                 device_lost: device_lost_ms > 0,
                                 device_lost_ms,
-                                pcm: None,
+                                pcm: Some(streaming_pcm.to_vec()),
                                 losses,
                                 take_audio,
                                 segment_polished,
@@ -5245,7 +5316,7 @@ impl Session {
                                     asr_end_us,
                                     device_lost: device_lost_ms > 0,
                                     device_lost_ms,
-                                    pcm: None,
+                                    pcm: Some(streaming_pcm.to_vec()),
                                     losses: None,
                                     take_audio: None,
                                     segment_polished: false,
@@ -6065,6 +6136,10 @@ impl Session {
                     }
                     _ => (text, take_kind, None),
                 };
+                // CMD-2: the trace must state the route the pipeline ran, not
+                // the route the first keypress suggested, so stamp it after
+                // every re-route above (wake phrase, selection transform).
+                self.trace_take_kind(session, take_kind);
                 // Same for the recorded paste target: the gate compares it
                 // against the live target after the pipeline finishes.
                 let record_target = self.record_target.clone();
@@ -12013,6 +12088,340 @@ mod tests {
         assert_eq!(session.take_kind(), TakeKind::Command);
     }
 
+    /// CMD-2: with a bare-modifier dictation hotkey, the Control of the
+    /// command chord arms the dictation tap first, so the chord's own press
+    /// lands while a take is already in flight. It must take that young take
+    /// over instead of being swallowed by the hotkey latch: the recording is
+    /// live, so the words after the chord are the command.
+    #[test]
+    fn command_chord_takes_over_a_young_dictation_take() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        // The bare Ctrl down: an ordinary dictation take starts.
+        session.hotkey_down_event();
+        assert_eq!(session.phase, Phase::Listening);
+        assert_eq!(session.take_kind(), TakeKind::Dictation);
+        // Option then Space, a chord's worth of key travel later.
+        session.started_at_ms = teletype_core::storage::now_ms() - 150;
+        let seq_before = session.bounce_settle_seq;
+        session.command_hotkey_down_event();
+        assert_eq!(
+            session.take_kind(),
+            TakeKind::Command,
+            "the chord press was swallowed by the in-flight dictation take"
+        );
+        assert_eq!(
+            session.phase,
+            Phase::Listening,
+            "a takeover must re-route the live recording, not restart it"
+        );
+        assert_eq!(
+            session.bounce_settle_seq,
+            seq_before + 1,
+            "the takeover left the bounce watchdog armed, which would end the command take"
+        );
+        let key = session.trace_key.expect("the in-flight take has a trace");
+        let trace = session
+            .traces
+            .get(&key)
+            .expect("trace for the in-flight take");
+        assert_eq!(trace.take_kind.as_deref(), Some("command"));
+        assert_eq!(
+            trace.command_mode.last().map(String::as_str),
+            Some("armed(chord takeover)"),
+            "the trace must show the command route began at the chord"
+        );
+    }
+
+    /// CMD-2, the other side of the window: past COMMAND_TAKEOVER_WINDOW the
+    /// buffer holds a dictation the user is deliberately giving, and a chord
+    /// press must not silently throw it away.
+    #[test]
+    fn late_chord_press_leaves_an_old_take_alone() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.hotkey_down_event();
+        session.started_at_ms =
+            teletype_core::storage::now_ms() - (COMMAND_TAKEOVER_WINDOW.as_millis() as u64 + 300);
+        session.command_hotkey_down_event();
+        assert_eq!(
+            session.take_kind(),
+            TakeKind::Dictation,
+            "a chord past the takeover window re-routed a dictation in progress"
+        );
+        let key = session.trace_key.expect("the in-flight take has a trace");
+        let trace = session
+            .traces
+            .get(&key)
+            .expect("trace for the in-flight take");
+        assert_eq!(
+            trace.take_kind.as_deref(),
+            Some("dictation"),
+            "the trace must carry the route the take is on"
+        );
+        assert!(trace.command_mode.is_empty(), "no command route ran");
+    }
+
+    /// CMD-2: the release the tap reports when a second modifier joins the
+    /// held one lands inside the bounce window and arms the settle watchdog.
+    /// The chord press is the follow-up press that cancels it, so the queued
+    /// settle must not end the command take.
+    #[test]
+    fn stale_bounce_settle_cannot_end_a_taken_over_take() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.hotkey_down_event();
+        session.started_at_ms = teletype_core::storage::now_ms() - 150;
+        // The number the watchdog armed before the chord carries.
+        let stale_seq = session.bounce_settle_seq;
+        session.command_hotkey_down_event();
+        assert_eq!(session.take_kind(), TakeKind::Command);
+        session.hotkey_bounce_settled(stale_seq, 90);
+        assert_eq!(
+            session.phase,
+            Phase::Listening,
+            "a stale bounce settle ended the taken-over command take"
+        );
+    }
+
+    /// CMD-PIPELINE-REPAIR A: the measured unwind of a real Ctrl+Option+Space
+    /// chord against a bare-Ctrl dictation hotkey. Ctrl down at 0 starts the
+    /// dictation take; Option down at 80 ms is read as a release of the bare
+    /// modifier (the tap reports a Ctrl-only up), which lands inside the
+    /// bounce window (100 ms) and arms the settle watchdog; Space at 180 ms
+    /// is the command chord's press. The chord must take the take over, and
+    /// the release deferred to the remaining window must not end it: the
+    /// 120 ms watchdog fires after the chord, and only a command press that
+    /// does not cancel the deferral could stop the take early.
+    #[test]
+    fn chord_unwind_release_at_150ms_takes_over_before_space() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        // t=0: Ctrl down starts the dictation take.
+        session.hotkey_down_event();
+        assert_eq!(session.phase, Phase::Listening);
+        assert_eq!(session.take_kind(), TakeKind::Dictation);
+        // t=80: Option joins. The tap reports the bare modifier as released;
+        // the measured hold (80 ms) is inside the bounce window (100 ms), so
+        // the release is deferred to the settle watchdog instead of stopping.
+        // The take has been recording for the Option's worth of key travel,
+        // so it is well inside the takeover window.
+        session.started_at_ms = teletype_core::storage::now_ms() - 80;
+        session.hotkey_up_event_measured(Some(80));
+        assert_eq!(
+            session.phase,
+            Phase::Listening,
+            "a release inside the bounce window must defer, not stop"
+        );
+        let seq_after_release = session.bounce_settle_seq;
+        assert_ne!(
+            seq_after_release, 0,
+            "the deferred release must arm the settle watchdog"
+        );
+        // t=180: Space. The chord press takes the young take over and
+        // cancels the deferred release (the sequence bump is the cancel).
+        session.command_hotkey_down_event();
+        assert_eq!(
+            session.take_kind(),
+            TakeKind::Command,
+            "the chord press must take the in-flight dictation take over"
+        );
+        assert_eq!(
+            session.phase,
+            Phase::Listening,
+            "the takeover re-routes the live recording, it does not restart it"
+        );
+        // The watchdog fires 120 ms after the deferred release (t=200),
+        // carrying the sequence the release armed. The chord press bumped
+        // it, so the settle must be a no-op: the command take keeps
+        // recording.
+        session.hotkey_bounce_settled(seq_after_release, 80);
+        assert_eq!(
+            session.phase,
+            Phase::Listening,
+            "the deferred release ended the taken-over command take"
+        );
+        // The take still holds the command route and its trace says so.
+        let key = session.trace_key.expect("the in-flight take has a trace");
+        let trace = session.traces.get(&key).expect("trace for the take");
+        assert_eq!(trace.take_kind.as_deref(), Some("command"));
+        assert!(
+            trace
+                .command_mode
+                .iter()
+                .any(|e| e == "armed(chord takeover)"),
+            "the trace must show the command route began at the chord: {:?}",
+            trace.command_mode
+        );
+    }
+
+    /// CMD-PIPELINE-REPAIR A, the measured unwind where the settle fires
+    /// BEFORE the chord press. Option joins at 50 ms, the deferred release's
+    /// watchdog fires at t=170 (120 ms after the release), and Space does
+    /// not arrive until t=220. The settle resolves the deferred release as
+    /// a genuine short tap: the take is under the visible floor, so it is
+    /// discarded silently and the session returns to Idle. The subsequent
+    /// chord press then starts a FRESH command take (not a takeover of the
+    /// old one), with its own trace armed at the chord.
+    #[test]
+    fn chord_unwind_release_at_50ms_settle_discards_then_chord_starts_fresh() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.hotkey_down_event();
+        // t=50: Option joins; the bare-modifier release is deferred (50 ms
+        // is inside the bounce window) and the watchdog is armed.
+        session.started_at_ms = teletype_core::storage::now_ms() - 50;
+        session.hotkey_up_event_measured(Some(50));
+        let seq_after_release = session.bounce_settle_seq;
+        // t=170: the settle fires, 120 ms after the release. Space has not
+        // come yet, so the take is still a young dictation under the
+        // visible floor. The settle resolves the deferred release as a
+        // genuine short tap and discards the take silently.
+        session.hotkey_bounce_settled(seq_after_release, 50);
+        assert_eq!(
+            session.phase,
+            Phase::Idle,
+            "the settle must resolve the deferred release and discard the young take"
+        );
+        // t=300: Space. The chord press starts a FRESH command take from
+        // Idle (the old take was already discarded, so this is not a
+        // takeover). In real time the chord comes >100 ms after the settle,
+        // so the bounce guard does not suppress it.
+        session.last_release = Some(
+            std::time::Instant::now() - std::time::Duration::from_millis(150),
+        );
+        session.command_hotkey_down_event();
+        assert_eq!(session.take_kind(), TakeKind::Command);
+        assert_eq!(session.phase, Phase::Listening);
+        // The fresh command take has its own trace, armed at the chord.
+        let key = session.trace_key.expect("the fresh command take has a trace");
+        let trace = session.traces.get(&key).expect("trace for the take");
+        assert!(trace.t_hotkey_down.is_some(), "the fresh trace is armed");
+        assert_eq!(
+            trace.take_kind.as_deref(),
+            Some("command"),
+            "the fresh take is tagged command"
+        );
+        assert!(
+            trace
+                .command_mode
+                .iter()
+                .any(|e| e == "armed"),
+            "the trace must show the command armed at start: {:?}",
+            trace.command_mode
+        );
+    }
+
+    /// CMD-PIPELINE-REPAIR A: the window boundary. A dictation take that is
+    /// older than COMMAND_TAKEOVER_WINDOW when the chord arrives is content
+    /// the user is deliberately giving: the chord must not take it over, and
+    /// the take must keep its dictation route and audio untouched.
+    #[test]
+    fn in_flight_dictation_past_window_keeps_route_and_audio() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.hotkey_down_event();
+        session.started_at_ms = teletype_core::storage::now_ms()
+            - (COMMAND_TAKEOVER_WINDOW.as_millis() as u64 + 1);
+        session.command_hotkey_down_event();
+        assert_eq!(
+            session.take_kind(),
+            TakeKind::Dictation,
+            "a chord past the takeover window must not re-route an established take"
+        );
+        let key = session.trace_key.expect("the in-flight take has a trace");
+        let trace = session.traces.get(&key).expect("trace for the take");
+        assert_eq!(trace.take_kind.as_deref(), Some("dictation"));
+        assert!(trace.command_mode.is_empty(), "no command route ran");
+        // The established release path is unchanged: a long hold still
+        // stops and transcribes the take as dictation.
+        session.hotkey_up_event_measured(Some(2_000));
+        assert!(
+            !matches!(session.phase, Phase::Listening),
+            "an established take's release must still stop it"
+        );
+    }
+
+    /// CMD-PIPELINE-REPAIR A: a normal short tap with no chord present
+    /// expires cleanly through the original logic. The deferred release's
+    /// settle fires, the take is a mistap under the visible floor, and it is
+    /// discarded silently: no command route, no paste, no note.
+    #[test]
+    fn short_tap_without_chord_expires_cleanly() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        session.hotkey_down_event();
+        assert_eq!(session.take_kind(), TakeKind::Dictation);
+        // A quick release inside the bounce window arms the watchdog.
+        session.hotkey_up_event_measured(Some(60));
+        let seq = session.bounce_settle_seq;
+        // The take is young (under the visible floor): the settle that
+        // follows discards it silently, exactly as before the chord work.
+        session.hotkey_bounce_settled(seq, 60);
+        assert_eq!(
+            session.phase,
+            Phase::Idle,
+            "a short tap with no chord must end the take cleanly"
+        );
+        assert!(
+            session.headless_flashes.is_empty(),
+            "a silent discard must show nothing: {:?}",
+            session.headless_flashes
+        );
+    }
+
+    /// CMD-PIPELINE-REPAIR A/B: the full chord unwind ends the take as a
+    /// command, and the next take starts clean: the hotkey latch is clear,
+    /// the trace latch is closed (no pending trace for the finished take),
+    /// and the next press starts a fresh dictation take with a fresh trace.
+    #[test]
+    fn chord_unwind_then_next_take_starts_clean() {
+        let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.phase = Phase::Idle;
+        // Ctrl down, Option join (deferred release), Space: the chord takes
+        // the young take over.
+        session.hotkey_down_event();
+        session.started_at_ms = teletype_core::storage::now_ms() - 80;
+        session.hotkey_up_event_measured(Some(80));
+        session.command_hotkey_down_event();
+        assert_eq!(session.take_kind(), TakeKind::Command);
+        // The chord's release: a long hold (the user held the chord), so it
+        // stops and transcribes the take through the normal release path.
+        session.hotkey_up_event_measured(Some(900));
+        assert!(
+            !matches!(session.phase, Phase::Listening),
+            "the chord's release must stop the command take"
+        );
+        // The take is over. The trace latch must be closed: `stop` re-keys
+        // the trace to the session id and clears `trace_key`, so no pending
+        // trace is left for the next take to inherit.
+        assert!(
+            session.trace_key.is_none(),
+            "the finished take left a pending trace for the next take"
+        );
+        // The next press starts a fresh dictation take.
+        session.go_idle();
+        session.hotkey_down_event();
+        assert_eq!(session.phase, Phase::Listening);
+        assert_eq!(
+            session.take_kind(),
+            TakeKind::Dictation,
+            "the take after a chord unwind must be plain dictation"
+        );
+        let key = session.trace_key.expect("the next take has a fresh trace");
+        let trace = session.traces.get(&key).expect("trace for the next take");
+        assert_eq!(
+            trace.take_kind.as_deref(),
+            Some("dictation"),
+            "the next take's trace must carry its own route"
+        );
+        assert!(
+            trace.command_mode.is_empty(),
+            "the next take must not inherit the command route: {:?}",
+            trace.command_mode
+        );
+    }
+
     // ------------------------------------------------------------------
     // P1.4: stop() must not block on the interim decode.
     //
@@ -12421,6 +12830,141 @@ mod tests {
             delivered,
             "the take's text must be delivered (headless final text present)"
         );
+    }
+
+    /// CMD-PIPELINE-REPAIR C: a successful streaming fold must carry the
+    /// take's actual 16 kHz PCM to the command decider. Before the fix the
+    /// streaming path sent `pcm: None`, so a command take that streamed
+    /// mid-take reached `decide` with an empty slice and the VAD gate
+    /// rejected it. The whole-take path already sends the trimmed PCM; the
+    /// streaming path must send the same take's audio.
+    #[test]
+    fn streaming_success_carries_take_pcm_to_the_decider() {
+        let (events_tx, events_rx) = std::sync::mpsc::channel::<Event>();
+        let (controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+        session.test_events = Some(events_tx);
+        session.headless_flash = true;
+        // Scripted ASR outcome for the tail (the committed segments come
+        // from the mock committer).
+        session.mock_asr = Some(Ok(("streamed command words".to_string(), None)));
+        // A take with an internal pause: the segmenter commits at least one
+        // segment mid-take, so the release takes the streaming fold path.
+        let mut vad_script: Vec<f32> = Vec::new();
+        vad_script.extend(std::iter::repeat_n(0.9f32, 125)); // 4 s speech
+        vad_script.extend(std::iter::repeat_n(0.0f32, 32)); // 1 s pause
+        vad_script.extend(std::iter::repeat_n(0.9f32, 32)); // 1 s speech (tail)
+        let take = streaming_take_with_mock("streamed command words", vad_script);
+        session.streaming = Some(Arc::new(Mutex::new(Some(take))));
+        // The shared rate slot the audio layer publishes the device rate
+        // into before the first frame.
+        let rate_slot = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let resampler = Arc::new(Mutex::new(None));
+        session.take_resampler = Some(resampler.clone());
+        let cb = session
+            .build_frame_callback(
+                None,
+                Arc::new(Mutex::new(None)),
+                session.streaming.clone(),
+                None,
+                controller.clone(),
+                1,
+                rate_slot.clone(),
+            )
+            .expect("frame callback built");
+        // A synthetic recording stands in for the mic: its 16 kHz buffer
+        // holds the take's audio for the release worker's `finish`.
+        let recording = teletype_core::audio::Recording::synthetic();
+        RECORDING.with(|slot| {
+            slot.borrow_mut().replace(recording);
+        });
+        session.phase = Phase::Listening;
+        session.started_at_ms = teletype_core::storage::now_ms() - 6_000;
+        session.recording_started = Some(std::time::Instant::now());
+        // 6 s of 48 kHz audio in 128-sample frames; the callback resamples
+        // to 16 kHz, and the synthetic recording receives the same audio.
+        rate_slot.store(48_000, std::sync::atomic::Ordering::Relaxed);
+        let frame = vec![0.25f32; 128];
+        for _ in 0..(6 * 48_000 / 128) {
+            cb(&frame);
+        }
+        {
+            let r16 = teletype_core::audio::resample_to_target(&vec![0.25f32; 6 * 48_000], 48_000)
+                .unwrap_or_default();
+            RECORDING.with(|slot| {
+                slot.borrow()
+                    .as_ref()
+                    .expect("recording planted")
+                    .push(&r16);
+            });
+        }
+        // The take must have committed at least one segment mid-take, so the
+        // release takes the streaming fold path (the defect's path).
+        {
+            let g = session
+                .streaming
+                .as_ref()
+                .expect("streaming take planted")
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let marks = g.as_ref().expect("take present").streaming_marks();
+            assert!(
+                marks.is_some(),
+                "the take must commit a segment mid-take to take the streaming path"
+            );
+        }
+        // Clean release: the real stop path runs exactly as in production.
+        drop(cb);
+        session.stop(false);
+        // Drain the worker's terminal event; the mirror channel carries it.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let mut got_terminal = false;
+        loop {
+            if got_terminal {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!(
+                    "streaming take never delivered; phase = {:?}",
+                    session.phase
+                );
+            }
+            match events_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(event) => {
+                    if let Event::Transcribed { session: s, pcm, .. } = &event {
+                        if *s == session.next_id - 1 || *s == session.next_id {
+                            got_terminal = true;
+                            // The terminal event must carry the take's actual
+                            // 16 kHz PCM (nonempty, the take's length), so the
+                            // command decider can classify the audio. Before
+                            // the fix this was `None`.
+                            let pcm = pcm.clone().unwrap_or_default();
+                            assert!(
+                                !pcm.is_empty(),
+                                "a successful streaming fold must carry the take's PCM to the decider"
+                            );
+                            // 6 s of audio at 16 kHz: the trimmed take is a
+                            // substantial fraction of the full 96_000-sample
+                            // buffer (the VAD trim keeps at most 150 ms of
+                            // padding past the speech).
+                            assert!(
+                                pcm.len() >= 16_000,
+                                "the streaming PCM must be the take's audio, got {} samples",
+                                pcm.len()
+                            );
+                            // A real payload, not a synthetic substitute: the
+                            // fed audio is a 0.25 constant, so the samples
+                            // carry it.
+                            assert!(
+                                pcm.iter().any(|s| (s - 0.25).abs() < 0.5),
+                                "the PCM must be the take's actual audio"
+                            );
+                        }
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
     }
 
     /// P4 completion test helper: build a `StreamingTake` the way production

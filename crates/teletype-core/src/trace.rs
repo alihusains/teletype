@@ -110,6 +110,15 @@ pub struct DictationTrace {
     /// the keyboard cannot be read as one that did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivered_to: Option<String>,
+    /// CMD-2: which kind of take this session became: `dictation`, `command`,
+    /// or `transform`. Stamped when the take starts and re-stamped when a
+    /// later stage re-routes it (wake phrase, chord takeover), so the last
+    /// write is the route the pipeline actually ran. Before this field a
+    /// swallowed Command chord was indistinguishable from a plain dictation
+    /// take in the trace, because the only evidence of routing lived in the
+    /// log. Absent for traces written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub take_kind: Option<String>,
 }
 
 impl DictationTrace {

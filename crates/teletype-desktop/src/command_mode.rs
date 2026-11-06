@@ -290,11 +290,36 @@ impl NeuDecideDecider {
         if !model_dir.join("config.json").exists() {
             return None;
         }
+        let tools_json = Self::shipping_tools_json().unwrap_or_else(|| {
+            crate::log_entry(
+                crate::LogLevel::Error,
+                "neudecide: failed to parse COMMAND_TOOLS_JSON; returning None",
+            );
+            String::new()
+        });
+        if tools_json.is_empty() {
+            return None;
+        }
         Some(Self {
             model: Mutex::new(None),
             model_dir: model_dir.to_path_buf(),
-            tools_json: teletype_decider::tools_to_json(&teletype_decider::v1_tools(&[], &[], &[])),
+            tools_json,
         })
+    }
+
+    /// Build the shipping tool menu: `COMMAND_TOOLS_JSON` parsed into
+    /// [`ToolDef`], plus the `no_action` sentinel, serialized in the
+    /// Python-`json.dumps` format the model was trained on.
+    pub fn shipping_tools_json() -> Option<String> {
+        let defs: Vec<teletype_decider::ToolDef> =
+            serde_json::from_str(teletype_inference::needle::COMMAND_TOOLS_JSON).ok()?;
+        let mut tools = defs;
+        tools.push(teletype_decider::ToolDef {
+            name: "no_action".into(),
+            description: "Do nothing.".into(),
+            parameters: Some(teletype_decider::tool_json::empty_object_schema()),
+        });
+        Some(teletype_decider::tools_to_json(&tools))
     }
 
     /// True when the decider can run: the model files exist AND the
@@ -398,12 +423,17 @@ impl CommandDecider for NeuDecideDecider {
 
     fn decide(&self, pcm16k: &[f32], transcript: &str) -> Result<Decision, String> {
         let started = std::time::Instant::now();
-        // Addendum A.1: gate with Silero VAD first. Less than ~300 ms of
-        // speech above the VAD floor → skip the model and hand the
-        // transcript back as plain dictation (the existing `no_action`
-        // path). A `None` VAD (engine init failed) keeps the old
-        // behaviour: nothing is gated.
-        if take_speech_ms(pcm16k).is_some_and(|ms| ms < MIN_SPEECH_MS) {
+        // VAD gate: skip the model for takes with < ~300 ms of speech.
+        let vad_ms = take_speech_ms(pcm16k);
+        if vad_ms.is_some_and(|ms| ms < MIN_SPEECH_MS) {
+            let samples = pcm16k.len();
+            let speech = vad_ms
+                .map(|ms| format!("{ms}ms"))
+                .unwrap_or_else(|| "unavail".into());
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!("neudecide: vad_reject samples={samples} speech={speech} calls=0 tool=no_action"),
+            );
             return Ok(Decision {
                 tool: "no_action".into(),
                 args: Map::new(),
@@ -423,14 +453,22 @@ impl CommandDecider for NeuDecideDecider {
                 name: "no_action".into(),
                 arguments: Map::new(),
             });
+        let samples = pcm16k.len();
+        let speech = vad_ms
+            .map(|ms| format!("{ms}ms"))
+            .unwrap_or_else(|| "unavail".into());
+        let call_count = calls.len();
+        let first_tool = &call.name;
+        crate::log_entry(
+            crate::LogLevel::Info,
+            format!("neudecide: samples={samples} speech={speech} gen=1 calls={call_count} tool={first_tool}"),
+        );
         let mut decision = Decision {
             tool: call.name,
             args: call.arguments,
             args_source: "neudecide".to_string(),
             decider_ms: 0,
         };
-        // The resolver fills free-form args from the transcript and
-        // overrides `args_source` for any arg it filled.
         decision.args_source =
             CommandResolver::fill_free_form_args(&decision.tool, &mut decision.args, transcript);
         decision.decider_ms = started.elapsed().as_millis() as u32;
@@ -619,17 +657,17 @@ mod tests {
 
     /// A `CommandDecider` that captures the PCM slice it receives, for
     /// asserting the audio seam threads real take audio to `decide`.
-    struct PcmCaptureDecider {
-        pcm: Mutex<Option<Vec<f32>>>,
+    pub(crate) struct PcmCaptureDecider {
+        pub(crate) pcm: Mutex<Option<Vec<f32>>>,
     }
 
     impl PcmCaptureDecider {
-        fn new() -> Arc<Self> {
+        pub(crate) fn new() -> Arc<Self> {
             Arc::new(Self {
                 pcm: Mutex::new(None),
             })
         }
-        fn captured(&self) -> Option<Vec<f32>> {
+        pub(crate) fn captured(&self) -> Option<Vec<f32>> {
             self.pcm.lock().unwrap().clone()
         }
     }
@@ -1174,5 +1212,119 @@ mod tests {
         assert!(result.is_no_action());
         let captured = d.captured().expect("decider must capture the pcm");
         assert!(captured.is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // CMD-PIPELINE-REPAIR D: the decider menu must match the shipping executor.
+
+    /// The names the shipping menu advertises, in menu order.
+    fn shipping_tool_names() -> Vec<String> {
+        let defs: Vec<teletype_decider::ToolDef> =
+            serde_json::from_str(teletype_inference::needle::COMMAND_TOOLS_JSON)
+                .expect("the shipping menu parses");
+        let mut names: Vec<String> = defs.into_iter().map(|t| t.name).collect();
+        names.push("no_action".into());
+        names
+    }
+
+    #[test]
+    fn shipping_menu_names_all_dispatch_through_dry_run() {
+        let ctx = teletype_core::context::ApplicationContext::unknown();
+        let dry = crate::command_executor::DryRunEffects::new();
+        for name in shipping_tool_names() {
+            if name == "no_action" {
+                continue;
+            }
+            let cmd = teletype_core::llm::CommandAction {
+                tool: name.clone(),
+                arguments: serde_json::Value::Object(Map::new()),
+            };
+            crate::command_executor::execute_with(&dry, &cmd, &ctx).unwrap_or_else(|e| {
+                panic!("the menu advertises {name}, which the executor rejects: {e}")
+            });
+        }
+    }
+
+    #[test]
+    fn shipping_menu_set_volume_accepts_50() {
+        let ctx = teletype_core::context::ApplicationContext::unknown();
+        let dry = crate::command_executor::DryRunEffects::new();
+        let mut args = Map::new();
+        args.insert("level".into(), Value::String("50".into()));
+        let cmd = teletype_core::llm::CommandAction {
+            tool: "set_volume".into(),
+            arguments: Value::Object(args),
+        };
+        let msg = crate::command_executor::execute_with(&dry, &cmd, &ctx).expect("set_volume 50");
+        assert!(
+            msg.contains("set_volume"),
+            "the dry run must record the dispatch: {msg}"
+        );
+    }
+
+    #[test]
+    fn shipping_menu_has_no_unsupported_names() {
+        let names = shipping_tool_names();
+        for unsupported in [
+            "media",
+            "edit_text",
+            "draft_message",
+            "insert_autotext",
+            "switch_style",
+            "transform_selection",
+            "web_search",
+            "paste_last",
+        ] {
+            assert!(
+                !names.iter().any(|n| n == unsupported),
+                "the menu advertises {unsupported}, which the executor cannot dispatch"
+            );
+        }
+        assert!(
+            names.iter().any(|n| n == "set_volume"),
+            "the shipping menu must include set_volume"
+        );
+    }
+
+    #[test]
+    fn shipping_menu_keeps_no_action_sentinel() {
+        let names = shipping_tool_names();
+        assert!(names.iter().any(|n| n == "no_action"));
+        let d = Decision {
+            tool: "no_action".into(),
+            args: Map::new(),
+            args_source: "none".into(),
+            decider_ms: 3,
+        };
+        assert!(d.to_command_action().is_none());
+    }
+
+    #[test]
+    fn neudecide_advertises_the_shipping_menu() {
+        let dir = tempfile::tempdir().expect("model dir");
+        std::fs::write(dir.path().join("config.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("tokenizer.json"), "{}").unwrap();
+        let d = NeuDecideDecider::new(dir.path()).expect("config.json present: the decider builds");
+        let menu: Vec<teletype_decider::ToolDef> =
+            serde_json::from_str(&d.tools_json).expect("the advertised menu parses");
+        let names: Vec<&str> = menu.iter().map(|t| t.name.as_str()).collect();
+        for name in shipping_tool_names() {
+            assert!(
+                names.iter().any(|n| *n == name.as_str()),
+                "the decider's menu is missing {name}: {names:?}"
+            );
+        }
+        for unsupported in ["media", "edit_text", "draft_message", "web_search"] {
+            assert!(
+                !names.iter().any(|n| *n == unsupported),
+                "the decider advertises {unsupported}, which the executor cannot dispatch"
+            );
+        }
+        assert!(names.iter().any(|n| *n == "no_action"));
+        assert!(
+            d.tools_json.starts_with("[{\"name\": \"open_app\""),
+            "the menu must keep the Python-serialized tool list shape: {}",
+            &d.tools_json[..d.tools_json.len().min(40)]
+        );
     }
 }
