@@ -404,6 +404,18 @@ Three things this run also exposed, recorded rather than fixed:
   The fix is to install a larger local LLM for the fallback, or the NeuDecide
   model, not a code change. `command_mode_enabled` defaults to false, so no new
   user is affected; anyone who turns it on with a small LLM is. Tracked as CMD-1.
+- Prompt Engineer does not work on the cleanup-only default model. `s1-mini`
+  returned the spoken input unchanged and scored 0 of 10 on the ten required
+  headings, measured with `scripts/eval/prompt_engineer_eval.py` against the
+  shipped instruction. The app now discloses this before the run: the Prompt
+  Engineer card shows "Needs a general model", and selecting the preset on
+  `s1-mini` or `speakoflow-mini` says it would return the words unchanged and
+  points at the Polish preset or a general or cloud model. Use a general model
+  for this transform. The eval harness must also send
+  `{"enable_thinking": false}` for `s1-mini` and `qwen3.5-2b`, matching
+  `default_chat_template_kwargs` in `teletype-inference`; without it those
+  models return empty content and the score is a harness artifact, not a model
+  result.
 - The updater's failure path is verified on screen and its cause is not
   verifiable at all. Pressing Settings, "Check for updates" on this build renders
   "Update failed. The updater could not reach or verify the release. The releases
