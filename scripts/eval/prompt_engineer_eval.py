@@ -41,6 +41,10 @@ DEFAULT_INPUTS = "evals/prompt-engineer/inputs.jsonl"
 PREVIEW_CHARS = 40
 FILL_MARKER = "[FILL: "
 HEADING_RE = re.compile(r"^\*\*(.+?)\*\*\s*$")
+# Mirrors `default_chat_template_kwargs` in teletype-inference: these models
+# default to thinking mode in their chat template and return empty content
+# unless the request disables it.
+THINKING_OFF_MODELS = {"s1-mini", "qwen3.5-2b"}
 
 
 class UsageError(Exception):
@@ -124,6 +128,16 @@ def score_headings(output: str, headings: list[str]) -> int:
     return matched
 
 
+def chat_template_kwargs(model: str) -> dict[str, bool] | None:
+    """The request-level chat template kwargs the app would send for `model`."""
+    stem = Path(model).name
+    if stem.endswith(".gguf"):
+        stem = stem[: -len(".gguf")]
+    if stem in THINKING_OFF_MODELS:
+        return {"enable_thinking": False}
+    return None
+
+
 def request_completion(
     base_url: str,
     model: str,
@@ -140,6 +154,9 @@ def request_completion(
             {"role": "user", "content": text},
         ],
     }
+    kwargs = chat_template_kwargs(model)
+    if kwargs is not None:
+        payload["chat_template_kwargs"] = kwargs
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
