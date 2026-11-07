@@ -62,11 +62,11 @@ const SUBROLE_SECURE_TEXT_FIELD: Name = "AXSecureTextField";
 const ROLE_TEXT_FIELD: Name = "AXTextField";
 const ROLE_TEXT_AREA: Name = "AXTextArea";
 const ROLE_COMBO_BOX: Name = "AXComboBox";
-/// Used only by the tests that pin the writable-role allowlist.
-#[cfg(test)]
+/// Browser URL / address / search bars. Excluded from the writable allowlist
+/// (so the direct-write tier never targets them) and refused outright by the
+/// delivery cascade (so the optimistic-paste tier never navigates to the
+/// dictated text). BUG-006 / L038.
 const ROLE_SEARCH_FIELD: Name = "AXSearchField";
-/// Used only by the tests that pin the writable-role allowlist.
-#[cfg(test)]
 const ROLE_TEXT_URL_FIELD: Name = "AXURLTextField";
 /// Used only by the tests that pin the writable-role allowlist.
 #[cfg(test)]
@@ -352,6 +352,47 @@ pub fn has_writable_focus() -> bool {
         }
         None => false,
     }
+}
+
+/// The role string of the currently focused element, regardless of whether it
+/// is a text field we can write into. `None` when there is no focused element
+/// or its role cannot be read.
+///
+/// Unlike [`focused_text_field`], this does not filter by writability, so it
+/// can see the roles the writable gate intentionally excludes -- in
+/// particular `AXURLTextField` and `AXSearchField`, the browser URL and
+/// search bars that the optimistic-paste path must never target (BUG-006).
+fn focused_role() -> Option<String> {
+    // SAFETY: `new_system_wide` returns a process-wide element with no
+    // ownership transfer; it is only used to read the focused child.
+    let system_wide = unsafe { AXUIElement::new_system_wide() };
+    let focus_name = CFString::from_str(ATTR_FOCUSED);
+    let focus = copy_attribute(&system_wide, &focus_name)?;
+    if focus.as_ptr().is_null() {
+        return None;
+    }
+    let element = NonNull::new(focus.as_ptr() as *mut AXUIElement)?;
+    std::mem::forget(focus);
+    let role_name = CFString::from_str(ATTR_ROLE);
+    // SAFETY: `element` is a live +1 reference for the read.
+    let element_ref = unsafe { element.as_ref() };
+    let role = copy_string_attribute(element_ref, &role_name);
+    // SAFETY: releasing the +1 reference this function owns.
+    unsafe { CFRelease(element.as_ptr().cast()) };
+    role
+}
+
+/// True when the focused element is a browser URL / address / search bar.
+///
+/// These report the AX roles `AXURLTextField` and `AXSearchField`. An
+/// optimistic ⌘V into one, combined with the browser's Enter handling, would
+/// navigate to the dictated text (BUG-006 / L038), so the delivery cascade
+/// refuses them before any side effect.
+pub fn is_url_field() -> bool {
+    matches!(
+        focused_role().as_deref(),
+        Some(ROLE_SEARCH_FIELD) | Some(ROLE_TEXT_URL_FIELD)
+    )
 }
 
 /// Replaces the `trigger_units` UTF-16 units immediately before the caret with

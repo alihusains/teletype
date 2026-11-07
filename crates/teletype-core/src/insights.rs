@@ -1962,7 +1962,10 @@ mod tests {
         h.push(entry(4, "no context here"));
         // Unknown app → "Other".
         let mut e = entry(5, "some words");
-        e.context = Some(crate::context::normalize("com.example.terax", "Terax"));
+        e.context = Some(crate::context::normalize(
+            "com.example.unlistedapp",
+            "UnlistedApp",
+        ));
         h.push(e);
 
         let i = compute(&h, NOW);

@@ -8054,6 +8054,10 @@ impl Session {
             // via `delivery_io::macos_io`'s non-mac twin (`Arc<()>`).
             // Item 3: `keep_text_on_clipboard` decides whether the dictation
             // is left on the pasteboard as an extra item after the restore.
+            let app_id = platform
+                .active_application()
+                .map(|a| a.application_id)
+                .filter(|id| !id.is_empty());
             #[cfg(target_os = "macos")]
             let io = crate::delivery_io::macos_io(
                 std::sync::Arc::new(crate::clipboard::MacClipboardGuard::new()),
@@ -8065,10 +8069,6 @@ impl Session {
                 settings.keep_text_on_clipboard,
             );
             let policy = DeliveryPolicy::builtin();
-            let app_id = platform
-                .active_application()
-                .map(|a| a.application_id)
-                .filter(|id| !id.is_empty());
             let outcome = match &e2e_forced {
                 Some(mode) => {
                     // P9.6: the forced mode is applied through the core
@@ -9675,7 +9675,7 @@ pub fn transcribe(
 /// HARD-4 row 14: the fallback decode path. Same as [`transcribe`], but the
 /// neural slot is prepared for `model_id` (the fallback model) rather than
 /// the selected one, so a fallback to a different engine kind works.
-fn transcribe_for_model(
+pub(crate) fn transcribe_for_model(
     app: &AppHandle,
     model_path: &std::path::Path,
     captured: &Captured,

@@ -221,7 +221,7 @@ describe("inline edits", () => {
     expect(screen.getByRole("region").textContent).toMatch(/^Hey sam/);
     expect(screen.getByTitle("Filler removed: um")).toBeTruthy();
     expect(screen.getByTitle("Polish changed update to status")).toBeTruthy();
-    expect(screen.getByText("1 filler removed · 1 polish edit · polished in 0.4s")).toBeTruthy();
+    expect(screen.getByText("1 filler removed · 1 polish edit · polished in 400ms")).toBeTruthy();
   });
 
   it("drops every del and ins when Show changes is off, and remembers it", async () => {
@@ -300,7 +300,7 @@ describe("inline edits, review fixes", () => {
     expect(Array.from(container.querySelectorAll("del")).map((d) => d.textContent)).toEqual(["jon", "John"]);
     expect(Array.from(container.querySelectorAll("ins")).map((d) => d.textContent)).toEqual(["Jonathan"]);
     expect(screen.getByTitle("Dictionary fixed jon to John, then changed again")).toBeTruthy();
-    expect(screen.getByText("1 polish edit · 1 dictionary fix · polished in 0.4s")).toBeTruthy();
+    expect(screen.getByText("1 polish edit · 1 dictionary fix · polished in 400ms")).toBeTruthy();
   });
 
   it("toggles Show changes from its visible words too", async () => {

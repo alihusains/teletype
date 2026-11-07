@@ -90,6 +90,10 @@ mod macos {
             crate::ax_text::has_writable_focus()
         }
 
+        fn is_url_field(&self) -> bool {
+            crate::ax_text::is_url_field()
+        }
+
         fn set_selected_text(&self, text: &str) -> Result<(), String> {
             let outcome = crate::ax_text::insert_text(text);
             match outcome.route {

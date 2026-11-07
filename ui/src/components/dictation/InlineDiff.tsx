@@ -165,7 +165,7 @@ export function InlineDiff({
   );
 }
 
-/** "2 fillers removed · 3 polish edits · 1 dictionary fix · polished in 0.4s". */
+/** "2 fillers removed · 3 polish edits · 1 dictionary fix · polished in 420ms". */
 export function changeSummary(edits: TextSpan[] | null, polishMs: number | null): string | null {
   if (!edits) return null;
   const counts: Partial<Record<SpanKind, number>> = {};
@@ -183,7 +183,10 @@ export function changeSummary(edits: TextSpan[] | null, polishMs: number | null)
   if (n("format")) parts.push(plural(n("format"), "format fix", "format fixes"));
   if (n("correction")) parts.push(plural(n("correction"), "on-screen name", "on-screen names"));
   if (parts.length === 0) return null;
-  if (polishMs !== null && n("polish") > 0) parts.push(`polished in ${(polishMs / 1000).toFixed(1)}s`);
+  if (polishMs !== null && n("polish") > 0) {
+    const t = polishMs < 1000 ? `${Math.round(polishMs)}ms` : `${(polishMs / 1000).toFixed(1)}s`;
+    parts.push(`polished in ${t}`);
+  }
   return parts.join(" · ");
 }
 

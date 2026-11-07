@@ -116,7 +116,6 @@ pub fn refuse_newline_in_terminal(app_type: crate::context::AppType, text: &str)
 ///    existing, most reliable mechanism), then **verify** by polling the
 ///    focused field for the text to appear within `VERIFY_TIMEOUT`.
 /// 2. If verification failed or the app's policy says so, fall back to
-///    typing character-by-character (bounded by `MAX_TYPED_CHARS`) or
 ///    writing the value straight into the field via accessibility.
 /// 3. If everything failed, the text is **held**: the caller keeps it for
 ///    the user's "Paste last" hotkey (P8.4) rather than losing it.
@@ -153,9 +152,6 @@ const VERIFY_GRACE: Duration = Duration::from_millis(400);
 /// field would match almost anything), so verification is skipped and the
 /// paste is treated as unverified.
 const MIN_VERIFY_LEN: usize = 4;
-/// The typed fallback is only worth it for shortish text; beyond this the
-/// cascade goes straight to the set-value fallback.
-const MAX_TYPED_CHARS: usize = 2000;
 /// A snapshot whose parts total more than this many bytes is too big to
 /// restore reliably; skip the snapshot and replace the clipboard instead.
 const SNAPSHOT_SIZE_LIMIT: usize = 50 * 1024 * 1024;
@@ -204,12 +200,23 @@ pub trait FieldReader: Send + Sync {
     fn is_secure_field(&self) -> bool;
     /// True when the focused element is a writable text field.
     ///
-    /// Checked before the clipboard path: with no writable focus, ⌘V lands in
-    /// the app's default paste target instead of the user's caret (L038).
-    /// Defaults to true because missing evidence must not block delivery; an
-    /// adapter that can prove the absence overrides it.
+    /// Checked before the optimistic-paste path: with no writable focus the
+    /// field is a web/Electron/chat area that cannot be read back, so the
+    /// cascade fires the paste keystroke optimistically into whatever is
+    /// focused (see `deliver`). Defaults to true because missing evidence
+    /// must not block delivery; an adapter that can prove the absence
+    /// overrides it.
     fn has_writable_focus(&self) -> bool {
         true
+    }
+    /// True when the focused element is a browser URL / address / search bar.
+    ///
+    /// Distinguishing these from ordinary text fields is what lets the
+    /// optimistic-paste path fire ⌘V into web content without ever navigating
+    /// to the dictated text (BUG-006 / L038). Defaults to false: an adapter
+    /// that cannot observe the role must not block delivery on a guess.
+    fn is_url_field(&self) -> bool {
+        false
     }
     /// Replace the focused field's selected text (or insert at the caret)
     /// via the accessibility set-value API. `Ok(())` only when the write
@@ -512,6 +519,17 @@ pub fn deliver(
         };
     }
 
+    // Browser URL / address / search bars refuse the same way (BUG-006): an
+    // optimistic ⌘V into an omnibox, followed by the app's Enter handling,
+    // would navigate to the dictated text. The text stays with the caller.
+    // This is what lets the optimistic-paste path below fire freely into web
+    // content and chat without ever risking a URL-bar navigation.
+    if io.field.is_url_field() {
+        return DeliveryOutcome::Refused {
+            reason: "focused field is a browser address or search bar".into(),
+        };
+    }
+
     // A forced path applies to the take's app only when scoped by
     // `TELETYPE_FORCE_APP` (the e2e hook's per-app override); unscoped, it
     // is process-wide (the original matrix harness semantics).
@@ -536,13 +554,30 @@ pub fn deliver(
     // side effect, trust or not.
     let trusted = (io.accessibility_trusted)();
 
-    // L038: a keystroke paste is only caret-safe when a writable text field
-    // has focus. Without one, ⌘V lands in the app's default paste target.
-    // F-16: instead of refusing into History, leave the text on the
-    // clipboard as a kept write so the user can press the paste shortcut
-    // themselves. Secure fields never reach here (refused above).
+    // No writable AX text field is focused. This is the web/Electron/chat
+    // case (a browser content area, a chat box, an app whose whole content
+    // is one opaque AXGroup): the field is there and focused, just not
+    // readable through the AX API, so we cannot verify a direct write.
+    //
+    // We follow the market behaviour (EnviousWispr, Wispr Flow): fire the
+    // ⌘V keystroke optimistically and let the OS route it into the focused
+    // element, rather than refusing. The user's original L038 concern -- a
+    // ⌘V landing in the app's default paste target -- is bounded by the
+    // guards that already run before this point:
+    //   * secure fields refused above (password / OTP),
+    //   * browser URL / address / search bars refused below (BUG-006),
+    // so the only place this can misroute is a focused control that is
+    // neither a text field, a secure field, nor a URL bar (a button, a
+    // list, ...), which is the accepted trade for pasting into chat/web.
+    //
+    // The paste-verify path handles the unreadable field gracefully: it
+    // reports `PastedUnverified` (the keystroke fired, the field cannot be
+    // read back to confirm), never a second copy.
     if matches!(mode, DeliveryMode::PasteVerify) && !io.field.has_writable_focus() {
-        return keep_on_clipboard(text, io, trusted);
+        tracing::info!(
+            "[deliver] no writable field focused; pasting optimistically into the focused element"
+        );
+        return paste_unverified_path(text, io, trusted);
     }
 
     let result = match mode {
@@ -656,6 +691,35 @@ fn keep_on_clipboard(text: &str, io: &DeliveryIo, trusted: bool) -> DeliveryOutc
         DeliveryOutcome::ClipboardOnly
     } else {
         DeliveryOutcome::AccessibilityDenied
+    }
+}
+
+/// The optimistic-paste path for a focused element that is not a writable AX
+/// text field (web content, chat boxes, Electron apps). The field cannot be
+/// read back, so we cannot verify a direct write; instead we put the text on
+/// the clipboard and fire the paste keystroke, letting the OS route it into
+/// the focused element.
+///
+/// The clipboard is written *first* so the ⌘V reads our dictation, not the
+/// user's previous copy. Outcomes:
+/// - keystroke sent -> [`DeliveryOutcome::PastedUnverified`]: the paste most
+///   likely landed; the field is unreadable so we cannot confirm, and F-19
+///   forbids a second copy, so we report it and stop. The caller's clipboard
+///   restore in `deliver` does not run here (this path returns early), which
+///   is correct: the dictation is now what a normal ⌘V would paste, so the
+///   user can re-paste if it missed.
+/// - keystroke not sent -> fall back to [`keep_on_clipboard`]: the text stays
+///   on the clipboard and the user is told to paste manually.
+fn paste_unverified_path(text: &str, io: &DeliveryIo, trusted: bool) -> DeliveryOutcome {
+    if io.clipboard.set_text(text).is_err() {
+        return DeliveryOutcome::Refused {
+            reason: "the clipboard is unavailable and there is no writable text field".into(),
+        };
+    }
+    if (io.paste_key)() {
+        DeliveryOutcome::PastedUnverified
+    } else {
+        keep_on_clipboard(text, io, trusted)
     }
 }
 
@@ -781,11 +845,22 @@ fn verify_paste_grace(text: &str, io: &DeliveryIo) -> bool {
     }
 }
 
-/// Typed fallback (bounded by `MAX_TYPED_CHARS`), then set-value, then hold.
+/// The last-resort path when the ⌘V paste could not be confirmed.
+///
+/// This used to be a character-by-character `fast_text` typed fallback, but
+/// `fast_text` mangles text into repeated characters in some apps (observed in
+/// terminals such as Terax: a dictation arrived as "aaaa..."), and the OS gives
+/// no reliable signal for *which* apps do this. A bundle-id blocklist is
+/// brittle and cannot cover unknown apps, so the typed route is no longer used
+/// as a delivery path at all: whenever the paste cannot be confirmed, the text
+/// is held for Paste-Last and the user pastes it themselves (⌘V, which the
+/// app's own paste handling routes correctly) rather than receive garbled text.
+///
+/// `set_value` is still tried first: it is a single AX write (not a keystroke
+/// stream), so it cannot produce the repeated-character corruption, and it is
+/// the only route that can still land the text automatically. When even that
+/// is unavailable the text is held.
 fn fallback(text: &str, io: &DeliveryIo) -> DeliveryOutcome {
-    if text.chars().count() <= MAX_TYPED_CHARS && io.typer.type_text(text).is_ok() {
-        return DeliveryOutcome::Typed;
-    }
     set_value_or_hold(text, io)
 }
 
@@ -951,11 +1026,16 @@ mod tests {
         secure: bool,
         set_ok: bool,
         writable_focus: bool,
+        url_field: bool,
+        readable: bool,
         set_calls: Arc<std::sync::atomic::AtomicU32>,
     }
 
     impl FieldReader for TestField {
         fn selected_text(&self) -> Option<String> {
+            if !self.readable {
+                return None;
+            }
             Some(self.text.lock().unwrap().clone())
         }
         fn is_secure_field(&self) -> bool {
@@ -963,6 +1043,9 @@ mod tests {
         }
         fn has_writable_focus(&self) -> bool {
             self.writable_focus
+        }
+        fn is_url_field(&self) -> bool {
+            self.url_field
         }
         fn set_selected_text(&self, text: &str) -> Result<(), String> {
             self.set_calls
@@ -1079,6 +1162,8 @@ mod tests {
                 secure,
                 set_ok: field_set_ok,
                 writable_focus: true,
+                url_field: false,
+                readable: true,
                 set_calls: set_calls.clone(),
             }),
             typer: Box::new(TestTyper {
@@ -1272,13 +1357,14 @@ mod tests {
     }
 
     #[test]
-    fn cascade_writable_focus_refusal_keeps_text_on_clipboard() {
-        // F-16: a browser web area (or any focused control with no writable
-        // AX role) has no caret. ⌘V there would land in the app's default
-        // paste target, so the paste is not sent. Instead of refusing into
-        // History, the text is left on the clipboard as a kept write and the
-        // caller is told to press the paste shortcut. Secure fields never
-        // reach this path (they refuse before any side effect).
+    fn cascade_no_writable_field_pastes_optimistically() {
+        // A web / Electron / chat input: no writable AX text field is
+        // focused, but the field is focused and not secure and not a URL bar.
+        // Following the market behaviour (EnviousWispr, Wispr Flow) the cascade
+        // fires the ⌘V keystroke into the focused element rather than refusing.
+        // The field is unreadable, so the outcome is PastedUnverified (the
+        // paste fired; we cannot read it back to confirm), and no second copy
+        // is ever attempted (F-19).
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::{Arc, Mutex};
 
@@ -1298,6 +1384,8 @@ mod tests {
                 secure: false,
                 set_ok: true,
                 writable_focus: false,
+                url_field: false,
+                readable: true,
                 set_calls: set_calls.clone(),
             }),
             typer: Box::new(TestTyper {
@@ -1324,25 +1412,222 @@ mod tests {
 
         assert_eq!(
             outcome,
-            DeliveryOutcome::ClipboardOnly,
-            "a non-secure refusal must keep the text on the clipboard"
+            DeliveryOutcome::PastedUnverified,
+            "an unreadable but focused field gets an optimistic paste"
         );
         assert_eq!(
             clip_set_calls.load(Ordering::SeqCst),
             1,
-            "the clipboard must be written with the dictation"
+            "the clipboard must be written with the dictation so ⌘V reads it"
         );
-        assert_eq!(paste_calls.load(Ordering::SeqCst), 0, "⌘V must not fire");
+        assert_eq!(
+            paste_calls.load(Ordering::SeqCst),
+            1,
+            "⌘V must fire exactly once"
+        );
         assert_eq!(
             set_calls.load(Ordering::SeqCst),
             0,
-            "set-value must not run"
+            "set-value must not run (field is not writable)"
         );
         assert_eq!(type_calls.load(Ordering::SeqCst), 0, "typing must not run");
         assert_eq!(
             *field_text.lock().unwrap(),
             "",
-            "the field must be untouched"
+            "the unreadable field is never directly written"
+        );
+    }
+
+    #[test]
+    fn cascade_no_writable_field_kept_on_clipboard_when_keystroke_fails() {
+        // Same setup, but the paste keystroke could not be sent (e.g. the
+        // accessibility grant was revoked mid-run). The text stays on the
+        // clipboard as a kept write and the caller is told to paste manually.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let field_text = Arc::new(Mutex::new(String::new()));
+        let set_calls = Arc::new(AtomicU32::new(0));
+        let type_calls = Arc::new(AtomicU32::new(0));
+        let clip_set_calls = Arc::new(AtomicU32::new(0));
+        let snap_calls = Arc::new(AtomicU32::new(0));
+        let restore_calls = Arc::new(AtomicU32::new(0));
+        let paste_calls = Arc::new(AtomicU32::new(0));
+        let typed = Arc::new(Mutex::new(String::new()));
+        let paste_counter = paste_calls.clone();
+
+        let io = DeliveryIo {
+            field: Box::new(TestField {
+                text: field_text.clone(),
+                secure: false,
+                set_ok: true,
+                writable_focus: false,
+                url_field: false,
+                readable: true,
+                set_calls: set_calls.clone(),
+            }),
+            typer: Box::new(TestTyper {
+                ok: true,
+                typed,
+                calls: type_calls.clone(),
+            }),
+            clipboard: Box::new(TestClipboard {
+                set_calls: clip_set_calls.clone(),
+                set_ok: true,
+                snap_calls: snap_calls.clone(),
+                restore_calls,
+                snapshot: Some(snap_with_text("user's old copy")),
+                change_count: None,
+            }),
+            paste_key: Box::new(move || {
+                paste_counter.fetch_add(1, Ordering::SeqCst);
+                false
+            }),
+            accessibility_trusted: Box::new(|| true),
+        };
+
+        let outcome = deliver("hello world", None, &default_policy(), &io);
+
+        assert_eq!(
+            outcome,
+            DeliveryOutcome::ClipboardOnly,
+            "a failed keystroke falls back to the clipboard-kept path"
+        );
+        assert!(
+            clip_set_calls.load(Ordering::SeqCst) >= 1,
+            "the clipboard must hold the dictation"
+        );
+        assert_eq!(type_calls.load(Ordering::SeqCst), 0, "typing must not run");
+    }
+
+    #[test]
+    fn cascade_url_field_refuses_before_any_side_effect() {
+        // BUG-006 / L038: a browser URL / address / search bar must never be
+        // the target of an optimistic ⌘V, because the browser's Enter handling
+        // would navigate to the dictated text. The text is refused before any
+        // clipboard write or keystroke.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let field_text = Arc::new(Mutex::new(String::new()));
+        let set_calls = Arc::new(AtomicU32::new(0));
+        let type_calls = Arc::new(AtomicU32::new(0));
+        let clip_set_calls = Arc::new(AtomicU32::new(0));
+        let snap_calls = Arc::new(AtomicU32::new(0));
+        let restore_calls = Arc::new(AtomicU32::new(0));
+        let paste_calls = Arc::new(AtomicU32::new(0));
+        let typed = Arc::new(Mutex::new(String::new()));
+        let paste_counter = paste_calls.clone();
+
+        let io = DeliveryIo {
+            field: Box::new(TestField {
+                text: field_text.clone(),
+                secure: false,
+                set_ok: true,
+                writable_focus: false,
+                url_field: true,
+                readable: true,
+                set_calls: set_calls.clone(),
+            }),
+            typer: Box::new(TestTyper {
+                ok: true,
+                typed,
+                calls: type_calls.clone(),
+            }),
+            clipboard: Box::new(TestClipboard {
+                set_calls: clip_set_calls.clone(),
+                set_ok: true,
+                snap_calls: snap_calls.clone(),
+                restore_calls,
+                snapshot: None,
+                change_count: None,
+            }),
+            paste_key: Box::new(move || {
+                paste_counter.fetch_add(1, Ordering::SeqCst);
+                true
+            }),
+            accessibility_trusted: Box::new(|| true),
+        };
+
+        let outcome = deliver("https://evil.example", None, &default_policy(), &io);
+
+        assert!(
+            matches!(outcome, DeliveryOutcome::Refused { .. }),
+            "a URL bar must refuse dictation"
+        );
+        assert_eq!(
+            clip_set_calls.load(Ordering::SeqCst),
+            0,
+            "no clipboard write"
+        );
+        assert_eq!(paste_calls.load(Ordering::SeqCst), 0, "no keystroke");
+        assert_eq!(type_calls.load(Ordering::SeqCst), 0, "no typing");
+        assert_eq!(*field_text.lock().unwrap(), "", "the URL bar is untouched");
+    }
+
+    #[test]
+    fn cascade_failed_paste_never_types() {
+        // The ⌘V paste path returns None (the keystroke failed to send), so the
+        // cascade reaches the last-resort fallback. That fallback must NEVER use
+        // the character-by-character `fast_text` route: it mangles text into
+        // repeated characters in some apps (observed in terminals such as Terax
+        // -- a dictation arrived as "aaaa...") and there is no reliable signal
+        // for which apps do this. With set-value also unavailable, the text is
+        // held for Paste-Last so the user pastes it themselves.
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::{Arc, Mutex};
+
+        let field_text = Arc::new(Mutex::new(String::new()));
+        let set_calls = Arc::new(AtomicU32::new(0));
+        let type_calls = Arc::new(AtomicU32::new(0));
+        let clip_set_calls = Arc::new(AtomicU32::new(0));
+        let snap_calls = Arc::new(AtomicU32::new(0));
+        let restore_calls = Arc::new(AtomicU32::new(0));
+        let paste_calls = Arc::new(AtomicU32::new(0));
+        let typed = Arc::new(Mutex::new(String::new()));
+        let paste_counter = paste_calls.clone();
+
+        let io = DeliveryIo {
+            field: Box::new(TestField {
+                text: field_text.clone(),
+                secure: false,
+                set_ok: false, // set-value also fails -> held for Paste-Last
+                writable_focus: true,
+                url_field: false,
+                readable: true,
+                set_calls: set_calls.clone(),
+            }),
+            typer: Box::new(TestTyper {
+                ok: true,
+                typed,
+                calls: type_calls.clone(),
+            }),
+            clipboard: Box::new(TestClipboard {
+                set_calls: clip_set_calls.clone(),
+                set_ok: true,
+                snap_calls: snap_calls.clone(),
+                restore_calls,
+                snapshot: None,
+                change_count: None,
+            }),
+            paste_key: Box::new(move || {
+                paste_counter.fetch_add(1, Ordering::SeqCst);
+                false
+            }),
+            accessibility_trusted: Box::new(|| true),
+        };
+
+        let outcome = deliver("hello world", None, &default_policy(), &io);
+
+        assert_eq!(
+            outcome,
+            DeliveryOutcome::HeldForPasteLast,
+            "a failed paste with no set-value holds for Paste-Last"
+        );
+        assert_eq!(
+            type_calls.load(Ordering::SeqCst),
+            0,
+            "the typed fallback must never run (it mangles text)"
         );
     }
 
@@ -1422,14 +1707,15 @@ mod tests {
     #[test]
     fn cascade_setvalue_when_paste_key_fails() {
         // The paste key cannot be sent (enigo unavailable). The text is on
-        // the clipboard, so the cascade falls through to the typed /
-        // set-value routes. Here the typer fails and set-value works, so
-        // the cascade reports SetValue.
+        // the clipboard, so the cascade falls through to the last-resort
+        // route, which is set-value (a single AX write, not a keystroke
+        // stream, so it cannot mangle the text). The typed route is never
+        // used as a delivery path, so the typer is not called.
         let (io, _field, (set_calls, type_calls, _clip, _restore), _typed) = make_io(
             "something else",
             false,
             true,  // set-value works
-            false, // typer fails
+            true,  // typer works (but must not be used as a fallback)
             false, // paste key fails
             None,
             true,
@@ -1438,7 +1724,11 @@ mod tests {
         let policy = default_policy();
         let outcome = deliver("hello world", None, &policy, &io);
         assert_eq!(outcome, DeliveryOutcome::SetValue);
-        assert_eq!(type_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            type_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the typed fallback must never run"
+        );
         assert_eq!(set_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
@@ -1462,15 +1752,16 @@ mod tests {
     }
 
     #[test]
-    fn cascade_typed_when_paste_key_fails() {
-        // The paste key cannot be sent, but the typer works. The paste
-        // never fired, so there is no risk of a second copy, and the typed
-        // route is the only remaining option.
+    fn cascade_holds_when_paste_key_fails_and_setvalue_fails() {
+        // The paste key cannot be sent and set-value is unavailable. The
+        // typed route is no longer a delivery path (it mangles text into
+        // repeated characters in some apps), so even though the typer would
+        // work, it must not be used. The text is held for Paste-Last.
         let (io, _field, (_set, type_calls, _clip, _restore), _typed) = make_io(
             "something else",
             false,
-            false, // set-value fails (unused here)
-            true,  // typer works
+            false, // set-value fails
+            true,  // typer works (but must not be used as a fallback)
             false, // paste key fails
             None,
             true,
@@ -1478,11 +1769,11 @@ mod tests {
         );
         let policy = default_policy();
         let outcome = deliver("hello world", None, &policy, &io);
-        assert_eq!(outcome, DeliveryOutcome::Typed);
+        assert_eq!(outcome, DeliveryOutcome::HeldForPasteLast);
         assert_eq!(
             type_calls.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "typer called exactly once"
+            0,
+            "the typed fallback must never run"
         );
     }
 
@@ -1665,6 +1956,13 @@ mode = "bogus"
             policy.mode_for(Some("com.microsoft.VSCode")),
             DeliveryMode::PasteVerify
         );
+        // Terax must paste, never type: the typed route mangles single-line
+        // dictation into repeated characters ("aaaa"). Regression guard for
+        // the /goal that the typed path is never a production delivery route.
+        assert_eq!(
+            policy.mode_for(Some("app.crynta.terax")),
+            DeliveryMode::PasteVerify
+        );
         assert_eq!(
             policy.mode_for(Some("com.something.else")),
             DeliveryMode::PasteVerify
@@ -1831,18 +2129,23 @@ mode = "bogus"
     }
 
     #[test]
-    fn untrusted_accessibility_wins_over_writable_focus_refusal() {
-        // F-17: both the accessibility trust check and the writable-focus
-        // check fail. The trust check is read first, so the outcome is
-        // AccessibilityDenied (the message names the cause), not
-        // ClipboardOnly.
+    fn untrusted_accessibility_yields_denied_on_readable_field() {
+        // F-17: the accessibility trust check says `false` and the focused
+        // field IS a readable writable text field, so the cascade takes the
+        // normal paste-verify path, which consults trust and goes straight to
+        // the clipboard-kept path, reporting AccessibilityDenied (the message
+        // names the cause). This is the case where trust actually blocks the
+        // paste; the unreadable-field case instead reports PastedUnverified
+        // because the field cannot be read back to confirm either way.
         use std::sync::{Arc, Mutex};
         let io = DeliveryIo {
             field: Box::new(TestField {
                 text: Arc::new(Mutex::new(String::new())),
                 secure: false,
                 set_ok: true,
-                writable_focus: false,
+                writable_focus: true,
+                url_field: false,
+                readable: true,
                 set_calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             }),
             typer: Box::new(TestTyper {

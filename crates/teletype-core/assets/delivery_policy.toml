@@ -79,11 +79,10 @@ mode = "paste_verify"
 ["com.microsoft.VSCode"]
 mode = "paste_verify"
 
-# Terax (app.crynta.terax): its text field inconsistently exposes its AX
-# value, so paste-verify's read-back is flaky. F-19 removed the typed
-# fallback from the paste_verify path, so an inconclusive verification now
-# stops with the text on the clipboard rather than re-typing on top of a
-# paste that already landed. Pure typed delivery (no clipboard, no
-# verify-fallback race) is still the reliable route here.
+# Terax (app.crynta.terax): same rule as the other terminals. Its text field
+# inconsistently exposes its AX value, so the read-back is flaky and resolves
+# to PastedUnverified (quiet, no second copy). The typed route mangles
+# single-line dictation into repeated characters ("aaaa"), so Terax must
+# paste like every other terminal, never type.
 ["app.crynta.terax"]
-mode = "type"
+mode = "paste_verify"

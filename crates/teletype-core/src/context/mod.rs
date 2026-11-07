@@ -182,6 +182,8 @@ fn classify(id: &str, name: &str) -> (AppType, f32) {
         "dev.zed.Zed",
         "com.torch.openconsole",
         "com.microsoft.vscode",
+        "app.crynta.terax",
+        "terax",
     ];
 
     let hay = format!("{id}\x1f{name}");
