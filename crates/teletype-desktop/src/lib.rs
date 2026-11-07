@@ -1583,7 +1583,8 @@ mod command_decider_rebuild_tests {
         // Select the hybrid, which is not installed (no Qwen files, no LLM).
         state
             .settings
-            .update(|s| s.command_decider_model = "qwen3-asr+llm".into());
+            .update(|s| s.command_decider_model = "qwen3-asr+llm".into())
+            .unwrap();
         state.rebuild_command_decider(|| noop_asr());
         #[cfg(feature = "neudecide")]
         {
@@ -1608,7 +1609,8 @@ mod command_decider_rebuild_tests {
         // Empty models dir: nothing installed.
         state
             .settings
-            .update(|s| s.command_decider_model = "neudecide-q4".into());
+            .update(|s| s.command_decider_model = "neudecide-q4".into())
+            .unwrap();
         state.rebuild_command_decider(|| noop_asr());
         assert!(
             state.command_decider.get().is_none(),
@@ -1637,7 +1639,8 @@ mod command_decider_rebuild_tests {
         // genuine change, not a no-op.
         state
             .settings
-            .update(|s| s.command_decider_model = "qwen3-asr+llm".into());
+            .update(|s| s.command_decider_model = "qwen3-asr+llm".into())
+            .unwrap();
         let old = state.settings();
         // No change: the early-return guard must skip the rebuild.
         let new = old.clone();
