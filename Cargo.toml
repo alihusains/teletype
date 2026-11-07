@@ -5,6 +5,7 @@ members = [
     "crates/needle-sys",
     "crates/parakeet-cpp-sys",
     "crates/teletype-core",
+    "crates/teletype-catalog",
     "crates/teletype-speech",
     "crates/teletype-fluid",
     "crates/teletype-apple",
