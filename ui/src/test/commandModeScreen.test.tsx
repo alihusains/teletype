@@ -32,33 +32,39 @@ const TOOL_NAMES = [
   "play_media",
 ];
 
-const MODEL = {
-  id: "neudecide-q4",
-  name: "NeuDecide Q4 (decider)",
-  sizeMb: 41,
-  downloaded: true,
-};
+const DECIDERS = [
+  {
+    id: "neudecide-q4",
+    name: "NeuDecide Q4 (decider)",
+    installed: true,
+    available: true,
+    reason: null,
+  },
+  {
+    id: "qwen3-asr+llm",
+    name: "Qwen ASR + local LLM",
+    installed: false,
+    available: false,
+    reason: "requires a Qwen ASR speech model and a local LLM model",
+  },
+];
 
 interface RenderOpts {
   hotkey?: string;
-  // Omit the decider row entirely, or present it with downloaded: false.
-  models?: "installed" | "not-installed" | "absent";
+  // The decider inventory the picker offers. "absent" omits the rows entirely.
+  deciders?: "installed" | "absent";
+  deciderModel?: string;
 }
 
 function renderScreen(opts: RenderOpts = {}): void {
-  const { hotkey = "Cmd+Shift+.", models = "installed" } = opts;
-  const listModels =
-    models === "installed"
-      ? [MODEL]
-      : models === "not-installed"
-        ? [{ ...MODEL, downloaded: false }]
-        : [];
+  const { hotkey = "Cmd+Shift+.", deciders = "installed", deciderModel = "neudecide-q4" } = opts;
   mockInvokeResponses({
     get_settings: {
       commandModeEnabled: true,
       commandHotkey: hotkey,
+      commandDeciderModel: deciderModel,
     },
-    list_models: listModels,
+    list_command_deciders: deciders === "installed" ? DECIDERS : [],
     save_settings: null,
   });
   mockListenCapture();
@@ -83,19 +89,25 @@ describe("Command Mode screen", () => {
     expect(await screen.findByText("Sends immediately")).toBeTruthy();
   });
 
-  it("shows the installed decider when neudecide-q4 is downloaded", async () => {
-    renderScreen({ models: "installed" });
-    expect(await screen.findByText("Decider: NeuDecide Q4 installed (41 MB)")).toBeTruthy();
+  it("offers the decider models the backend reports", async () => {
+    renderScreen({ deciders: "installed" });
+    const select = await screen.findByRole("combobox", { name: "Decider" });
+    expect(select).toBeTruthy();
+    expect(screen.getByText("NeuDecide Q4 (decider)")).toBeTruthy();
+    expect(
+      screen.getByText("Qwen ASR + local LLM (requires a Qwen ASR speech model and a local LLM model)"),
+    ).toBeTruthy();
   });
 
-  it("shows the not-installed decider when the model is missing", async () => {
-    renderScreen({ models: "absent" });
-    expect(await screen.findByText("Decider: not installed")).toBeTruthy();
+  it("selects the decider model the setting holds", async () => {
+    renderScreen({ deciders: "installed", deciderModel: "qwen3-asr+llm" });
+    const select = (await screen.findByRole("combobox", { name: "Decider" })) as HTMLSelectElement;
+    expect(select.value).toBe("qwen3-asr+llm");
   });
 
-  it("shows the not-installed decider when the model row says not downloaded", async () => {
-    renderScreen({ models: "not-installed" });
-    expect(await screen.findByText("Decider: not installed")).toBeTruthy();
+  it("hides the picker when the backend reports no decider rows", async () => {
+    renderScreen({ deciders: "absent" });
+    expect(screen.queryByRole("combobox", { name: "Decider" })).toBeNull();
   });
 
   it("shows the configured hotkey on the toggle card", async () => {

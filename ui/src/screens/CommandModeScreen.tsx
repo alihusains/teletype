@@ -21,18 +21,13 @@ interface TraceEntry extends PipelineTrace {
 
 const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace";
 
-/** The subset of `list_models` this screen reads. */
-interface ModelRow {
+/** One row from `list_command_deciders`: a decider the app can offer. */
+interface DeciderRow {
   id: string;
   name: string;
-  sizeMb: number;
-  downloaded: boolean;
-}
-
-/** The decider shown to the user, from the real model inventory. */
-interface DeciderState {
   installed: boolean;
-  sizeMb: number;
+  available: boolean;
+  reason: string | null;
 }
 
 interface ToolRow {
@@ -144,41 +139,45 @@ const TOOLS: ToolRow[] = [
 export default function CommandModeScreen() {
   const [enabled, setEnabled] = useState<boolean>(false);
   const [traces, setTraces] = useState<TraceEntry[]>([]);
-  const [decider, setDecider] = useState<DeciderState | null>(null);
   const [commandHotkey, setCommandHotkey] = useState<string>("");
+  const [deciderModel, setDeciderModel] = useState<string>("neudecide-q4");
+  const [deciderRows, setDeciderRows] = useState<DeciderRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    invoke<{ commandModeEnabled?: boolean; commandHotkey?: string }>("get_settings")
+    invoke<{
+      commandModeEnabled?: boolean;
+      commandHotkey?: string;
+      commandDeciderModel?: string;
+    }>("get_settings")
       .then((s) => {
         setEnabled(!!s.commandModeEnabled);
         setCommandHotkey(s.commandHotkey ?? "");
+        setDeciderModel(s.commandDeciderModel ?? "neudecide-q4");
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, []);
 
-  // The decider is chosen from what is actually on disk: the backend builds
-  // NeuDecide only when `neudecide-q4` is present, and otherwise command
-  // takes fall through to the Needle / LLM path. `list_models` reports that
-  // same file state, so this line cannot claim more than the app can do.
+  // The picker's options come from the backend's decider inventory, which
+  // reports each row's live availability (installed + runnable). The UI
+  // never invents a model the backend cannot build.
   useEffect(() => {
-    invoke<ModelRow[]>("list_models", { shortlist: false })
-      .then((models) => {
-        const row = models.find((m) => m.id === "neudecide-q4");
-        setDecider({
-          installed: !!row?.downloaded,
-          sizeMb: row?.sizeMb ?? 0,
-        });
-      })
-      .catch(() => setDecider({ installed: false, sizeMb: 0 }));
+    invoke<DeciderRow[]>("list_command_deciders")
+      .then(setDeciderRows)
+      .catch(() => setDeciderRows([]));
   }, []);
 
   useTauriEvent<void>("settings-changed", () => {
-    invoke<{ commandModeEnabled?: boolean; commandHotkey?: string }>("get_settings")
+    invoke<{
+      commandModeEnabled?: boolean;
+      commandHotkey?: string;
+      commandDeciderModel?: string;
+    }>("get_settings")
       .then((s) => {
         setEnabled(!!s.commandModeEnabled);
         setCommandHotkey(s.commandHotkey ?? "");
+        setDeciderModel(s.commandDeciderModel ?? "neudecide-q4");
       })
       .catch(() => {});
   });
@@ -201,6 +200,17 @@ export default function CommandModeScreen() {
     } catch (e) {
       console.error("Failed to save command mode setting:", e);
       setEnabled(!value);
+    }
+  };
+
+  const pickDeciderModel = async (id: string) => {
+    setDeciderModel(id);
+    try {
+      const settings = await invoke<Record<string, unknown>>("get_settings");
+      settings.commandDeciderModel = id;
+      await invoke("save_settings", { settings });
+    } catch (e) {
+      console.error("Failed to save decider model:", e);
     }
   };
 
@@ -400,19 +410,50 @@ export default function CommandModeScreen() {
             >
               Hotkey: {commandHotkey.trim() ? commandHotkey : "not set"}
             </div>
-            <div
-              style={{
-                fontSize: "var(--text-sm)",
-                color: "var(--text-tertiary)",
-                marginTop: 4,
-              }}
-            >
-              {decider
-                ? decider.installed
-                  ? `Decider: NeuDecide Q4 installed (${decider.sizeMb} MB)`
-                  : "Decider: not installed"
-                : "Decider: checking models"}
-            </div>
+            {deciderRows.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 10,
+                }}
+              >
+                <label
+                  htmlFor="decider-model"
+                  style={{
+                    fontSize: "var(--text-sm)",
+                    color: "var(--text-tertiary)",
+                  }}
+                >
+                  Decider
+                </label>
+                <select
+                  id="decider-model"
+                  value={deciderModel}
+                  onChange={(e) => pickDeciderModel(e.target.value)}
+                  style={{
+                    fontSize: "var(--text-sm)",
+                    padding: "4px 8px",
+                    borderRadius: "var(--radius-xs, 6px)",
+                    background: "var(--surface-2)",
+                    color: "var(--text-primary)",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  {deciderRows.map((row) => (
+                    <option key={row.id} value={row.id} disabled={!row.available}>
+                      {row.name}
+                      {row.available
+                        ? ""
+                        : row.reason
+                          ? ` (${row.reason})`
+                          : " (not installed)"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <Toggle label="Enable Command Mode" checked={enabled} onChange={toggle} />
         </div>

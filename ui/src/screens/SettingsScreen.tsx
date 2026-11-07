@@ -118,6 +118,10 @@ export interface Settings {
   openaiBaseUrl: string;
   openaiModel: string;
   commandModeEnabled: boolean;
+  /** "neudecide-q4" (default) or "qwen3-asr+llm". Picked on the Command Mode
+      screen; the backend falls back to NeuDecide when the chosen model's
+      files are not installed. */
+  commandDeciderModel?: string;
   /** T20: show the strong-language coach card on the Insights screen.
       On by default; the card is hidden entirely when off. */
   showLanguageCoach?: boolean;
