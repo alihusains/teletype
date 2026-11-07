@@ -1536,11 +1536,8 @@ mod tests {
             true,
             None,
         );
-        let policy = default_policy().with_override(
-            "com.example.typedapp",
-            DeliveryMode::Type,
-            None,
-        );
+        let policy =
+            default_policy().with_override("com.example.typedapp", DeliveryMode::Type, None);
         let outcome = deliver("ls -la", Some("com.example.typedapp"), &policy, &io);
         assert_eq!(outcome, DeliveryOutcome::Typed);
         assert_eq!(type_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
