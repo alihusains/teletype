@@ -1,1 +1,613 @@
-[]
+[
+  {
+    "id": "parakeet-tdt-v3",
+    "name": "Parakeet v3",
+    "engine": "parakeet",
+    "capabilities": ["asr"],
+    "languages": ["bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"],
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "ggml-parakeet-tdt-0.6b-v3-q8_0.bin",
+        "bytes": 640000000,
+        "sha256": "4d64e9e96c2792186d072fde0034df0ad670cf680a2f53069052ead827fd600e"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 640,
+    "minRamGb": 4,
+    "speed": 9.7,
+    "accuracy": 9.2,
+    "recommended": true,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Everyday dictation", "basis": "inferred", "evidence": null},
+      {"label": "Fastest", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Fastest model, with punctuation. English and 24 European languages."
+  },
+  {
+    "id": "fluid-speech-mini",
+    "name": "Fluid Speech Mini",
+    "engine": "parakeet-cpp",
+    "capabilities": ["asr"],
+    "languages": ["en"],
+    "englishOnly": true,
+    "artifacts": [
+      {
+        "file": "fluid-speech-mini-q2k-q4k.gguf",
+        "bytes": 347000000,
+        "sha256": "f0796bf40274cc49d3db58563c23cd024b52ca7e2ae4749ccf27af85841726b5"
+      }
+    ],
+    "baseUrl": "https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf/resolve/main",
+    "sizeMb": 347,
+    "minRamGb": 2,
+    "speed": 9.7,
+    "accuracy": 8.8,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Fastest", "basis": "inferred", "evidence": null},
+      {"label": "English only", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Compact English-only build. Loads in under a second, but less accurate than Parakeet Ultra on noisy or accented speech."
+  },
+  {
+    "id": "parakeet-tdt-v3-q4",
+    "name": "Parakeet v3 (compact)",
+    "engine": "parakeet",
+    "capabilities": ["asr"],
+    "languages": ["bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"],
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "ggml-parakeet-tdt-0.6b-v3-q4_0.bin",
+        "bytes": 356000000,
+        "sha256": "aa7fe2f5fb47d863ca23e8b1d490632d63a2599f515268b6d6bd656158dad45e"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 356,
+    "minRamGb": 2,
+    "speed": 9.7,
+    "accuracy": 8.8,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Fastest", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Same speed as Parakeet v3, smaller download. Slightly less accurate."
+  },
+  {
+    "id": "parakeet-tdt-v3-f16",
+    "name": "Parakeet v3 (high precision)",
+    "engine": "parakeet",
+    "capabilities": ["asr"],
+    "languages": ["bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"],
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "ggml-parakeet-tdt-0.6b-v3-f16.bin",
+        "bytes": 1260000000,
+        "sha256": "833bffc9513b2cae867ee9e51633cfd11e4d51aaa5597c8ac02159385a2b426f"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 1260,
+    "minRamGb": 6,
+    "speed": 9.5,
+    "accuracy": 9.4,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Most accurate", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Long recordings", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Highest accuracy Parakeet build. Needs more RAM."
+  },
+  {
+    "id": "parakeet-ultra-coreml",
+    "name": "Parakeet Ultra (Neural Engine)",
+    "engine": "parakeet-coreml",
+    "capabilities": ["asr"],
+    "languages": ["bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"],
+    "englishOnly": false,
+    "artifacts": [],
+    "baseUrl": null,
+    "sizeMb": 600,
+    "minRamGb": 4,
+    "speed": 9.9,
+    "accuracy": 9.6,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Most accurate", "basis": "measured", "evidence": "evals/runs/bench-2026-10-28/SUMMARY.md"},
+      {"label": "Everyday dictation", "basis": "measured", "evidence": "evals/runs/bench-2026-10-28/SUMMARY.md"},
+      {"label": "Fastest", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Highest accuracy on Mac, runs on the Neural Engine. Default on macOS 14+ Apple Silicon."
+  },
+  {
+    "id": "parakeet-v2-coreml",
+    "name": "Parakeet v2 (Neural Engine, English)",
+    "engine": "parakeet-coreml",
+    "capabilities": ["asr"],
+    "languages": ["en"],
+    "englishOnly": true,
+    "artifacts": [],
+    "baseUrl": null,
+    "sizeMb": 600,
+    "minRamGb": 4,
+    "speed": 9.9,
+    "accuracy": 9.5,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Everyday dictation", "basis": "inferred", "evidence": null},
+      {"label": "Fastest", "basis": "inferred", "evidence": null},
+      {"label": "English only", "basis": "inferred", "evidence": null}
+    ],
+    "description": "English-only Neural Engine build, tuned for highest recall."
+  },
+  {
+    "id": "parakeet-v3-coreml",
+    "name": "Parakeet v3 (Neural Engine)",
+    "engine": "parakeet-coreml",
+    "capabilities": ["asr"],
+    "languages": ["bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"],
+    "englishOnly": false,
+    "artifacts": [],
+    "baseUrl": null,
+    "sizeMb": 600,
+    "minRamGb": 4,
+    "speed": 9.9,
+    "accuracy": 9.3,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Fastest", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Neural Engine fallback build for macOS 14+ Apple Silicon."
+  },
+  {
+    "id": "parakeet-ctc-110m-coreml",
+    "name": "Parakeet CTC 110M (vocabulary spotter)",
+    "engine": "parakeet-coreml",
+    "capabilities": ["asr"],
+    "languages": ["en"],
+    "englishOnly": true,
+    "artifacts": [],
+    "baseUrl": null,
+    "sizeMb": 100,
+    "minRamGb": 2,
+    "speed": 0.0,
+    "accuracy": 0.0,
+    "recommended": false,
+    "auxiliary": true,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Context-aware", "basis": "inferred", "evidence": null},
+      {"label": "English only", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Auxiliary vocabulary spotter for the Neural Engine build. Installed automatically once the dictionary has terms; not a dictation model."
+  },
+  {
+    "id": "sherpa-parakeet-v3-int8",
+    "name": "Parakeet v3 (sherpa-onnx)",
+    "engine": "sherpa",
+    "capabilities": ["asr"],
+    "languages": ["bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk"],
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+        "bytes": 465000000,
+        "sha256": "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 465,
+    "minRamGb": 4,
+    "speed": 8.5,
+    "accuracy": 9.0,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos", "windows", "linux"],
+    "purposes": [
+      {"label": "Everyday dictation", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Default on Windows. Runs on CPU, English and 24 European languages."
+  },
+  {
+    "id": "sherpa-parakeet-v2-int8",
+    "name": "Parakeet v2 (sherpa-onnx, English)",
+    "engine": "sherpa",
+    "capabilities": ["asr"],
+    "languages": ["en"],
+    "englishOnly": true,
+    "artifacts": [
+      {
+        "file": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
+        "bytes": 461000000,
+        "sha256": "157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 461,
+    "minRamGb": 4,
+    "speed": 8.5,
+    "accuracy": 9.0,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos", "windows", "linux"],
+    "purposes": [
+      {"label": "Everyday dictation", "basis": "inferred", "evidence": null},
+      {"label": "English only", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null}
+    ],
+    "description": "English-only sherpa-onnx build for Windows."
+  },
+  {
+    "id": "large-v3-turbo-q5",
+    "name": "Whisper Large v3 Turbo (compressed)",
+    "engine": "whisper",
+    "capabilities": ["asr"],
+    "languages": null,
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "ggml-large-v3-turbo-q5_0.bin",
+        "bytes": 547000000,
+        "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 547,
+    "minRamGb": 6,
+    "speed": 7.5,
+    "accuracy": 9.4,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Most accurate", "basis": "measured", "evidence": "evals/runs/bench-2026-10-28/SUMMARY.md"},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Indian languages", "basis": "inferred", "evidence": null},
+      {"label": "Long recordings", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Near-flagship accuracy at a third of the size. Auto-selected for languages Parakeet does not cover (Arabic, Hindi, Japanese, ...)."
+  },
+  {
+    "id": "large-v3-turbo",
+    "name": "Whisper Large v3 Turbo",
+    "engine": "whisper",
+    "capabilities": ["asr"],
+    "languages": null,
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "ggml-large-v3-turbo.bin",
+        "bytes": 1624000000,
+        "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 1624,
+    "minRamGb": 8,
+    "speed": 7.0,
+    "accuracy": 9.5,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Most accurate", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Indian languages", "basis": "inferred", "evidence": null},
+      {"label": "Long recordings", "basis": "inferred", "evidence": null}
+    ],
+    "description": "The most accurate Whisper model. Best on machines with a fast GPU."
+  },
+  {
+    "id": "small-en",
+    "name": "Whisper Small (English)",
+    "engine": "whisper",
+    "capabilities": ["asr"],
+    "languages": ["en"],
+    "englishOnly": true,
+    "artifacts": [
+      {
+        "file": "ggml-small.en.bin",
+        "bytes": 466000000,
+        "sha256": "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 466,
+    "minRamGb": 4,
+    "speed": 8.0,
+    "accuracy": 8.5,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Everyday dictation", "basis": "inferred", "evidence": null},
+      {"label": "English only", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Good balance of speed and accuracy for English."
+  },
+  {
+    "id": "base-en",
+    "name": "Whisper Base (English)",
+    "engine": "whisper",
+    "capabilities": ["asr"],
+    "languages": ["en"],
+    "englishOnly": true,
+    "artifacts": [
+      {
+        "file": "ggml-base.en.bin",
+        "bytes": 142000000,
+        "sha256": "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 142,
+    "minRamGb": 2,
+    "speed": 9.0,
+    "accuracy": 7.5,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Fastest", "basis": "inferred", "evidence": null},
+      {"label": "English only", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Fast on any machine. Fine for short English dictation."
+  },
+  {
+    "id": "base",
+    "name": "Whisper Base",
+    "engine": "whisper",
+    "capabilities": ["asr"],
+    "languages": null,
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "ggml-base.bin",
+        "bytes": 142000000,
+        "sha256": "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 142,
+    "minRamGb": 2,
+    "speed": 9.0,
+    "accuracy": 7.3,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Fastest", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Indian languages", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Small and quick to download. A good way to get started in any language."
+  },
+  {
+    "id": "tiny",
+    "name": "Whisper Tiny",
+    "engine": "whisper",
+    "capabilities": ["asr"],
+    "languages": null,
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "ggml-tiny.bin",
+        "bytes": 75000000,
+        "sha256": "be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"
+      }
+    ],
+    "baseUrl": null,
+    "sizeMb": 75,
+    "minRamGb": 2,
+    "speed": 9.5,
+    "accuracy": 6.0,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Fastest", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Indian languages", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Fastest Whisper model and least accurate. Useful for testing."
+  },
+  {
+    "id": "qwen3-asr",
+    "name": "Qwen3-ASR 1.7B",
+    "engine": "llama-server",
+    "capabilities": ["asr"],
+    "languages": ["ar", "bg", "cs", "da", "de", "el", "en", "es", "fi", "fr", "hr", "hi", "hu", "id", "it", "ja", "ko", "ms", "nl", "no", "pl", "pt", "ro", "ru", "sk", "sv", "tr", "uk", "vi", "zh"],
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "Qwen3-ASR-1.7B-Q8_0.gguf",
+        "bytes": 2165034944,
+        "sha256": "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57"
+      },
+      {
+        "file": "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+        "bytes": 355709344,
+        "sha256": "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d"
+      }
+    ],
+    "baseUrl": "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main",
+    "sizeMb": 2521,
+    "minRamGb": 4,
+    "speed": 6.0,
+    "accuracy": 9.0,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Indian languages", "basis": "inferred", "evidence": null},
+      {"label": "Long recordings", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Qwen3 ASR 1.7B GGUF via llama-server. Transcribes 30 languages, including Polish, in a local llama-server process. A 2.4 GB download and a 10-second cold load."
+  },
+  {
+    "id": "apple-speech-transcriber",
+    "name": "Apple on-device speech (Experimental)",
+    "engine": "apple-speech",
+    "capabilities": ["asr"],
+    "languages": null,
+    "englishOnly": false,
+    "artifacts": [],
+    "baseUrl": null,
+    "sizeMb": 0,
+    "minRamGb": 0,
+    "speed": 0.0,
+    "accuracy": 0.0,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "No download", "basis": "inferred", "evidence": null},
+      {"label": "Experimental", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Experimental. Newer system speech model managed by macOS; no Teletype download. Locales only the dictation module covers fall back to it and the module that ran is reported. Not yet measured on the Teletype corpus, so no speed or accuracy bar."
+  },
+  {
+    "id": "apple-dictation-transcriber",
+    "name": "Apple dictation speech (Experimental)",
+    "engine": "apple-speech",
+    "capabilities": ["asr"],
+    "languages": null,
+    "englishOnly": false,
+    "artifacts": [],
+    "baseUrl": null,
+    "sizeMb": 0,
+    "minRamGb": 0,
+    "speed": 0.0,
+    "accuracy": 0.0,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "No download", "basis": "inferred", "evidence": null},
+      {"label": "Experimental", "basis": "inferred", "evidence": null},
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Experimental. Older system dictation model managed by macOS; covers languages the transcriber row does not and runs its own model where both cover the locale. If only the transcriber covers a locale the take runs there instead and the module that ran is reported. No Teletype download, no measured accuracy."
+  },
+  {
+    "id": "nemotron-3.5-asr-streaming-q4",
+    "name": "Nemotron 3.5 ASR Streaming 0.6B (Experimental)",
+    "engine": "transcribe-cpp",
+    "capabilities": ["asr"],
+    "languages": ["ar", "de", "en", "es", "fr", "hi", "it", "ja", "ko", "nl", "pt", "ru", "tr", "uk", "vi"],
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf",
+        "bytes": 495831520,
+        "sha256": "41c99fa5fb6f3d35f68e79adc3e755eca2232a8d921178bd647b71194792b8fd"
+      }
+    ],
+    "baseUrl": "https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/53ce288f69326b415aeef030cfcb02a08a8096dd",
+    "sizeMb": 496,
+    "minRamGb": 2,
+    "speed": 0.0,
+    "accuracy": 0.0,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Experimental", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Experimental. NVIDIA's streaming ASR model: 15 ready languages with punctuation, built for low-latency voice agents. Not yet measured on the Teletype corpus, so no speed or accuracy bar."
+  },
+  {
+    "id": "moonshine-streaming-medium-q8",
+    "name": "Moonshine Streaming Medium (Experimental)",
+    "engine": "transcribe-cpp",
+    "capabilities": ["asr"],
+    "languages": ["en"],
+    "englishOnly": true,
+    "artifacts": [
+      {
+        "file": "moonshine-streaming-medium-Q8_0.gguf",
+        "bytes": 295793568,
+        "sha256": "f7c9564249b508f6012927ec4f9e536087da53a7047f858ca9975bea5f75299e"
+      }
+    ],
+    "baseUrl": "https://huggingface.co/handy-computer/moonshine-streaming-medium-gguf/resolve/56302cde2ae162d1357a833d91775bcd06e91e1b",
+    "sizeMb": 296,
+    "minRamGb": 1,
+    "speed": 0.0,
+    "accuracy": 0.0,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "English only", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null},
+      {"label": "Experimental", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Experimental. Small, fast English streaming model (MIT licensed). The vendor warns it may hallucinate on short or noisy clips, so it is not measured yet: no speed or accuracy bar."
+  },
+  {
+    "id": "granite-speech-470m-q4",
+    "name": "Granite Speech 5.0 470M TurboCTC (Experimental)",
+    "engine": "transcribe-cpp",
+    "capabilities": ["asr"],
+    "languages": ["en", "fr", "de", "es", "pt", "it", "ja"],
+    "englishOnly": false,
+    "artifacts": [
+      {
+        "file": "granite-speech-5.0-470m-turboctc-Q4_K_M.gguf",
+        "bytes": 279114080,
+        "sha256": "3f30525381d72246b7f99e49b6cb66b249cf1b990c6c3d0e031a7765735f513e"
+      }
+    ],
+    "baseUrl": "https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/0cf5be9f4bcd479989e6a24d142094d34d552daa",
+    "sizeMb": 280,
+    "minRamGb": 1,
+    "speed": 0.0,
+    "accuracy": 0.0,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "Multilingual", "basis": "inferred", "evidence": null},
+      {"label": "Low memory", "basis": "inferred", "evidence": null},
+      {"label": "Experimental", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Experimental. IBM's compact multilingual CTC model: 7 languages (English, French, German, Spanish, Portuguese, Italian, Japanese) at a small download. Not yet measured on the Teletype corpus, so no speed or accuracy bar."
+  }
+]

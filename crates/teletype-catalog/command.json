@@ -1,1 +1,58 @@
-[]
+[
+  {
+    "id": "neudecide-q4",
+    "name": "NeuDecide Q4 (decider)",
+    "engine": "onnx",
+    "capabilities": ["tool_calling"],
+    "artifacts": [],
+    "baseUrl": "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/",
+    "sizeMb": 43,
+    "description": "Speech-to-tool-call decider for Command Mode (ONNX, runs in-process).",
+    "runsOn": ["macos", "windows"],
+    "runsOnCpu": true,
+    "sizeLabel": "55.5M",
+    "specialty": "Command Mode decider",
+    "sha256": null,
+    "backupUrl": "https://huggingface.co/neuphonic/neudecide/resolve/main/config.json",
+    "attribution": "NeuDecide by neuphonic (Apache-2.0)",
+    "licenseName": "Apache-2.0",
+    "licenseUrl": "https://huggingface.co/neuphonic/neudecide/blob/main/README.md",
+    "requiresLicenseAccept": false,
+    "recommended": false,
+    "verdict": "not_tested",
+    "verdictNote": "Default Command Mode decider (Addendum A); not measured on our corpus yet.",
+    "sortOrder": 10,
+    "shards": [
+      {
+        "file": "config.json",
+        "bytes": 1002,
+        "sha256": "a1eb5783b7843541b193258c1296d616a4f3f9f5893745bac74c5ef19b2e53a0"
+      },
+      {
+        "file": "audio_encoder_q4.onnx",
+        "bytes": 22519972,
+        "sha256": "2ac5c48e1766382736ed8dd4d468568ee583536550fb741ac187219f8cd8da9b"
+      },
+      {
+        "file": "tool_encoder_q4.onnx",
+        "bytes": 10090217,
+        "sha256": "4a5075ee2868d90ea4be3234eae04001be6886c9730e8746421fa17e84313d85"
+      },
+      {
+        "file": "decoder_step_q4.onnx",
+        "bytes": 9951225,
+        "sha256": "ee68bbb4bbca552b909b41cb1fdbfdf0f9f3c852561e18036044ee2ff461e50d"
+      },
+      {
+        "file": "tokenizer.json",
+        "bytes": 228594,
+        "sha256": "2b31f2b79506cca36b3c63f0e8549e8401dd8d768175c57aa1e67432d69dee0d"
+      },
+      {
+        "file": "tokenizer.model",
+        "bytes": 124892,
+        "sha256": "b39d6892d3b27e66a1782ee624d965e5e656c03e9226cbe036a80389090947ad"
+      }
+    ]
+  }
+]

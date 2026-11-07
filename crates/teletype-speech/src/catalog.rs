@@ -1098,28 +1098,8 @@ fn entry_supports(entry: &SpeechModel, language: Option<&str>) -> bool {
 pub const V2_ENGLISH_PREFERRED: bool = false;
 
 /// The host facts [`pick_engine`] needs (the app fills these in at startup).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Platform {
-    /// macOS on Apple Silicon; `major` is the macOS major version (14+ gets
-    /// the Neural Engine engines).
-    MacosAppleSilicon { major: u16 },
-    /// macOS on Intel - no Neural Engine, so the ggml build is the default.
-    MacosIntel,
-    /// Windows - sherpa-onnx is the default engine.
-    Windows,
-    /// Anything else (Linux, …) - the ggml build is the default.
-    Other,
-}
-
-impl Platform {
-    /// macOS of either architecture.
-    pub fn is_macos(self) -> bool {
-        matches!(
-            self,
-            Platform::MacosAppleSilicon { .. } | Platform::MacosIntel
-        )
-    }
-}
+/// Defined in teletype-catalog so the catalog crate has no speech dependency.
+pub use teletype_catalog::engine::Platform;
 
 /// Detects the host platform for [`pick_engine`].
 ///
