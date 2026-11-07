@@ -198,7 +198,21 @@ impl StreamingTake {
     /// word-loss accounting. Consumes the committer (it resets itself for
     /// the next take and its worker exits on drop).
     fn finish(self, language: String) -> Result<crate::committer::CommitterResult, String> {
-        let tail = self.tail();
+        let mut tail = self.tail();
+        // ASRHALL-1: the tail holds the end of the take, so it carries the
+        // silent tail the ASR engines hallucinate over. Cut it before decode.
+        let keep = teletype_core::audio::trim_trailing_silence(&tail);
+        if keep != tail.len() {
+            crate::log_entry(
+                crate::LogLevel::Info,
+                format!(
+                    "trailing-silence trim (streaming tail): {} -> {} samples",
+                    tail.len(),
+                    keep
+                ),
+            );
+            tail.truncate(keep);
+        }
         // Take-absolute tail offset, same rule as each segment's.
         let tail_start_ms = (self.base_offset as u64 * 1000 / 16_000) as u32;
         self.committer.finish(tail, language, tail_start_ms)
@@ -5391,6 +5405,23 @@ impl Session {
                             ),
                         );
                     }
+                    // ASRHALL-1: the VAD trim above is a no-op while the silero
+                    // engine is broken, so also apply the deterministic energy
+                    // trim. It cuts the silent tail that ASR engines hallucinate
+                    // over, and only ever trims from the end.
+                    let vad_trimmed = trimmed;
+                    let keep = teletype_core::audio::trim_trailing_silence(vad_trimmed);
+                    let trimmed = &vad_trimmed[..keep];
+                    if trimmed.len() != vad_trimmed.len() {
+                        crate::log_entry(
+                            crate::LogLevel::Info,
+                            format!(
+                                "trailing-silence trim: {} -> {} samples",
+                                vad_trimmed.len(),
+                                trimmed.len()
+                            ),
+                        );
+                    }
                     let trimmed_captured = teletype_core::audio::Captured {
                         samples: trimmed.to_vec(),
                         duration_secs: trimmed.len() as f64 / 16_000.0,
@@ -9865,6 +9896,67 @@ fn headless_pipeline_run(raw: &str) -> teletype_core::pipeline::PipelineResult {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// ASRHALL-1 regression: the energy-based trailing trim must cut the
+    /// silent tail off the two confirmed hallucination recordings. Skips when
+    /// the recordings are not present (they live in the user's app-support
+    /// dir, not the repo). The synthetic coverage for the trim itself is in
+    /// `teletype_core::audio::tests::trailing_trim`.
+    #[test]
+    fn asrhall_trailing_trim_cuts_confirmed_recording_tails() {
+        let dir = std::env::var("HOME").ok().map(|h| {
+            std::path::PathBuf::from(h).join(
+                "Library/Application Support/com.teletype.app/recordings",
+            )
+        });
+        let Some(dir) = dir.filter(|d| d.is_dir()) else {
+            eprintln!("asrhall regression: recordings dir absent, skipping");
+            return;
+        };
+        // (filename, original trailing-silence length in seconds, per the
+        // ASRHALL-1 sizing in docs/release-captain-v0.2.17.md)
+        let cases = [
+            ("f5ee5723-d9d5-479c-981c-bde923c9d6ed.wav", 4.59),
+            ("8f0f20dc-6929-4076-8bea-a1b402c0661e.wav", 2.49),
+        ];
+        let mut checked = 0;
+        for (name, _orig_tail) in cases {
+            let bytes = match std::fs::read(dir.join(name)) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            let samples: Vec<f32> = bytes[44..]
+                .chunks_exact(2)
+                .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
+                .collect();
+            let keep = teletype_core::audio::trim_trailing_silence(&samples);
+            // After the trim, at most ~0.3 s of low-level audio may remain
+            // past the last sample that is clearly speech (the 150 ms pad plus
+            // the one-second soft-span can leave a little low noise, but the
+            // multi-second hallucination tail must be gone).
+            let trimmed = &samples[..keep];
+            let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+            let high = 0.012f32.max(0.3 * peak);
+            let last_high = trimmed.iter().rposition(|s| s.abs() > high).unwrap_or(0);
+            let tail_after = (trimmed.len() - last_high) as f64 / 16000.0;
+            eprintln!(
+                "asrhall {name}: {} -> {} samples, tail after last speech {:.2}s",
+                samples.len(),
+                keep,
+                tail_after
+            );
+            assert!(
+                tail_after < 1.2,
+                "{name}: trim left {:.2}s of tail after the last clear speech",
+                tail_after
+            );
+            checked += 1;
+        }
+        assert!(
+            checked > 0,
+            "asrhall regression: neither recording was present; nothing verified"
+        );
+    }
 
     fn term() -> teletype_core::rescoring::RescoreTerm {
         teletype_core::rescoring::RescoreTerm {

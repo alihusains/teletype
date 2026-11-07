@@ -160,6 +160,65 @@ pub struct Captured {
     pub peak: f32,
 }
 
+/// ASRHALL-1: cut the trailing silence (or low noise) off a finished take so
+/// the ASR engine does not decode a long silent tail and hallucinate words
+/// from it. Returns the number of samples to keep; the caller slices
+/// `&samples[..trim_trailing_silence(&samples)]`.
+///
+/// Deterministic (no ML): the ML VAD that P1.11 used is dead in
+/// `silero-vad-pure` 0.1.1 (its `process()` omits Silero's 64-sample input
+/// context, so every probability is near zero; upstream issue #1), which made
+/// the P1.11 trim a silent no-op. This pass replaces it with an energy scan.
+///
+/// Two-threshold scan, calibrated on the two confirmed ASRHALL-1 recordings
+/// (a quiet take, peak ~0.027, whose "silent" tail still carried noise bursts
+/// to ~0.01; and a normal take, peak ~0.09, with a ~2.5 s noise tail):
+///
+/// 1. `high = max(0.012, 0.3 * peak)` finds definite speech. The last sample
+///    above it anchors the end of the take.
+/// 2. `low = max(0.004, 0.1 * peak)` then extends the anchor forward up to one
+///    second, so a soft final word (up to 10 dB under the take peak) that
+///    landed after a brief pause is kept, not cut.
+/// 3. A 150 ms pad is kept after the anchor, and the trim is capped so it
+///    never removes more than 80% of the recording.
+///
+/// Safety: the input is returned unchanged when it is too short, when no
+/// sample clears the speech floor (a near-silent take), or when no sample
+/// clears `high`. Audio is never dropped on a detection miss.
+pub fn trim_trailing_silence(samples: &[f32]) -> usize {
+    const SR: usize = TARGET_SAMPLE_RATE as usize;
+    const SPEECH_FLOOR: f32 = 0.002; // below ~-54 dBFS: treat as no speech
+    const HIGH_ABS: f32 = 0.012; // ~-38 dBFS floor for "definite speech"
+    const LOW_ABS: f32 = 0.004; // ~-48 dBFS floor for "possibly speech"
+    const PAD: usize = 150 * SR / 1000;
+    const SOFT_SPAN: usize = SR; // one second of soft-speech extension
+    const MIN_KEEP_PCT: u32 = 20; // never trim more than 80%
+
+    if samples.len() < SR / 10 {
+        return samples.len();
+    }
+    let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    if peak < SPEECH_FLOOR {
+        return samples.len();
+    }
+    let high = HIGH_ABS.max(0.3 * peak);
+    let low = LOW_ABS.max(0.1 * peak);
+
+    // Anchor: the last sample that is definitely speech.
+    let end_high = (0..samples.len()).rev().find(|&i| samples[i].abs() > high);
+    let Some(anchor) = end_high else {
+        return samples.len();
+    };
+    // Extend forward through soft speech (a quiet final word after a pause),
+    // bounded to one second so a long noise tail cannot drag the anchor out.
+    let horizon = (anchor + SOFT_SPAN).min(samples.len());
+    let end_final = (anchor..horizon).rev().find(|&i| samples[i].abs() > low).unwrap_or(anchor);
+
+    let keep = (end_final + 1 + PAD).min(samples.len());
+    let min_keep = samples.len() * MIN_KEEP_PCT as usize / 100;
+    keep.max(min_keep)
+}
+
 /// A running microphone capture.
 pub struct Recording {
     stop_tx: Sender<()>,
@@ -2699,5 +2758,134 @@ mod tests {
             device_rate,
             "the published rate must be the device rate"
         );
+    }
+
+    // ASRHALL-1: energy-based trailing-silence trim. The ML VAD that P1.11
+    // relied on is dead (silero-vad-pure 0.1.1 omits the 64-sample context,
+    // upstream issue #1), so this deterministic pass is what actually removes
+    // the silent tail before the final decode.
+    mod trailing_trim {
+        use super::*;
+
+        const SR: usize = 16_000;
+
+        fn tone(secs: f64, amp: f32) -> Vec<f32> {
+            (0..(secs * SR as f64) as usize)
+                .map(|i| (i as f32 * (2.0 * std::f32::consts::PI * 300.0 / SR as f32)).sin() * amp)
+                .collect()
+        }
+
+        fn silence(secs: f64) -> Vec<f32> {
+            vec![0.0; (secs * SR as f64) as usize]
+        }
+
+        /// Deterministic low-level noise (no RNG in tests): a fixed
+        /// pseudo-random walk scaled to `amp`.
+        fn noise(secs: f64, amp: f32) -> Vec<f32> {
+            let mut seed = 0x1234_5678u32;
+            (0..(secs * SR as f64) as usize)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    ((seed >> 8) as f32 / (1 << 24) as f32 - 0.5) * 2.0 * amp
+                })
+                .collect()
+        }
+
+        fn join(parts: &[&[f32]]) -> Vec<f32> {
+            parts.iter().flat_map(|p| p.iter().copied()).collect()
+        }
+
+        #[test]
+        fn cuts_digital_silence_tail_to_pad() {
+            let audio = join(&[&tone(2.0, 0.2), &silence(3.0)]);
+            let keep = trim_trailing_silence(&audio);
+            // 2 s of tone plus at most 150 ms pad, and at least the tone.
+            assert!((2 * SR..=(2 * SR + 150 * SR / 1000 + 64)).contains(&keep), "keep {keep}");
+            assert!(keep < audio.len() - 2 * SR, "must cut most of the 3 s tail");
+        }
+
+        #[test]
+        fn all_silence_is_untouched() {
+            let audio = silence(3.0);
+            assert_eq!(trim_trailing_silence(&audio), audio.len());
+        }
+
+        #[test]
+        fn very_quiet_take_is_untouched() {
+            // Peak below the speech floor: never drop the audio.
+            let audio = join(&[&tone(1.0, 0.001), &silence(2.0)]);
+            assert_eq!(trim_trailing_silence(&audio), audio.len());
+        }
+
+        #[test]
+        fn cuts_noise_tail_on_a_quiet_take() {
+            // Models ASRHALL-1 row f5ee5723: quiet speech (peak ~0.027) with
+            // a tail of low noise bursts (peak ~0.01). The noise must be cut.
+            let speech = tone(3.0, 0.02);
+            let tail = noise(4.0, 0.006);
+            let audio = join(&[&speech, &tail]);
+            let keep = trim_trailing_silence(&audio);
+            // Must cut well into the 4 s noise tail: keep at most ~1 s past
+            // the speech end (pad + one soft-span extension).
+            assert!(keep <= 4 * SR + SR, "keep {keep} of {}", audio.len());
+            // And must keep the speech itself.
+            assert!(keep >= 3 * SR, "keep {keep}");
+        }
+
+        #[test]
+        fn cuts_noise_tail_on_a_loud_take() {
+            // Models ASRHALL-1 row 8f0f20dc: normal speech (peak ~0.09) with
+            // a ~2.5 s noise tail.
+            let speech = tone(4.0, 0.08);
+            let tail = noise(2.5, 0.006);
+            let audio = join(&[&speech, &tail]);
+            let keep = trim_trailing_silence(&audio);
+            assert!(keep <= 4 * SR + SR, "keep {keep} of {}", audio.len());
+            assert!(keep >= 4 * SR, "keep {keep}");
+        }
+
+        #[test]
+        fn keeps_a_soft_final_word_within_one_second() {
+            // A loud word, a 0.3 s gap, then a soft final word at 40% of the
+            // take peak: the soft word is speech, not tail. It must survive.
+            let loud = tone(1.0, 0.2);
+            let gap = silence(0.3);
+            let soft = tone(0.5, 0.08); // 40% of 0.2
+            let tail = silence(2.0);
+            let audio = join(&[&loud, &gap, &soft, &tail]);
+            let keep = trim_trailing_silence(&audio);
+            // The soft word ends at 1.8 s; keep must reach at least into it,
+            // plus the 150 ms pad, and cut the 2 s of silence after.
+            let soft_end = (18 * SR) / 10;
+            let pad = 150 * SR / 1000;
+            assert!(keep >= soft_end, "keep {keep}: soft word lost");
+            assert!(keep < soft_end + pad + 64, "keep {keep}: tail not cut");
+        }
+
+        #[test]
+        fn trim_is_capped_at_eighty_percent() {
+            // 0.5 s of speech, 10 s of silence: the cap must keep at least
+            // 20% of the recording even though the tail is huge.
+            let audio = join(&[&tone(0.5, 0.2), &silence(10.0)]);
+            let keep = trim_trailing_silence(&audio);
+            assert!(
+                keep >= audio.len() * 20 / 100,
+                "cap violated: keep {keep} of {}",
+                audio.len()
+            );
+            // And it must still trim something (the tail is 10 s of silence).
+            assert!(keep < audio.len(), "expected a trim, keep == len");
+        }
+
+        #[test]
+        fn short_input_is_untouched() {
+            let audio = tone(0.05, 0.2); // 50 ms
+            assert_eq!(trim_trailing_silence(&audio), audio.len());
+        }
+
+        #[test]
+        fn empty_input_is_untouched() {
+            assert_eq!(trim_trailing_silence(&[]), 0);
+        }
     }
 }
