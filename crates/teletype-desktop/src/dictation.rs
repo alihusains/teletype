@@ -9905,9 +9905,8 @@ mod tests {
     #[test]
     fn asrhall_trailing_trim_cuts_confirmed_recording_tails() {
         let dir = std::env::var("HOME").ok().map(|h| {
-            std::path::PathBuf::from(h).join(
-                "Library/Application Support/com.teletype.app/recordings",
-            )
+            std::path::PathBuf::from(h)
+                .join("Library/Application Support/com.teletype.app/recordings")
         });
         let Some(dir) = dir.filter(|d| d.is_dir()) else {
             eprintln!("asrhall regression: recordings dir absent, skipping");

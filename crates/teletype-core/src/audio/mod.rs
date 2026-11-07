@@ -212,7 +212,10 @@ pub fn trim_trailing_silence(samples: &[f32]) -> usize {
     // Extend forward through soft speech (a quiet final word after a pause),
     // bounded to one second so a long noise tail cannot drag the anchor out.
     let horizon = (anchor + SOFT_SPAN).min(samples.len());
-    let end_final = (anchor..horizon).rev().find(|&i| samples[i].abs() > low).unwrap_or(anchor);
+    let end_final = (anchor..horizon)
+        .rev()
+        .find(|&i| samples[i].abs() > low)
+        .unwrap_or(anchor);
 
     let keep = (end_final + 1 + PAD).min(samples.len());
     let min_keep = samples.len() * MIN_KEEP_PCT as usize / 100;
@@ -2800,7 +2803,10 @@ mod tests {
             let audio = join(&[&tone(2.0, 0.2), &silence(3.0)]);
             let keep = trim_trailing_silence(&audio);
             // 2 s of tone plus at most 150 ms pad, and at least the tone.
-            assert!((2 * SR..=(2 * SR + 150 * SR / 1000 + 64)).contains(&keep), "keep {keep}");
+            assert!(
+                (2 * SR..=(2 * SR + 150 * SR / 1000 + 64)).contains(&keep),
+                "keep {keep}"
+            );
             assert!(keep < audio.len() - 2 * SR, "must cut most of the 3 s tail");
         }
 
