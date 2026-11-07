@@ -626,6 +626,13 @@ pub struct Settings {
     /// executed and the take is delivered as plain dictation instead.
     #[serde(default)]
     pub command_mode_enabled: bool,
+    /// Id of the selected Command Mode decider (CMD-MODEL-CHOICES):
+    /// "neudecide-q4" (the default) or "qwen3-asr+llm". An unknown id
+    /// loads as the default and is saved back unchanged; the decider slot
+    /// rebuild falls back to NeuDecide when the selected model is not
+    /// installed.
+    #[serde(default = "default_command_decider_model")]
+    pub command_decider_model: String,
     /// Recording pill style: "default" | "classic" | "levelRail" | "well" |
     /// "dotGrid" | "glow". An unknown id loads as `Unknown` and is saved back
     /// as "default".
@@ -872,6 +879,7 @@ pub struct SettingsPatch {
     pub openai_model: Option<String>,
     pub enable_developer_tab: Option<bool>,
     pub command_mode_enabled: Option<bool>,
+    pub command_decider_model: Option<String>,
     pub pill_style: Option<PillStyle>,
     pub vad_auto_stop: Option<bool>,
     pub vad_silence_ms: Option<u64>,
@@ -945,6 +953,7 @@ impl SettingsPatch {
         apply!(openai_model);
         apply!(enable_developer_tab);
         apply!(command_mode_enabled);
+        apply!(command_decider_model);
         apply!(pill_style);
         apply!(vad_auto_stop);
         apply!(vad_silence_ms);
@@ -1032,6 +1041,146 @@ fn default_theme() -> UiTheme {
 /// The default recording pill style is the original Teletype design.
 fn default_pill_style() -> PillStyle {
     PillStyle::Classic
+}
+
+/// The default Command Mode decider is the audio+tool NeuDecide model.
+fn default_command_decider_model() -> String {
+    "neudecide-q4".into()
+}
+
+/// One row of the Command Mode decider picker (CMD-MODEL-CHOICES).
+///
+/// `installed` answers "are the model files on disk"; `available` answers
+/// "can the app run this decider right now". A row can be installed but
+/// unavailable (the LFM3 row needs a newer llama-server) or available but
+/// not installed (a hybrid whose speech model is not downloaded yet).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CommandDeciderInfo {
+    /// Stable id, e.g. "neudecide-q4" or "qwen3-asr+llm".
+    pub id: String,
+    /// The name the UI shows.
+    pub name: String,
+    /// The model files are on disk (false for a hybrid whose parts are
+    /// checked by `available`).
+    pub installed: bool,
+    /// Approximate download size in MB (0 when nothing is downloaded for
+    /// this row).
+    pub size_mb: u64,
+    /// The app can run this decider right now.
+    pub available: bool,
+    /// Why the row is not available, for the UI to show. `None` when the
+    /// row is available.
+    pub reason: Option<String>,
+}
+
+/// The decider rows the UI can offer (CMD-MODEL-CHOICES).
+///
+/// Built from the inference catalog (the NeuDecide row) plus the two
+/// hybrid rows. No row is invented for a model that does not exist in this
+/// branch: the LFM3 row is listed but always unavailable, with the exact
+/// runtime reason, so the UI can show it greyed out.
+pub fn command_decider_rows(models_dir: &std::path::Path) -> Vec<CommandDeciderInfo> {
+    let mut rows: Vec<CommandDeciderInfo> = Vec::new();
+
+    // 1. NeuDecide Q4: the inference catalog row, checked against disk.
+    if let Some(entry) = teletype_inference::catalog::find("neudecide-q4") {
+        let installed = NeuDecideAvailable::check(models_dir);
+        rows.push(CommandDeciderInfo {
+            id: entry.id.to_string(),
+            name: entry.name.to_string(),
+            installed,
+            size_mb: u64::from(entry.size_mb),
+            available: installed,
+            reason: (!installed).then(|| "not downloaded".to_string()),
+        });
+    }
+
+    // 2. Qwen ASR + local LLM: available only when both a Qwen ASR speech
+    // model and a local LLM model are installed.
+    let qwen_installed = qwen_asr_installed(models_dir);
+    let llm_installed = local_llm_installed(models_dir);
+    let hybrid_available = qwen_installed && llm_installed;
+    rows.push(CommandDeciderInfo {
+        id: "qwen3-asr+llm".into(),
+        name: "Qwen ASR + local LLM".into(),
+        installed: qwen_installed,
+        size_mb: qwen_asr_size_mb(),
+        available: hybrid_available,
+        reason: (!hybrid_available)
+            .then(|| "requires a Qwen ASR speech model and a local LLM model".to_string()),
+    });
+
+    // 3. LFM3 Omni: listed but always unavailable in this branch. The
+    // bundled llama-server is b11488; LFM3 audio needs b11960+.
+    rows.push(CommandDeciderInfo {
+        id: "lfm3-omni".into(),
+        name: "LFM3 Omni".into(),
+        installed: false,
+        size_mb: 0,
+        available: false,
+        reason: Some("requires llama-server b11960+ (bundled: b11488)".into()),
+    });
+
+    rows
+}
+
+/// NeuDecide availability: the model files exist AND the `neudecide` feature
+/// is on. Split out from the decider so the row list and the slot rebuild
+/// share one predicate.
+struct NeuDecideAvailable;
+
+impl NeuDecideAvailable {
+    fn check(models_dir: &std::path::Path) -> bool {
+        crate::command_mode::NeuDecideDecider::available(&models_dir.join("neudecide-q4"))
+    }
+}
+
+/// True when the Qwen3-ASR speech model is installed (both GGUFs on disk).
+pub(crate) fn qwen_asr_installed(models_dir: &std::path::Path) -> bool {
+    use teletype_speech::catalog::Engine;
+    let entry = match teletype_speech::catalog::find("qwen3-asr") {
+        Some(e) => e,
+        None => return false,
+    };
+    if entry.engine != Engine::Qwen3Asr {
+        return false;
+    }
+    let dir = entry.provider_path(models_dir);
+    teletype_speech::catalog::QWEN3_ASR_ARTIFACTS
+        .iter()
+        .all(|a| {
+            dir.join(a.file)
+                .metadata()
+                .map(|m| m.is_file() && m.len() > 0)
+                .unwrap_or(false)
+        })
+}
+
+/// The Qwen3-ASR row's download size in MB, for the picker row.
+fn qwen_asr_size_mb() -> u64 {
+    teletype_speech::catalog::find("qwen3-asr")
+        .map(|e| u64::from(e.size_mb))
+        .unwrap_or(0)
+}
+
+/// True when a local LLM model is installed (any catalog row with files on
+/// disk). The hybrid's LLM half runs on the local polish model, so "a local
+/// LLM is installed" is the availability gate, not the user's current
+/// selection.
+pub(crate) fn local_llm_installed(models_dir: &std::path::Path) -> bool {
+    teletype_inference::catalog::CATALOG
+        .iter()
+        .filter(|e| e.polish_capable)
+        .any(|e| e.is_downloaded(models_dir))
+}
+
+/// The Tauri command the UI calls to list the Command Mode decider rows.
+#[tauri::command]
+pub async fn list_command_deciders(
+    state: tauri::State<'_, crate::AppState>,
+) -> CommandResult<Vec<CommandDeciderInfo>> {
+    let models_dir = state.models_dir.clone();
+    Ok(command_decider_rows(&models_dir))
 }
 
 /// Default pause duration before VAD auto-stop triggers.
@@ -1196,6 +1345,7 @@ impl Default for Settings {
             openai_model: default_openai_model(),
             enable_developer_tab: false,
             command_mode_enabled: false,
+            command_decider_model: default_command_decider_model(),
             pill_style: default_pill_style(),
             vad_auto_stop: false,
             vad_silence_ms: default_vad_silence_ms(),
@@ -1705,6 +1855,142 @@ mod tests {
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert!(!back.smart_insertion);
         assert_eq!(back.warm_engine_policy, WarmEnginePolicy::Always);
+    }
+
+    #[test]
+    fn command_decider_model_round_trips_via_camelcase_json() {
+        // CMD-MODEL-CHOICES: the UI writes settings.commandDeciderModel and
+        // the whole-document save path must round-trip it through camelCase
+        // JSON. The field defaults to the NeuDecide model id.
+        let s = Settings::default();
+        assert_eq!(
+            s.command_decider_model, "neudecide-q4",
+            "default is neudecide-q4"
+        );
+        let mut json = serde_json::to_value(&s).unwrap();
+        assert_eq!(
+            json["commandDeciderModel"], "neudecide-q4",
+            "camelCase key present"
+        );
+        // Simulate the UI switching to the hybrid, as save_settings would
+        // deserialize.
+        json["commandDeciderModel"] = serde_json::json!("qwen3-asr+llm");
+        let back: Settings = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            back.command_decider_model, "qwen3-asr+llm",
+            "camelCase value applied"
+        );
+        // An older file without the key still parses and keeps the default.
+        let mut legacy = serde_json::to_value(Settings::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("commandDeciderModel");
+        let legacy_back: Settings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            legacy_back.command_decider_model, "neudecide-q4",
+            "missing key -> default"
+        );
+    }
+
+    #[test]
+    fn command_decider_model_applies_via_patch() {
+        // The partial save path (update_settings_patch) must change only the
+        // decider field and leave the rest of the settings untouched.
+        let mut target = Settings::default();
+        let patch = SettingsPatch {
+            command_decider_model: Some("qwen3-asr+llm".into()),
+            ..SettingsPatch::default()
+        };
+        assert!(
+            patch.apply_to(&mut target),
+            "a changed field must report changed"
+        );
+        assert_eq!(target.command_decider_model, "qwen3-asr+llm");
+        // A patch that does not touch the field leaves it alone.
+        let patch = SettingsPatch {
+            command_mode_enabled: Some(true),
+            ..SettingsPatch::default()
+        };
+        patch.apply_to(&mut target);
+        assert_eq!(
+            target.command_decider_model, "qwen3-asr+llm",
+            "untouched field keeps its value"
+        );
+        assert!(target.command_mode_enabled);
+    }
+
+    #[test]
+    fn list_command_deciders_returns_three_rows() {
+        // CMD-MODEL-CHOICES: the picker offers exactly the three rows the
+        // probe proved real. The LFM3 row is always unavailable with the
+        // exact runtime reason; it is never selectable.
+        let dir = tempfile::tempdir().expect("models dir");
+        let rows = command_decider_rows(dir.path());
+        assert_eq!(rows.len(), 3, "exactly three rows: {rows:?}");
+        let by_id: std::collections::HashMap<&str, &CommandDeciderInfo> =
+            rows.iter().map(|r| (r.id.as_str(), r)).collect();
+        assert!(by_id.contains_key("neudecide-q4"), "neudecide row present");
+        assert!(by_id.contains_key("qwen3-asr+llm"), "hybrid row present");
+        let lfm = by_id["lfm3-omni"].clone();
+        assert!(!lfm.available, "lfm3-omni must be unavailable");
+        assert_eq!(
+            lfm.reason.as_deref(),
+            Some("requires llama-server b11960+ (bundled: b11488)"),
+            "lfm3-omni must carry the exact runtime reason"
+        );
+        assert!(!lfm.installed, "lfm3-omni is not installed in this branch");
+    }
+
+    #[test]
+    fn list_command_deciders_reports_install_state() {
+        // CMD-MODEL-CHOICES: the installed/available/reason fields track the
+        // on-disk state. An empty models dir has nothing installed, so the
+        // neudecide and hybrid rows report unavailable with a reason.
+        let dir = tempfile::tempdir().expect("models dir");
+        let rows = command_decider_rows(dir.path());
+        let neudecide = rows
+            .iter()
+            .find(|r| r.id == "neudecide-q4")
+            .expect("neudecide row");
+        assert!(!neudecide.installed, "no model files: not installed");
+        assert!(!neudecide.available, "not installed: not available");
+        assert!(
+            neudecide.reason.is_some(),
+            "unavailable row carries a reason"
+        );
+        let hybrid = rows
+            .iter()
+            .find(|r| r.id == "qwen3-asr+llm")
+            .expect("hybrid row");
+        assert!(!hybrid.installed, "no qwen files: not installed");
+        assert!(!hybrid.available, "missing halves: not available");
+        assert_eq!(
+            hybrid.reason.as_deref(),
+            Some("requires a Qwen ASR speech model and a local LLM model"),
+            "the hybrid reason must name both required parts"
+        );
+    }
+
+    #[test]
+    fn list_command_deciders_marks_neudecide_installed_when_files_present() {
+        // CMD-MODEL-CHOICES: when the NeuDecide model files are on disk the
+        // row reports installed and available (feature on).
+        let dir = tempfile::tempdir().expect("models dir");
+        let model_dir = dir.path().join("neudecide-q4");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        std::fs::write(model_dir.join("config.json"), "{}").unwrap();
+        std::fs::write(model_dir.join("tokenizer.json"), "{}").unwrap();
+        let rows = command_decider_rows(dir.path());
+        let neudecide = rows
+            .iter()
+            .find(|r| r.id == "neudecide-q4")
+            .expect("neudecide row");
+        #[cfg(feature = "neudecide")]
+        {
+            assert!(neudecide.installed, "model files present: installed");
+            assert!(neudecide.available, "installed + feature on: available");
+        }
     }
 
     #[test]

@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::AppState;
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use teletype_core::platform::{Permission, PermissionKind};
 
@@ -231,6 +232,24 @@ pub mod settings_observers {
         crate::typing::set_enabled(app, new.typing_autotext_enabled);
     }
 
+    /// Rebuilds the command decider slot when the selected decider model
+    /// changed (CMD-MODEL-CHOICES). The slot is set at startup and here;
+    /// a model change must not wait for a restart.
+    pub fn command_decider_model(
+        app: &AppHandle,
+        state: &AppState,
+        old: &Settings,
+        new: &Settings,
+    ) {
+        if new.command_decider_model == old.command_decider_model {
+            return;
+        }
+        let handle = app.clone();
+        state.rebuild_command_decider(move || {
+            Arc::new(crate::ProductionQwenAsr::new(handle.clone()))
+        });
+    }
+
     /// Runs every observer whose watched field changed between `old` and
     /// `new`. Order matches the old hand-diffed sequence, so side-effect
     /// behaviour is unchanged.
@@ -252,6 +271,9 @@ pub mod settings_observers {
         }
         if new.typing_autotext_enabled != old.typing_autotext_enabled {
             typing(app, state, old, new);
+        }
+        if new.command_decider_model != old.command_decider_model {
+            command_decider_model(app, state, old, new);
         }
     }
 }
