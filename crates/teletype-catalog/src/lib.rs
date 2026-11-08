@@ -5,11 +5,13 @@
 //! the validator, and the loader; adding a model is a data edit.
 
 pub mod engine;
+pub mod gate;
 pub mod loader;
 pub mod schema;
 pub mod validate;
 
 pub use engine::Engine;
+pub use gate::{command_mode_available, CommandModeStatus};
 pub use schema::{Artifact, Capability, Catalog, CommandEntry, LlmEntry, Purpose, SpeechEntry};
 pub use validate::{validate_catalog, validate_command, validate_llm, validate_speech};
 
