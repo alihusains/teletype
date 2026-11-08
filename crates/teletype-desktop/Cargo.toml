@@ -39,6 +39,7 @@ tempfile = "3"
 proptest = "1"
 
 [dependencies]
+teletype-catalog = { path = "../teletype-catalog" }
 teletype-core = { path = "../teletype-core", features = ["test-support"] }
 teletype-decider = { path = "../teletype-decider" }
 teletype-speech = { path = "../teletype-speech" }

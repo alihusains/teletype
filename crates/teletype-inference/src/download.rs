@@ -303,7 +303,7 @@ pub fn download_entry_with_cancel(
     if entry.is_downloaded(models_dir) {
         if let Some(cb) = &on_progress {
             cb(DownloadProgress {
-                id: entry.id.to_string(),
+                id: entry.id().to_string(),
                 status: "done".into(),
                 file_name: String::new(),
                 file_index: 0,
@@ -322,20 +322,20 @@ pub fn download_entry_with_cancel(
     }
 
     // Pre-flight: verify disk space before downloading anything.
-    let needed: u64 = if entry.shards.is_empty() {
-        entry.size_mb as u64 * 1024 * 1024
+    let needed: u64 = if entry.shards().is_empty() {
+        entry.size_mb() as u64 * 1024 * 1024
     } else {
-        entry.shards.iter().map(|s| s.size_bytes).sum()
+        entry.shards().iter().map(|s| s.size_bytes).sum()
     };
     if needed > 0 {
         check_disk_space(models_dir, needed).inspect_err(|e| {
             if let Some(cb) = &on_progress {
                 cb(DownloadProgress {
-                    id: entry.id.to_string(),
+                    id: entry.id().to_string(),
                     status: "error".into(),
                     file_name: String::new(),
                     file_index: 0,
-                    file_count: entry.shards.len().max(1) as u32,
+                    file_count: entry.shards().len().max(1) as u32,
                     file_downloaded_bytes: 0,
                     file_total_bytes: 0,
                     downloaded_bytes: 0,
@@ -349,15 +349,15 @@ pub fn download_entry_with_cancel(
         })?;
     }
     let run = || -> Result<PathBuf, String> {
-        if entry.shards.is_empty() {
-            let dest = models_dir.join(format!("{}.gguf", entry.id));
-            let expected_total = if entry.size_mb > 0 {
-                entry.size_mb as u64 * 1024 * 1024
+        if entry.shards().is_empty() {
+            let dest = models_dir.join(format!("{}.gguf", entry.id()));
+            let expected_total = if entry.size_mb() > 0 {
+                entry.size_mb() as u64 * 1024 * 1024
             } else {
                 0
             };
             let mut tracker =
-                ProgressTracker::new(entry.id, on_progress.clone(), 0, expected_total, 1);
+                ProgressTracker::new(entry.id(), on_progress.clone(), 0, expected_total, 1);
             download_single(entry, &dest, &mut tracker, cancel.as_ref())?;
             tracker.emit(EmitArgs {
                 status: "done",
@@ -369,31 +369,31 @@ pub fn download_entry_with_cancel(
                 error: None,
             });
         } else {
-            let dir = models_dir.join(entry.id);
+            let dir = models_dir.join(entry.id());
             fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
 
-            let total: u64 = entry.shards.iter().map(|s| s.size_bytes).sum();
+            let total: u64 = entry.shards().iter().map(|s| s.size_bytes).sum();
             let mut prior: u64 = 0;
-            let n = entry.shards.len() as u32;
+            let n = entry.shards().len() as u32;
             // First pass: count already-valid shards so progress starts partway.
-            for shard in entry.shards {
-                let path = dir.join(shard.file_name);
-                if path.is_file() && verify_sha256(&path, shard.sha256).is_ok() {
+            for shard in entry.shards() {
+                let path = dir.join(&shard.file_name);
+                if path.is_file() && verify_sha256(&path, &shard.sha256).is_ok() {
                     prior += shard.size_bytes;
                 }
             }
 
-            let mut tracker = ProgressTracker::new(entry.id, on_progress.clone(), prior, total, n);
+            let mut tracker = ProgressTracker::new(entry.id(), on_progress.clone(), prior, total, n);
 
-            for (i, shard) in entry.shards.iter().enumerate() {
-                let dest = dir.join(shard.file_name);
+            for (i, shard) in entry.shards().iter().enumerate() {
+                let dest = dir.join(&shard.file_name);
                 let idx = (i + 1) as u32;
                 if dest.is_file() {
-                    match verify_sha256(&dest, shard.sha256) {
+                    match verify_sha256(&dest, &shard.sha256) {
                         Ok(()) => continue,
                         Err(e) => {
                             tracing::warn!(
-                                file = %shard.file_name,
+                                file = %shard.file_name.as_str(),
                                 error = %e,
                                 "re-verifying existing shard failed; re-downloading"
                             );
@@ -406,13 +406,13 @@ pub fn download_entry_with_cancel(
                 }
                 tracing::info!(
                     shard = i + 1,
-                    total = entry.shards.len(),
-                    file = %shard.file_name,
+                    total = entry.shards().len(),
+                    file = %shard.file_name.as_str(),
                     "downloading EG-style shard"
                 );
                 tracker.emit(EmitArgs {
                     status: "downloading",
-                    file_name: shard.file_name,
+                    file_name: &shard.file_name,
                     file_index: idx,
                     file_downloaded: 0,
                     file_total: shard.size_bytes,
@@ -441,11 +441,11 @@ pub fn download_entry_with_cancel(
         Err(e) => {
             if let Some(cb) = &on_progress {
                 cb(DownloadProgress {
-                    id: entry.id.to_string(),
+                    id: entry.id().to_string(),
                     status: "error".into(),
                     file_name: String::new(),
                     file_index: 0,
-                    file_count: entry.shards.len().max(1) as u32,
+                    file_count: entry.shards().len().max(1) as u32,
                     file_downloaded_bytes: 0,
                     file_total_bytes: 0,
                     downloaded_bytes: 0,
@@ -472,14 +472,14 @@ fn download_single(
     tracker: &mut ProgressTracker,
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<(), String> {
-    if let Some(sha) = entry.sha256 {
-        match try_fetch_to_part(entry.url, dest, Some(sha), tracker, 1, cancel) {
+    if let Some(sha) = entry.sha256() {
+        match try_fetch_to_part(entry.url(), dest, Some(sha), tracker, 1, cancel) {
             Ok(()) => return Ok(()),
             Err(primary_err) => {
                 if primary_err == "download paused" {
                     return Err(primary_err);
                 }
-                if let Some(backup) = entry.backup_url {
+                if let Some(backup) = entry.backup_url() {
                     tracing::warn!(error = %primary_err, "primary URL failed; trying backup");
                     return try_fetch_to_part(backup, dest, Some(sha), tracker, 1, cancel);
                 }
@@ -487,7 +487,7 @@ fn download_single(
             }
         }
     }
-    try_fetch_to_part(entry.url, dest, None, tracker, 1, cancel)
+    try_fetch_to_part(entry.url(), dest, None, tracker, 1, cancel)
 }
 
 fn download_shard(
@@ -498,9 +498,9 @@ fn download_shard(
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<(), String> {
     try_fetch_to_part(
-        shard.url,
+        &shard.url,
         dest,
-        Some(shard.sha256),
+        Some(&shard.sha256),
         tracker,
         file_index,
         cancel,

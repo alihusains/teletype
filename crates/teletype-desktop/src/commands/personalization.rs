@@ -696,7 +696,7 @@ fn style_capability(model_id: &str) -> StyleCapability {
         "No model selected".to_string()
     } else {
         teletype_inference::catalog::find(model_id)
-            .map(|entry| entry.name.to_string())
+            .map(|entry| entry.name().to_string())
             .unwrap_or_else(|| model_id.to_string())
     };
     StyleCapability {

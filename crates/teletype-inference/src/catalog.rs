@@ -1,22 +1,22 @@
-//! Built-in model catalog.
+//! Built-in LLM model catalog.
 //!
-//! V1 ships the local GGUF models for polish and transforms (S1-mini,
-//! Qwen, Gemma, Needle). Users can also point to any local
-//! GGUF file (BYOM) — the catalog is a convenience, not a requirement.
-//!
-//! Most weights are only linked to the publisher's official URLs. The one
-//! exception is NeuDecide, mirrored verbatim at
-//! `github.com/alihusains/teletype-models` (Apache-2.0 permits redistribution;
-//! upstream HF is gated behind a login form — the mirror is the primary URL,
-//! upstream stays as `backup_url`). `requires_license_accept` marks entries
-//! whose license needs an explicit checkbox before download.
+//! The rows live in `teletype-catalog`'s bundled `llm.json` (Phase A); this
+//! module wraps each parsed [`LlmEntry`] in a [`CatalogEntry`] that carries
+//! the disk predicates and path helpers the app, the downloader, and the
+//! first-run shortlist read. The Command Mode decider lives in
+//! `command.json` (a `CommandEntry`, not an `LlmEntry`), so it is absent from
+//! `find()` and from the polish list.
 
-use serde::Serialize;
+use std::path::{Path, PathBuf};
+
+use teletype_catalog::schema::{Artifact, Capability, LlmEntry};
+use teletype_catalog::Catalog;
+
 /// A file exists and is not obviously truncated.
 ///
 /// See [`CatalogEntry::is_downloaded`] for why this checks size and not the
 /// hash.
-fn has_plausible_size(path: &std::path::Path, expected_bytes: u64) -> bool {
+fn has_plausible_size(path: &Path, expected_bytes: u64) -> bool {
     let Ok(md) = std::fs::metadata(path) else {
         return false; // missing
     };
@@ -37,61 +37,8 @@ fn has_plausible_size(path: &std::path::Path, expected_bytes: u64) -> bool {
     actual + slack >= expected_bytes && actual <= expected_bytes + slack
 }
 
-/// One shard of a multi-file (split) GGUF model.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CatalogShard {
-    pub file_name: &'static str,
-    pub url: &'static str,
-    pub size_bytes: u64,
-    /// Lowercase hex SHA-256 of the full file.
-    pub sha256: &'static str,
-}
-
-/// The job a model is worth choosing for, shown as a chip in the Models rail.
-///
-/// `tag` is the one-phrase role the rail explains (the old free-text
-/// `purpose` string); `measured` separates a role the bakeoff proved on this
-/// repo's corpus from a role inferred from the model's training or from the
-/// publisher's claims, so the UI can say "measured" instead of letting every
-/// chip imply the same evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Specialty {
-    /// One phrase: the job this row is good at.
-    pub tag: &'static str,
-    /// True when the tag is backed by a benchmark run in this repo
-    /// (`evals/runs/`); false when it comes from the model's training,
-    /// the publisher, or general knowledge of the family.
-    pub measured: bool,
-}
-
-impl Specialty {
-    const CLEANUP: &'static Self = &Self {
-        tag: "Dictation cleanup",
-        measured: true,
-    };
-    const ALL_ROUND: &'static Self = &Self {
-        tag: "Polish + Prompt Engineer",
-        measured: true,
-    };
-    /// The 3B/7B Instruct rows: instruction-following polish and transforms,
-    /// not re-measured per catalog revision, so the rail says what it is
-    /// without claiming a fresh score.
-    const INSTRUCT: &'static Self = &Self {
-        tag: "Instruction-following transforms",
-        measured: false,
-    };
-    /// Small, fast, low-RAM: the role is the size, not a measured skill.
-    const FAST_SMALL: &'static Self = &Self {
-        tag: "Small & fast",
-        measured: false,
-    };
-}
-
 /// Measured quality verdict for a model, based on benchmark results.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelVerdict {
     /// Our own model, measured on a different corpus.
     FirstParty,
@@ -131,124 +78,202 @@ impl ModelVerdict {
             Self::NotTested => "Not tested by us",
         }
     }
+
+    /// The `llm.json` string for this verdict.
+    pub fn as_data(self) -> &'static str {
+        match self {
+            Self::FirstParty => "first_party",
+            Self::Recommended => "recommended",
+            Self::Mixed => "mixed",
+            Self::Unreliable => "unreliable",
+            Self::NotRecommended => "not_recommended",
+            Self::NotTested => "not_tested",
+        }
+    }
+
+    /// Parse the `llm.json` verdict string.
+    pub fn from_data(s: &str) -> Option<Self> {
+        match s {
+            "first_party" => Some(Self::FirstParty),
+            "recommended" => Some(Self::Recommended),
+            "mixed" => Some(Self::Mixed),
+            "unreliable" => Some(Self::Unreliable),
+            "not_recommended" => Some(Self::NotRecommended),
+            "not_tested" => Some(Self::NotTested),
+            _ => None,
+        }
+    }
 }
 
-/// One catalog entry.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// One shard of a multi-file (split) GGUF model.
+#[derive(Debug, Clone)]
+pub struct CatalogShard {
+    pub file_name: String,
+    pub url: String,
+    pub size_bytes: u64,
+    /// Lowercase hex SHA-256 of the full file.
+    pub sha256: String,
+}
+
+impl From<&Artifact> for CatalogShard {
+    fn from(a: &Artifact) -> Self {
+        Self {
+            file_name: a.file.clone(),
+            url: String::new(),
+            size_bytes: a.bytes,
+            sha256: a.sha256.clone().unwrap_or_default(),
+        }
+    }
+}
+
+/// One catalog entry: a parsed [`LlmEntry`] plus the disk predicates and path
+/// helpers the consumers read.
+#[derive(Debug, Clone)]
 pub struct CatalogEntry {
-    pub id: &'static str,
-    pub name: &'static str,
-    /// Approximate parameter class, for display.
-    pub size_label: &'static str,
-    /// Primary download URL (single-file models) or entrypoint shard URL.
-    pub url: &'static str,
-    /// Approximate download size in MB.
-    pub size_mb: u32,
-    pub description: &'static str,
-    /// What this row is worth choosing for, shown as a chip beside the name.
-    /// Replaces the old free-text `purpose`: the UI tells a measured role
-    /// apart from an inferred one.
-    pub specialty: &'static Specialty,
-    /// Lowercase hex SHA-256 for single-file models; `None` when unknown.
-    #[serde(default)]
-    pub sha256: Option<&'static str>,
-    /// Alternate URL tried when the primary fails (single-file only).
-    #[serde(default)]
-    pub backup_url: Option<&'static str>,
-    /// Attribution string shown in the UI, e.g. "S1-mini by Superwhisper".
-    #[serde(default)]
-    pub attribution: Option<&'static str>,
-    /// SPDX-style license label, e.g. "Apache-2.0" or "Gemma Terms of Use".
-    #[serde(default)]
-    pub license_name: Option<&'static str>,
-    /// Deep link to the full license text.
-    #[serde(default)]
-    pub license_url: Option<&'static str>,
-    /// When true the UI must show an accept checkbox before downloading.
-    #[serde(default)]
-    pub requires_license_accept: bool,
-    /// When true the UI shows a "Recommended" badge next to the model.
-    #[serde(default)]
-    pub recommended: bool,
-    /// False for models the app can never load as a polish or transform
-    /// engine: the Command Mode decider and on-device extraction tools. They
-    /// stay downloadable, but they must not sit in the polish list or be
-    /// selectable, because choosing one makes every preset a no-op.
-    pub polish_capable: bool,
-    /// True when a host with no GPU-accelerated llama-server should be shown
-    /// this model as a workable choice.
-    ///
-    /// The axis is not the OS brand. Every GGUF here downloads and loads on
-    /// Windows and macOS alike; what differs is the build of the bundled
-    /// engine. `scripts/build-llama-server.sh:118` compiles llama.cpp with
-    /// `-DGGML_METAL=ON`, the macOS release jobs ship that build, and the
-    /// Windows job builds llama-server CPU-only
-    /// (`.github/workflows/release.yml:631`, "Build llama-server (CPU,
-    /// static)"). An Intel Mac keeps the Metal flag but is documented in the
-    /// same workflow as "not competitive" on integrated graphics.
-    ///
-    /// The cutoff is a parameter-count heuristic, not a measured per-host
-    /// latency: sub-billion-parameter rows tokenize and generate fast enough
-    /// that a CPU host still returns a polish in seconds, while 1.7B and up can
-    /// add tens of seconds per take. The evals measured quality on Apple
-    /// Silicon, so the CPU-side ranking inside this set is unmeasured; what is
-    /// safe to claim is that these rows are the ones a CPU host can carry.
-    pub runs_on_cpu: bool,
-    /// Measured quality verdict from benchmark runs.
-    #[serde(default)]
-    pub verdict: ModelVerdict,
-    /// One-line note explaining the verdict.
-    #[serde(default)]
-    pub verdict_note: &'static str,
-    /// Display priority in the model list (lower = higher on the list).
-    /// Set explicitly so the ordering never depends on array position.
-    ///
-    /// Derived from specialty: the bakeoff-measured rows (`specialty.measured`)
-    /// lead, in score order, and every unmeasured polish row sinks below the
-    /// measured block while keeping size order within its class. The rule is
-    /// pinned by `unmeasured_rows_rank_below_measured_rows`, so a new row
-    /// cannot take a slot in the measured block without being measured.
-    #[serde(default)]
-    pub sort_order: u32,
-    /// Non-empty for multi-file (split) GGUFs. Install dir is `models/<id>/`
-    /// and the llama-server entrypoint is the first shard.
-    #[serde(default)]
-    pub shards: &'static [CatalogShard],
+    entry: LlmEntry,
+    shards: Vec<CatalogShard>,
 }
 
 impl CatalogEntry {
+    pub fn from_entry(entry: LlmEntry) -> Self {
+        let shards = entry.shards.iter().map(CatalogShard::from).collect();
+        Self { entry, shards }
+    }
+
+    /// The parsed entry (url, license, capabilities, ...).
+    pub fn entry(&self) -> &LlmEntry {
+        &self.entry
+    }
+
+    pub fn id(&self) -> &str {
+        &self.entry.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.entry.name
+    }
+
+    /// Approximate parameter class, for display.
+    pub fn size_label(&self) -> &str {
+        &self.entry.size_label
+    }
+
+    /// Primary download URL.
+    pub fn url(&self) -> &str {
+        &self.entry.url
+    }
+
+    /// Approximate download size in MB.
+    pub fn size_mb(&self) -> u32 {
+        self.entry.size_mb
+    }
+
+    pub fn description(&self) -> &str {
+        &self.entry.description
+    }
+
+    /// The one-phrase job this row is good at, shown as a chip in the Models
+    /// rail.
+    pub fn specialty(&self) -> &str {
+        &self.entry.specialty
+    }
+
+    /// Lowercase hex SHA-256 for single-file models; `None` when unknown.
+    pub fn sha256(&self) -> Option<&str> {
+        self.entry.sha256.as_deref()
+    }
+
+    /// Alternate URL tried when the primary fails (single-file only).
+    pub fn backup_url(&self) -> Option<&str> {
+        self.entry.backup_url.as_deref()
+    }
+
+    /// Attribution string shown in the UI, e.g. "S1-mini by Superwhisper".
+    pub fn attribution(&self) -> Option<&str> {
+        self.entry.attribution.as_deref()
+    }
+
+    /// SPDX-style license label, e.g. "Apache-2.0".
+    pub fn license_name(&self) -> Option<&str> {
+        self.entry.license_name.as_deref()
+    }
+
+    /// Deep link to the full license text.
+    pub fn license_url(&self) -> Option<&str> {
+        self.entry.license_url.as_deref()
+    }
+
+    /// When true the UI must show an accept checkbox before downloading.
+    pub fn requires_license_accept(&self) -> bool {
+        self.entry.requires_license_accept
+    }
+
+    /// When true the UI shows a "Recommended" badge next to the model.
+    pub fn recommended(&self) -> bool {
+        self.entry.recommended
+    }
+
+    /// False for models the app can never load as a polish or transform
+    /// engine. The LLM domain only carries polish rows, so this is the
+    /// `polish` capability check that replaced the old static bool.
+    pub fn polish_capable(&self) -> bool {
+        self.entry.capabilities.contains(&Capability::Polish)
+    }
+
+    /// True when a host with no GPU-accelerated llama-server should be shown
+    /// this model as a workable choice.
+    pub fn runs_on_cpu(&self) -> bool {
+        self.entry.runs_on_cpu
+    }
+
+    /// Measured quality verdict from benchmark runs. Unknown strings fall
+    /// back to [`ModelVerdict::NotTested`]: a verdict the app cannot name is
+    /// no stronger than "not tested", and a row is never hidden for it.
+    pub fn verdict(&self) -> ModelVerdict {
+        ModelVerdict::from_data(&self.entry.verdict).unwrap_or(ModelVerdict::NotTested)
+    }
+
+    /// One-line note explaining the verdict.
+    pub fn verdict_note(&self) -> &str {
+        &self.entry.verdict_note
+    }
+
+    /// Display priority in the model list (lower = higher on the list).
+    pub fn sort_order(&self) -> u32 {
+        self.entry.sort_order
+    }
+
+    /// Non-empty for multi-file (split) GGUFs. Install dir is `models/<id>/`
+    /// and the llama-server entrypoint is the first shard.
+    pub fn shards(&self) -> &[CatalogShard] {
+        &self.shards
+    }
+
     /// True when the model is fully present on disk under `models_dir`.
-    /// Whether every file this entry needs is present *and plausibly complete*.
-    ///
-    /// This used to be `is_file()`, so a zero-byte or half-downloaded GGUF
-    /// counted as installed. Selecting that model then gave a model that cannot
-    /// load, with nothing in the UI saying why, which is the same symptom as
-    /// every other "I picked a model and nothing happened" bug.
     ///
     /// Size is checked rather than the SHA-256, because hashing every shard on
     /// every call would be several seconds of disk I/O on a screen refresh. The
     /// download path already verifies the hash before the file is moved into
     /// place, so by the time a file is here it is either correct or the result
     /// of a download that was interrupted, and a truncated file is short.
-    pub fn is_downloaded(&self, models_dir: &std::path::Path) -> bool {
+    pub fn is_downloaded(&self, models_dir: &Path) -> bool {
         if self.shards.is_empty() {
             // `size_mb` is rounded to the nearest MB, so allow 5% either way.
-            let expected = u64::from(self.size_mb).saturating_mul(1_000_000);
-            has_plausible_size(&models_dir.join(format!("{}.gguf", self.id)), expected)
+            let expected = u64::from(self.size_mb()).saturating_mul(1_000_000);
+            has_plausible_size(&models_dir.join(format!("{}.gguf", self.id())), expected)
         } else {
-            self.shards.iter().all(|s| {
-                has_plausible_size(&models_dir.join(self.id).join(s.file_name), s.size_bytes)
-            })
+            self.shards
+                .iter()
+                .all(|s| has_plausible_size(&models_dir.join(self.id()).join(&s.file_name), s.size_bytes))
         }
     }
 
     /// Path llama-server should be pointed at (`-m`).
-    pub fn entrypoint(&self, models_dir: &std::path::Path) -> std::path::PathBuf {
+    pub fn entrypoint(&self, models_dir: &Path) -> PathBuf {
         if self.shards.is_empty() {
-            models_dir.join(format!("{}.gguf", self.id))
+            models_dir.join(format!("{}.gguf", self.id()))
         } else {
-            models_dir.join(self.id).join(self.shards[0].file_name)
+            models_dir.join(self.id()).join(&self.shards[0].file_name)
         }
     }
 
@@ -258,8 +283,23 @@ impl CatalogEntry {
     /// grouping, never to hide a row from Settings, where a user with a 32 GB
     /// Windows box is entitled to pick the 7B model and wait.
     pub fn runs_on_host(&self, gpu_accelerated: bool) -> bool {
-        gpu_accelerated || self.runs_on_cpu
+        gpu_accelerated || self.runs_on_cpu()
     }
+}
+
+/// The parsed LLM rows, one owned [`CatalogEntry`] per `llm.json` row.
+pub fn catalog() -> Vec<CatalogEntry> {
+    Catalog::bundled()
+        .llm()
+        .iter()
+        .cloned()
+        .map(CatalogEntry::from_entry)
+        .collect()
+}
+
+/// Finds a catalog entry by id.
+pub fn find(id: &str) -> Option<CatalogEntry> {
+    catalog().into_iter().find(|e| e.id() == id)
 }
 
 /// Whether this machine's bundled llama-server has a GPU backend to run with.
@@ -298,294 +338,17 @@ pub const POLISH_SHORTLIST_MAX: usize = 3;
 /// [`CatalogEntry::polish_capable`] as the list is built, so the promise "no row
 /// reaches a host that cannot use it" holds even if a flag below is later
 /// flipped.
-pub fn polish_shortlist_ids(gpu_accelerated: bool) -> Vec<&'static str> {
+pub fn polish_shortlist_ids(gpu_accelerated: bool) -> Vec<String> {
     const CPU: &[&str] = &["s1-mini", "speakoflow-mini"];
     const ACCELERATED: &[&str] = &["s1-mini", "qwen3.5-2b"];
 
     let ids = if gpu_accelerated { ACCELERATED } else { CPU };
     ids.iter()
         .copied()
-        .filter(|id| find(id).is_some_and(|e| e.polish_capable && e.runs_on_host(gpu_accelerated)))
+        .filter(|id| find(id).is_some_and(|e| e.polish_capable() && e.runs_on_host(gpu_accelerated)))
         .take(POLISH_SHORTLIST_MAX)
+        .map(String::from)
         .collect()
-}
-
-/// The built-in catalog.
-pub const CATALOG: &[CatalogEntry] = &[
-    CatalogEntry {
-        id: "s1-mini",
-        name: "S1-mini",
-        size_label: "0.6B",
-        url: "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf",
-        size_mb: 462,
-        description:
-            "Small open cleanup model, happiest in English. Pairs with Tone / Structure styles.",
-        specialty: Specialty::CLEANUP,
-        sha256: Some("3b41ebe2502cbd03e811d5d16b022f5ab551eda58d62597d152f89535003c634"),
-        backup_url: None,
-        attribution: Some("S1-mini by Superwhisper"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some(
-            "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE",
-        ),
-        requires_license_accept: false,
-        recommended: true,
-        polish_capable: true,
-        verdict: ModelVerdict::Recommended,
-        verdict_note: "Best for English: small, fast, and tuned for dictation cleanup",
-        runs_on_cpu: true,
-        sort_order: 1,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "qwen3.5-2b",
-        name: "Qwen3.5 2B",
-        size_label: "2B",
-        url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-IQ4_XS.gguf",
-        size_mb: 1173,
-        description:
-            "The all-rounder: cleans up, tightens, rewords and structures dictation, honors the Polish settings, and runs Prompt Engineer.",
-        specialty: Specialty::ALL_ROUND,
-        sha256: Some("3639f34b5ca22aa1c51f3616566eae8c355111554f6924ad97ee2652ed11c1cd"),
-        backup_url: None,
-        attribution: Some("Qwen3.5 by Alibaba (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/Qwen/Qwen3.5-2B/blob/main/LICENSE"),
-        requires_license_accept: false,
-        recommended: false,
-        polish_capable: true,
-        verdict: ModelVerdict::Recommended,
-        verdict_note: "Best all-rounder: tightens, rewords and structures Polish, plus Prompt Engineer",
-        runs_on_cpu: false,
-        sort_order: 2,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "speakoflow-mini",
-        name: "SpeakoFlow Mini",
-        size_label: "0.8B",
-        url: "https://huggingface.co/SpeakoFlow/speakoflow-mini/resolve/main/SpeakoFlow-Mini-0.8B-Q8_0.gguf",
-        size_mb: 834,
-        description:
-            "Purpose-built dictation cleanup: fixes grammar, spelling, fillers and spoken symbols; leaves correct text and names/numbers untouched. A cleanup model, not a rewriter.",
-        specialty: Specialty::CLEANUP,
-        sha256: Some("696769bb6911f51bc231b112926e934cf7bfc760e6cdfa24212907bc5ad41fc9"),
-        backup_url: None,
-        attribution: Some("SpeakoFlow Mini by SpeakoFlow (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/SpeakoFlow/speakoflow-mini/blob/main/LICENSE"),
-        requires_license_accept: false,
-        recommended: true,
-        polish_capable: true,
-        verdict: ModelVerdict::Recommended,
-        verdict_note: "Reliable cleanup: restrained, preserves names/numbers, fixes self-corrections",
-        runs_on_cpu: true,
-        sort_order: 3,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "qwen2.5-3b",
-        name: "Qwen2.5 3B",
-        size_label: "3B",
-        url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
-        size_mb: 1900,
-        description: "Best local model in our tests. Good for style profiles and transforms.",
-        specialty: Specialty::INSTRUCT,
-        sha256: None,
-        backup_url: None,
-        attribution: Some("Qwen2.5 by Alibaba (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/blob/main/LICENSE"),
-        requires_license_accept: false,
-        recommended: true,
-        polish_capable: true,
-        verdict: ModelVerdict::Recommended,
-        verdict_note: "Best in our tests, may follow dictated instructions",
-        runs_on_cpu: false,
-        sort_order: 7,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "fast",
-        name: "Fast (Qwen3 1.7B)",
-        size_label: "1.7B",
-        url: "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/qwen3-1.7b-q5_k_m.gguf",
-        size_mb: 1400,
-        description: "Quick local transforms. Good for Polish and short rewrites.",
-        specialty: Specialty::FAST_SMALL,
-        sha256: None,
-        backup_url: None,
-        attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/blob/main/LICENSE"),
-        requires_license_accept: false,
-        recommended: false,
-        polish_capable: true,
-        verdict: ModelVerdict::Recommended,
-        verdict_note: "Fast, good for Polish and short rewrites",
-        runs_on_cpu: false,
-        sort_order: 5,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "qwen3-0.6b",
-        name: "Qwen3 0.6B",
-        size_label: "0.6B",
-        url: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf",
-        size_mb: 610,
-        description: "Very small and fast. Good for low-RAM Macs.",
-        specialty: Specialty::FAST_SMALL,
-        sha256: Some("9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031"),
-        backup_url: None,
-        attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/blob/main/LICENSE"),
-        requires_license_accept: false,
-        recommended: false,
-        polish_capable: true,
-        verdict: ModelVerdict::Recommended,
-        verdict_note: "Scored well, very small download",
-        runs_on_cpu: true,
-        sort_order: 4,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "quality",
-        name: "Quality (Qwen3 4B)",
-        size_label: "4B",
-        url: "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-q4_k_m.gguf",
-        size_mb: 2600,
-        description: "Better quality for Professional and Prompt Engineer transforms.",
-        specialty: Specialty::INSTRUCT,
-        sha256: None,
-        backup_url: None,
-        attribution: Some("Qwen3 by Alibaba (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/Qwen/Qwen3-4B-GGUF/blob/main/LICENSE"),
-        requires_license_accept: false,
-        recommended: false,
-        polish_capable: true,
-        verdict: ModelVerdict::Recommended,
-        verdict_note: "Better quality for complex transforms",
-        runs_on_cpu: false,
-        sort_order: 8,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "qwen2.5-7b",
-        name: "Qwen2.5 7B",
-        size_label: "7B",
-        url: "https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf",
-        size_mb: 4900,
-        description: "Highest quality local model. Slower on older Macs.",
-        specialty: Specialty::INSTRUCT,
-        sha256: None,
-        backup_url: None,
-        attribution: Some("Qwen2.5 by Alibaba (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/blob/main/LICENSE"),
-        requires_license_accept: false,
-        recommended: false,
-        polish_capable: true,
-        verdict: ModelVerdict::Recommended,
-        verdict_note: "Resists dictated instructions, sometimes drops words",
-        runs_on_cpu: false,
-        sort_order: 9,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "gemma2-2b",
-        name: "Gemma 2 2B",
-        size_label: "2B",
-        url: "https://huggingface.co/google/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
-        size_mb: 1500,
-        description: "Google's small model. Mixed results with non-English dictation.",
-        specialty: Specialty::FAST_SMALL,
-        sha256: None,
-        backup_url: None,
-        attribution: Some("Gemma 2 by Google (Google License)"),
-        license_name: Some("Google Gemma Terms of Use"),
-        license_url: Some("https://ai.google.dev/gemma/terms"),
-        requires_license_accept: false,
-        recommended: false,
-        polish_capable: true,
-        verdict: ModelVerdict::Mixed,
-        verdict_note: "Mixed results, often mishandles other languages",
-        runs_on_cpu: false,
-        sort_order: 6,
-        shards: &[],
-    },
-    CatalogEntry {
-        id: "neudecide-q4",
-        name: "NeuDecide Q4 (decider)",
-        size_label: "55.5M",
-        url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/config.json",
-        size_mb: 41,
-        description: "Speech-to-tool-call decider for Command Mode (ONNX, runs in-process).",
-        specialty: &Specialty {
-            tag: "Command Mode decider",
-            measured: false,
-        },
-        sha256: None,
-        backup_url: Some("https://huggingface.co/neuphonic/neudecide/resolve/main/config.json"),
-        attribution: Some("NeuDecide by neuphonic (Apache-2.0)"),
-        license_name: Some("Apache-2.0"),
-        license_url: Some("https://huggingface.co/neuphonic/neudecide/blob/main/README.md"),
-        requires_license_accept: false,
-        // A decider, not a polish model: the badge here told the user this was
-        // a recommended way to clean up text, in a rail whose own hint says
-        // "Clean up and rewrite your text". Same defect needle3 had.
-        recommended: false,
-        polish_capable: false,
-        verdict: ModelVerdict::NotTested,
-        verdict_note: "Default Command Mode decider (Addendum A); not measured on our corpus yet.",
-        runs_on_cpu: true,
-        sort_order: 10,
-        shards: &[
-            CatalogShard {
-                file_name: "config.json",
-                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/config.json",
-                size_bytes: 1_002,
-                sha256: "a1eb5783b7843541b193258c1296d616a4f3f9f5893745bac74c5ef19b2e53a0",
-            },
-            CatalogShard {
-                file_name: "audio_encoder_q4.onnx",
-                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/audio_encoder_q4.onnx",
-                size_bytes: 22_519_972,
-                sha256: "2ac5c48e1766382736ed8dd4d468568ee583536550fb741ac187219f8cd8da9b",
-            },
-            CatalogShard {
-                file_name: "tool_encoder_q4.onnx",
-                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/tool_encoder_q4.onnx",
-                size_bytes: 10_090_217,
-                sha256: "4a5075ee2868d90ea4be3234eae04001be6886c9730e8746421fa17e84313d85",
-            },
-            CatalogShard {
-                file_name: "decoder_step_q4.onnx",
-                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/decoder_step_q4.onnx",
-                size_bytes: 9_951_225,
-                sha256: "ee68bbb4bbca552b909b41cb1fdbfdf0f9f3c852561e18036044ee2ff461e50d",
-            },
-            CatalogShard {
-                file_name: "tokenizer.json",
-                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/tokenizer.json",
-                size_bytes: 228_594,
-                sha256: "2b31f2b79506cca36b3c63f0e8549e8401dd8d768175c57aa1e67432d69dee0d",
-            },
-            CatalogShard {
-                file_name: "tokenizer.model",
-                url: "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/tokenizer.model",
-                size_bytes: 124_892,
-                sha256: "b39d6892d3b27e66a1782ee624d965e5e656c03e9226cbe036a80389090947ad",
-            },
-        ],
-    },
-
-];
-
-/// Finds a catalog entry by id.
-pub fn find(id: &str) -> Option<&'static CatalogEntry> {
-    CATALOG.iter().find(|e| e.id == id)
 }
 
 #[cfg(test)]
@@ -594,19 +357,29 @@ mod tests {
 
     #[test]
     fn find_known_ids() {
-        for id in ["fast", "quality", "s1-mini", "qwen2.5-3b", "neudecide-q4"] {
+        for id in ["fast", "quality", "s1-mini", "qwen2.5-3b"] {
             assert!(find(id).is_some(), "missing {id}");
         }
+        // The decider lives in command.json, not the LLM domain.
+        assert!(find("neudecide-q4").is_none());
         assert!(find("nope").is_none());
+    }
+
+    #[test]
+    fn llm_find_is_backed_by_the_parsed_catalog() {
+        let parsed = Catalog::bundled();
+        assert!(find("s1-mini").is_some());
+        assert!(parsed.llm_by_id("s1-mini").is_some());
+        assert!(parsed.llm_by_id("neudecide-q4").is_none());
     }
 
     #[test]
     fn s1_mini_has_checksum_and_no_license_gate() {
         let e = find("s1-mini").unwrap();
-        assert!(e.sha256.is_some());
-        assert!(!e.requires_license_accept);
-        assert!(e.shards.is_empty());
-        assert_eq!(e.attribution, Some("S1-mini by Superwhisper"));
+        assert!(e.sha256().is_some());
+        assert!(!e.requires_license_accept());
+        assert!(e.shards().is_empty());
+        assert_eq!(e.attribution(), Some("S1-mini by Superwhisper"));
     }
 
     /// The polish rail takes its badge and its order straight from these two
@@ -615,19 +388,19 @@ mod tests {
     #[test]
     fn s1_mini_is_the_recommended_head_of_the_list() {
         let e = find("s1-mini").unwrap();
-        assert!(e.recommended, "s1-mini must carry the Recommended badge");
+        assert!(e.recommended(), "s1-mini must carry the Recommended badge");
         assert!(
-            matches!(e.verdict, ModelVerdict::Recommended),
+            matches!(e.verdict(), ModelVerdict::Recommended),
             "the badge must be backed by a measured verdict"
         );
-        assert!(!e.verdict_note.is_empty(), "the badge explains itself");
-        let head = CATALOG.iter().min_by_key(|m| m.sort_order).unwrap();
-        assert_eq!(head.id, "s1-mini", "the recommended model leads the list");
+        assert!(!e.verdict_note().is_empty(), "the badge explains itself");
+        let head = catalog().into_iter().min_by_key(|m| m.sort_order()).unwrap();
+        assert_eq!(head.id(), "s1-mini", "the recommended model leads the list");
     }
 
     #[test]
     fn sort_orders_are_unique() {
-        let mut orders: Vec<u32> = CATALOG.iter().map(|e| e.sort_order).collect();
+        let mut orders: Vec<u32> = catalog().iter().map(|e| e.sort_order()).collect();
         let n = orders.len();
         orders.sort_unstable();
         orders.dedup();
@@ -641,19 +414,19 @@ mod tests {
     #[test]
     fn badge_requires_a_measured_verdict() {
         // The rail renders the badge from `recommended` alone and nothing else
-        // checks the pair, so an untested row could wear it. Two did: needle3
-        // ("NOT for polish") and neudecide-q4 (a Command Mode decider), both
-        // with verdict NotTested. The rule that would have refused both.
-        let bad: Vec<&str> = CATALOG
+        // checks the pair, so an untested row could wear it. The rule that
+        // would have refused them.
+        let rows = catalog();
+        let bad: Vec<&str> = rows
             .iter()
-            .filter(|e| e.recommended && !matches!(e.verdict, ModelVerdict::Recommended))
-            .map(|e| e.id)
+            .filter(|e| e.recommended() && !matches!(e.verdict(), ModelVerdict::Recommended))
+            .map(|e| e.id())
             .collect();
         assert!(bad.is_empty(), "badged without a measured verdict: {bad:?}");
-        let unexplained: Vec<&str> = CATALOG
+        let unexplained: Vec<&str> = rows
             .iter()
-            .filter(|e| e.recommended && e.verdict_note.is_empty())
-            .map(|e| e.id)
+            .filter(|e| e.recommended() && e.verdict_note().is_empty())
+            .map(|e| e.id())
             .collect();
         assert!(
             unexplained.is_empty(),
@@ -661,21 +434,22 @@ mod tests {
         );
     }
 
+    /// The LLM domain is the polish domain: every row polishes, and the decider
+    /// (a `CommandEntry` in command.json) is not here at all.
     #[test]
     fn only_polish_engines_are_offered_as_polish_models() {
-        // The rail is titled "Polish models" and its hint promises cleanup, so
-        // a decider must not appear in it as if it were one.
-        // `polish_capable` is the gate; this is the only row the app loads
-        // for some other job.
-        let off: Vec<&str> = CATALOG
+        let rows = catalog();
+        assert!(!rows.is_empty(), "the LLM domain must not be empty");
+        let off: Vec<&str> = rows
             .iter()
-            .filter(|e| !e.polish_capable)
-            .map(|e| e.id)
+            .filter(|e| !e.polish_capable())
+            .map(|e| e.id())
             .collect();
-        assert_eq!(off, vec!["neudecide-q4"]);
-        for e in CATALOG.iter().filter(|e| !e.polish_capable) {
-            assert!(!e.recommended, "{} is badged but cannot polish", e.id);
-        }
+        assert!(
+            off.is_empty(),
+            "a non-polish row sat in the LLM domain: {off:?}"
+        );
+        assert!(find("neudecide-q4").is_none(), "the decider is not an LLM row");
     }
 
     /// The CPU cutoff is a line on the parameter scale, so the set it withholds
@@ -683,30 +457,26 @@ mod tests {
     /// deciding, a Windows user is quietly shown (or hidden from) a model.
     #[test]
     fn runs_on_cpu_withholds_exactly_the_multi_billion_parameter_rows() {
-        let heavy: Vec<&str> = CATALOG
+        let rows = catalog();
+        let heavy: Vec<&str> = rows
             .iter()
-            .filter(|e| !e.runs_on_cpu)
-            .map(|e| e.id)
+            .filter(|e| !e.runs_on_cpu())
+            .map(|e| e.id())
             .collect();
+        let mut heavy = heavy;
+        heavy.sort();
         assert_eq!(
             heavy,
-            vec![
-                "qwen3.5-2b",
-                "qwen2.5-3b",
-                "fast",
-                "quality",
-                "qwen2.5-7b",
-                "gemma2-2b"
-            ],
+            vec!["fast", "gemma2-2b", "quality", "qwen2.5-3b", "qwen2.5-7b", "qwen3.5-2b"],
             "the rows a CPU host is not offered"
         );
         // The kept set stays under the cutoff: 0.8B / 834 MB is the largest.
-        for e in CATALOG.iter().filter(|e| e.runs_on_cpu) {
+        for e in rows.iter().filter(|e| e.runs_on_cpu()) {
             assert!(
-                e.size_mb <= 900,
+                e.size_mb() <= 900,
                 "{} is {} MB and claims to run on CPU",
-                e.id,
-                e.size_mb
+                e.id(),
+                e.size_mb()
             );
         }
     }
@@ -715,17 +485,17 @@ mod tests {
     /// first-run card promises a download that turns into a crawl.
     #[test]
     fn polish_shortlist_rows_are_all_polish_models_this_host_can_run() {
-        for &gpu in &[true, false] {
+        for gpu in [true, false] {
             let ids = polish_shortlist_ids(gpu);
             assert!(!ids.is_empty(), "gpu={gpu} shortlisted nothing");
             assert!(ids.len() <= POLISH_SHORTLIST_MAX);
             let mut seen = std::collections::HashSet::new();
             for id in &ids {
                 let e = find(id).unwrap_or_else(|| panic!("{id} is not a catalog entry"));
-                assert!(e.polish_capable, "{id} is a decider, not a polish model");
+                assert!(e.polish_capable(), "{id} is a decider, not a polish model");
                 assert!(e.runs_on_host(gpu), "{id} cannot run on gpu={gpu}");
                 assert!(
-                    seen.insert(*id),
+                    seen.insert(id.clone()),
                     "{id} appears twice in the gpu={gpu} shortlist"
                 );
             }
@@ -741,10 +511,10 @@ mod tests {
         );
         // The head is the row every host gets first, and it wears the badge, so
         // the card a user cannot skip is a model that was measured.
-        for &gpu in &[true, false] {
-            let head = find(polish_shortlist_ids(gpu)[0]).unwrap();
-            assert!(head.recommended, "the lead row must be a recommended model");
-            assert!(head.runs_on_cpu, "the lead row must run on every host");
+        for gpu in [true, false] {
+            let head = find(&polish_shortlist_ids(gpu)[0]).unwrap();
+            assert!(head.recommended(), "the lead row must be a recommended model");
+            assert!(head.runs_on_cpu(), "the lead row must run on every host");
         }
     }
 
@@ -753,32 +523,27 @@ mod tests {
     /// flip, and the cleanup models cannot follow an instruction at all.
     #[test]
     fn shortlisted_rows_name_the_job_they_are_for() {
-        let s1 = find("s1-mini").unwrap().specialty;
-        assert_eq!(s1.tag, "Dictation cleanup");
-        assert!(s1.measured, "S1-mini's cleanup score is the bakeoff's");
-        let qwen35 = find("qwen3.5-2b").unwrap().specialty;
-        assert_eq!(qwen35.tag, "Polish + Prompt Engineer");
-        assert!(
-            qwen35.measured,
-            "the 2B's rule and Prompt Engineer scores are the bakeoff's"
-        );
+        let s1 = find("s1-mini").unwrap();
+        assert_eq!(s1.specialty(), "cleanup");
+        let qwen35 = find("qwen3.5-2b").unwrap();
+        assert_eq!(qwen35.specialty(), "all_round");
     }
 
-    /// A specialty chip that looks measured but is inferred would tell the
-    /// user the rail re-ran the bakeoff, so the flag is checked per row:
-    /// the cleanup and all-rounder roles are proven, everything else in the
-    /// list is a role description, not a score.
+    /// The measured specialties are the rows this repo's bakeoff proved, pinned
+    /// per row so a data edit that promotes an inferred role to a measured one
+    /// fails here instead of shipping a chip that reads as a score.
     #[test]
     fn measured_specialties_are_exactly_the_bakeoff_rows() {
-        let measured: Vec<&str> = CATALOG
+        let rows = catalog();
+        let measured: Vec<&str> = rows
             .iter()
-            .filter(|e| e.polish_capable && e.specialty.measured)
-            .map(|e| e.id)
+            .filter(|e| e.polish_capable() && matches!(e.specialty(), "cleanup" | "all_round"))
+            .map(|e| e.id())
             .collect();
         assert_eq!(
             measured,
             vec!["s1-mini", "qwen3.5-2b", "speakoflow-mini"],
-            "a measured flag is only true for a role this repo's bakeoff proved"
+            "a measured specialty is only true for a role this repo's bakeoff proved"
         );
     }
 
@@ -788,15 +553,16 @@ mod tests {
     /// reads as if every model was scored.
     #[test]
     fn unmeasured_rows_rank_below_measured_rows() {
+        let rows = catalog();
         // Measured polish rows keep their relative order and lead the list.
-        let measured_ids: Vec<&str> = CATALOG
+        let measured_ids: Vec<&str> = rows
             .iter()
-            .filter(|e| e.polish_capable && e.specialty.measured)
-            .map(|e| e.id)
+            .filter(|e| e.polish_capable() && matches!(e.specialty(), "cleanup" | "all_round"))
+            .map(|e| e.id())
             .collect();
         let measured_ranks: Vec<u32> = measured_ids
             .iter()
-            .map(|id| find(id).unwrap().sort_order)
+            .map(|id| find(id).unwrap().sort_order())
             .collect();
         let mut sorted = measured_ranks.clone();
         sorted.sort();
@@ -807,10 +573,10 @@ mod tests {
         let max_measured = *measured_ranks.iter().max().unwrap();
 
         // Every unmeasured polish row ranks strictly below the measured block.
-        let unmeasured: Vec<(&str, u32)> = CATALOG
+        let unmeasured: Vec<(&str, u32)> = rows
             .iter()
-            .filter(|e| e.polish_capable && !e.specialty.measured)
-            .map(|e| (e.id, e.sort_order))
+            .filter(|e| e.polish_capable() && !matches!(e.specialty(), "cleanup" | "all_round"))
+            .map(|e| (e.id(), e.sort_order()))
             .collect();
         for (id, rank) in &unmeasured {
             assert!(
@@ -826,10 +592,8 @@ mod tests {
         // Within the unmeasured block the rows keep size order: the 0.6B row
         // leads, then the 1.7B "fast", the 2B Gemma, then the larger instruct
         // rows (3B < 7B), so the chip list reads as a size ladder, not a
-        // random permutation. Qwen3 0.6B is the smallest polish row and the
-        // one the bakeoff actually ran, so it is the better-known of the pair
-        // and leads the unmeasured block.
-        let rank = |id: &str| find(id).unwrap().sort_order;
+        // random permutation.
+        let rank = |id: &str| find(id).unwrap().sort_order();
         assert!(rank("qwen3-0.6b") < rank("fast"));
         assert!(rank("fast") < rank("gemma2-2b"));
         assert!(rank("gemma2-2b") < rank("qwen2.5-3b"));
@@ -847,13 +611,13 @@ mod tests {
     #[test]
     fn qwen35_is_pinned_and_stays_under_the_size_ceiling() {
         let e = find("qwen3.5-2b").unwrap();
-        assert!(e.size_mb <= 1200, "the user's ceiling is 1200 MB");
+        assert!(e.size_mb() <= 1200, "the user's ceiling is 1200 MB");
         assert!(
-            e.sha256.is_some(),
+            e.sha256().is_some(),
             "an unpinned download can change content silently"
         );
-        assert!(e.url.ends_with("Qwen3.5-2B-IQ4_XS.gguf"));
-        assert!(!e.runs_on_cpu, "a 2B at 1.1 GB stays off a CPU-only host");
+        assert!(e.url().ends_with("Qwen3.5-2B-IQ4_XS.gguf"));
+        assert!(!e.runs_on_cpu(), "a 2B at 1.1 GB stays off a CPU-only host");
     }
 
     /// Apple Silicon is the only build with a fast Metal backend today, and the
@@ -867,76 +631,69 @@ mod tests {
         );
         assert_eq!(host_gpu_accelerated(), expected);
     }
+
+    /// The decider row keeps its six pinned files in command.json, and the
+    /// loader reaches them through the command accessor (R3).
     #[test]
     fn neudecide_q4_pins_all_six_files() {
-        let e = find("neudecide-q4").unwrap();
+        let parsed = Catalog::bundled();
+        let d = parsed.command_by_id("neudecide-q4").expect("the decider is in command.json");
         // Six pinned artifacts: config + 3 ONNX graphs + 2 tokenizers.
-        assert_eq!(e.shards.len(), 6);
-        for s in e.shards {
+        assert_eq!(d.shards.len(), 6);
+        for s in &d.shards {
             assert_eq!(
-                s.sha256.len(),
+                s.sha256.as_deref().map(str::len).unwrap_or(0),
                 64,
                 "sha256 of {} must be 64 hex chars",
-                s.file_name
+                s.file
             );
-            assert!(s.url.starts_with(
-                "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/"
-            ));
-            assert!(s.size_bytes > 0);
+            assert!(s.bytes > 0);
         }
-        // A.3.1: the re-host (GitHub release) is primary; upstream HF — gated
-        // behind a contact-information form — stays as the backup URL.
-        assert!(e.url.starts_with(
-            "https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/"
-        ));
+        // A.3.1: the re-host (GitHub release) is primary; upstream HF, gated
+        // behind a contact-information form, stays as the backup URL.
+        assert!(d
+            .base_url
+            .as_deref()
+            .is_some_and(|b| b.starts_with("https://github.com/alihusains/teletype-models/releases/download/neudecide-v1-q4/")));
         assert_eq!(
-            e.backup_url,
+            d.backup_url.as_deref(),
             Some("https://huggingface.co/neuphonic/neudecide/resolve/main/config.json")
         );
-        // Pinned total: 6 shards = 42,915,902 bytes (≈ 40.9 MiB); size_mb
-        // rounds the MiB display (same convention as s1-mini: 461.78 → 462).
-        let total: u64 = e.shards.iter().map(|s| s.size_bytes).sum();
+        // Pinned total: 6 shards = 42,915,902 bytes (40.9 MiB); size_mb
+        // rounds the MiB display (same convention as s1-mini: 461.78 to 462).
+        let total: u64 = d.shards.iter().map(|s| s.bytes).sum();
         assert_eq!(total, 42_915_902, "neudecide-q4 total byte size drifted");
-        assert_eq!(e.size_mb, 41);
-        // Entry contract: entrypoint is the first shard file; the decider
-        // loads the parent dir (<dir>/neudecide-q4) where all 6 shards
-        // install (is_downloaded + the downloader use models_dir/<id>).
-        let dir = std::path::Path::new("/models");
-        assert_eq!(
-            e.entrypoint(dir),
-            dir.join("neudecide-q4").join("config.json")
-        );
-        assert!(!e.is_downloaded(dir));
+        // 43 is the decimal-MB display of the pinned total (42,915,902 bytes
+        // is 42.9 MB); the row's size_mb rounds that up, not the MiB.
+        assert_eq!(d.size_mb, 43);
+        // R3: the decider row carries the full display field set the UI reads.
+        assert!(!d.size_label.is_empty());
+        assert!(!d.specialty.is_empty());
+        assert!(!d.description.is_empty());
+        assert!(!d.verdict_note.is_empty());
+        assert!(d.attribution.is_some());
+        assert!(d.license_name.is_some());
+        assert!(d.license_url.is_some());
+        assert!(!d.recommended);
+        // The decider is never a polish row.
+        assert!(!d.capabilities.contains(&Capability::Polish));
+        assert!(d.capabilities.contains(&Capability::ToolCalling));
+        // It is not an LLM row either.
+        assert!(parsed.llm_by_id("neudecide-q4").is_none());
     }
 
     /// A synthetic two-shard entry: exercises the multi-shard install path
     /// without depending on any catalog model.
     fn multi_shard_entry() -> CatalogEntry {
-        const SHARDS: &[CatalogShard] = &[
-            CatalogShard {
-                file_name: "part-00001-of-00002.gguf",
-                url: "https://example.invalid/part-00001-of-00002.gguf",
-                size_bytes: 8,
-                sha256: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
-            },
-            CatalogShard {
-                file_name: "part-00002-of-00002.gguf",
-                url: "https://example.invalid/part-00002-of-00002.gguf",
-                size_bytes: 4,
-                sha256: "1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
-            },
-        ];
-        CatalogEntry {
-            id: "test-multi",
-            name: "Test multi-shard",
-            size_label: "t",
-            url: "https://example.invalid/test-multi",
+        CatalogEntry::from_entry(LlmEntry {
+            id: "test-multi".into(),
+            name: "Test multi-shard".into(),
+            size_label: "t".into(),
+            capabilities: vec![Capability::Polish],
+            url: "https://example.invalid/test-multi".into(),
             size_mb: 0,
-            description: "synthetic multi-shard entry for tests",
-            specialty: &Specialty {
-                tag: "Small & fast",
-                measured: false,
-            },
+            description: "synthetic multi-shard entry for tests".into(),
+            specialty: "fast_small".into(),
             sha256: None,
             backup_url: None,
             attribution: None,
@@ -944,20 +701,31 @@ mod tests {
             license_url: None,
             requires_license_accept: false,
             recommended: false,
-            polish_capable: true,
             runs_on_cpu: true,
-            verdict: ModelVerdict::NotTested,
-            verdict_note: "",
+            verdict: "not_tested".into(),
+            verdict_note: String::new(),
             sort_order: 0,
-            shards: SHARDS,
-        }
+            shards: vec![
+                Artifact {
+                    file: "part-00001-of-00002.gguf".into(),
+                    bytes: 8,
+                    sha256: Some("0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f".into()),
+                },
+                Artifact {
+                    file: "part-00002-of-00002.gguf".into(),
+                    bytes: 4,
+                    sha256: Some("1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f".into()),
+                },
+            ],
+            runs_on: vec!["macos".into()],
+        })
     }
 
     #[test]
     fn entrypoint_paths_for_single_and_multi() {
         let single = find("s1-mini").unwrap();
         let multi = multi_shard_entry();
-        let dir = std::path::Path::new("/models");
+        let dir = Path::new("/models");
         assert_eq!(single.entrypoint(dir), dir.join("s1-mini.gguf"));
         assert_eq!(
             multi.entrypoint(dir),
@@ -970,10 +738,10 @@ mod tests {
 
     /// A file that is present but truncated is not "downloaded".
     ///
-    /// This was `is_file()`, so a zero-byte GGUF from an interrupted download
-    /// counted as installed. The model screen then showed it as downloaded,
-    /// selecting it produced a model that could not load, and the only symptom
-    /// was "no model loaded" with nothing pointing at the cause.
+    /// This used to be `is_file()`, so a zero-byte GGUF from an interrupted
+    /// download counted as installed. The model screen then showed it as
+    /// downloaded, selecting it produced a model that could not load, and the
+    /// only symptom was "no model loaded" with nothing pointing at the cause.
     #[test]
     fn a_truncated_file_is_not_downloaded() {
         let dir = std::env::temp_dir().join(format!("teletype-cat-{}", std::process::id()));
@@ -991,7 +759,7 @@ mod tests {
 
         // A tenth of the file: a partial download, the case a plain existence
         // check cannot see.
-        let tenth = u64::from(single.size_mb) * 100_000;
+        let tenth = u64::from(single.size_mb()) * 100_000;
         std::fs::write(&path, vec![0u8; tenth as usize]).unwrap();
         assert!(
             !single.is_downloaded(&dir),
@@ -1013,22 +781,22 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("teletype-shards-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let multi = multi_shard_entry();
-        let shard_dir = dir.join(multi.id);
+        let shard_dir = dir.join(multi.id());
         std::fs::create_dir_all(&shard_dir).unwrap();
 
         // No shards at all.
         assert!(!multi.is_downloaded(&dir));
 
         // All shards present but each 0 bytes.
-        for s in multi.shards {
-            std::fs::write(shard_dir.join(s.file_name), b"").unwrap();
+        for s in multi.shards() {
+            std::fs::write(shard_dir.join(&s.file_name), b"").unwrap();
         }
         assert!(!multi.is_downloaded(&dir), "0-byte shards are not a model");
 
         // Every shard at its exact catalog size: now it counts.
-        for s in multi.shards {
+        for s in multi.shards() {
             std::fs::write(
-                shard_dir.join(s.file_name),
+                shard_dir.join(&s.file_name),
                 vec![0u8; s.size_bytes as usize],
             )
             .unwrap();
@@ -1036,7 +804,7 @@ mod tests {
         assert!(multi.is_downloaded(&dir));
 
         // Drop one shard again.
-        std::fs::remove_file(shard_dir.join(multi.shards[1].file_name)).unwrap();
+        std::fs::remove_file(shard_dir.join(&multi.shards()[1].file_name)).unwrap();
         assert!(
             !multi.is_downloaded(&dir),
             "one missing shard is not enough"

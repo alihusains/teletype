@@ -26,6 +26,23 @@ pub struct SpecialtyStatus {
     pub measured: bool,
 }
 
+/// The one-phrase job this row is worth choosing for, shipped to the UI as a
+/// chip. The data stores the role key (`"cleanup"`, `"all_round"`, ...); the
+/// label is the human phrase and `measured` says whether this repo's bakeoff
+/// proved it.
+fn specialty_status(tag: &str) -> SpecialtyStatus {
+    SpecialtyStatus {
+        tag: match tag {
+            "cleanup" => "Dictation cleanup".into(),
+            "all_round" => "Polish + Prompt Engineer".into(),
+            "instruct" => "Instruction-following transforms".into(),
+            "fast_small" => "Small & fast".into(),
+            other => other.to_string(),
+        },
+        measured: matches!(tag, "cleanup" | "all_round"),
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelStatus {
@@ -112,38 +129,33 @@ fn model_list(
     selected_id: &str,
     shortlist: bool,
 ) -> Vec<ModelStatus> {
-    let status = |e: &'static teletype_inference::catalog::CatalogEntry| ModelStatus {
-        id: e.id.into(),
-        name: e.name.into(),
-        size_mb: e.size_mb,
-        description: e.description.into(),
-        specialty: SpecialtyStatus {
-            tag: e.specialty.tag.into(),
-            measured: e.specialty.measured,
-        },
+    let status = |e: &teletype_inference::catalog::CatalogEntry| ModelStatus {
+        id: e.id().into(),
+        name: e.name().into(),
+        size_mb: e.size_mb(),
+        description: e.description().into(),
+        specialty: specialty_status(e.specialty()),
         downloaded: e.is_downloaded(models_dir),
-        selected: selected_id == e.id,
-        recommended: e.recommended,
-        polish_capable: e.polish_capable,
-        verdict: e.verdict.label().into(),
-        verdict_note: e.verdict_note.into(),
-        license_name: e.license_name.map(str::to_string),
-        license_url: e.license_url.map(str::to_string),
-        requires_license_accept: e.requires_license_accept,
-        attribution: e.attribution.map(str::to_string),
+        selected: selected_id == e.id(),
+        recommended: e.recommended(),
+        polish_capable: e.polish_capable(),
+        verdict: e.verdict().label().into(),
+        verdict_note: e.verdict_note().into(),
+        license_name: e.license_name().map(str::to_string),
+        license_url: e.license_url().map(str::to_string),
+        requires_license_accept: e.requires_license_accept(),
+        attribution: e.attribution().map(str::to_string),
         runs_on_host: e.runs_on_host(gpu_accelerated),
     };
 
     if !shortlist {
-        let mut models: Vec<ModelStatus> = teletype_inference::catalog::CATALOG
-            .iter()
-            .map(status)
-            .collect();
+        let mut models: Vec<ModelStatus> =
+            teletype_inference::catalog::catalog().iter().map(status).collect();
         // Stable sort by the catalog's explicit priority so the list order is
         // independent of array position (S1-mini first, then the rest).
         models.sort_by_key(|m| {
             teletype_inference::catalog::find(&m.id)
-                .map(|e| e.sort_order)
+                .map(|e| e.sort_order())
                 .unwrap_or(u32::MAX)
         });
         if apple_intelligence_available() {
@@ -153,23 +165,23 @@ fn model_list(
     }
 
     let ids = teletype_inference::catalog::polish_shortlist_ids(gpu_accelerated);
-    let mut rows: Vec<ModelStatus> = ids
+    let rows: Vec<teletype_inference::catalog::CatalogEntry> = ids
         .iter()
         .filter_map(|id| teletype_inference::catalog::find(id))
-        .map(status)
         .collect();
+    let mut out: Vec<ModelStatus> = rows.iter().map(status).collect();
     // A user who already chose a model keeps seeing it, even if that choice is
     // outside this host's shortlist. Dropping it would look like the app forgot
     // their setting and silently use it anyway.
     if let Some(entry) = teletype_inference::catalog::find(selected_id) {
-        if entry.polish_capable && !ids.contains(&entry.id) {
-            rows.push(status(entry));
+        if entry.polish_capable() && !ids.iter().any(|i| i == entry.id()) {
+            out.push(status(&entry));
         }
     }
     if apple_intelligence_available() {
-        rows.push(apple_intelligence_row(selected_id));
+        out.push(apple_intelligence_row(selected_id));
     }
-    rows
+    out
 }
 
 /// The Apple Intelligence system model is not a catalog entry: it ships in the
@@ -314,10 +326,10 @@ pub async fn select_model(
     // return the input untouched. The rail keeps these out of the list; this
     // refuses them for anything that arrives by another route, such as a saved
     // setting pointing at an id whose role later changed.
-    if !entry.polish_capable {
+    if !entry.polish_capable() {
         return Err(CommandError::user(format!(
             "'{id}' is not a polish model. {desc}",
-            desc = entry.description
+            desc = entry.description()
         )));
     }
     // License acceptance gates download only; once installed the model is usable.
@@ -359,7 +371,7 @@ pub async fn select_model(
     // warm_up uses reqwest::blocking and must not run on a tokio worker
     // (dropping the client there panics with "Cannot drop a runtime…").
     let spawn_id = id.clone();
-    let spawn_name = entry.name.to_string();
+    let spawn_name = entry.name().to_string();
     let spawn_path = path.clone();
     crate::log_entry(
         crate::LogLevel::Info,
@@ -479,7 +491,7 @@ pub async fn delete_model(
 
     let models_dir = state.models_dir.clone();
     let id2 = id.clone();
-    let is_multi = !entry.shards.is_empty();
+    let is_multi = !entry.shards().is_empty();
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         remove_llm_model_files(&models_dir, &id2, is_multi).map_err(|e| e.to_string())
     })
@@ -572,7 +584,7 @@ pub async fn download_model(
 ) -> CommandResult<String> {
     let entry =
         teletype_inference::catalog::find(&id).ok_or_else(|| format!("Unknown model '{id}'"))?;
-    if entry.requires_license_accept && license_accepted != Some(true) {
+    if entry.requires_license_accept() && license_accepted != Some(true) {
         return Err(CommandError::model(format!(
             "Model '{id}' is under a restrictive license. Read and accept it first."
         )));
@@ -626,7 +638,7 @@ pub async fn download_model(
     });
     let result = tauri::async_runtime::spawn_blocking(move || {
         teletype_inference::download_entry_with_cancel(
-            entry,
+            &entry,
             &models_dir_for_task,
             Some(cb),
             cancel_for_task,
@@ -1141,12 +1153,12 @@ pub fn ensure_local_provider(app: &AppHandle) {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
     }
-    let provider = teletype_inference::ServerProvider::new(entry.id, entry.name, &path);
+    let provider = teletype_inference::ServerProvider::new(entry.id(), entry.name(), &path);
     crate::log_entry(
         crate::LogLevel::Info,
         format!(
             "loading LLM model on first use: {} ({})",
-            entry.name, entry.id
+            entry.name(), entry.id()
         ),
     );
     let started = std::time::Instant::now();
@@ -3186,14 +3198,15 @@ mod tests {
         assert_eq!(picked.iter().filter(|m| m.selected).count(), 1);
 
         // The Command Mode decider is not a polish choice on either host, so it
-        // must never be appended as someone's "pick".
+        // must never be appended as someone's "pick". It is a command row
+        // (command.json), not an LLM row, so the polish list never shows it.
         let decider = model_list(true, &dir, "neudecide-q4", true);
         assert!(!ids(&decider).contains(&"neudecide-q4"));
         assert!(
-            model_list(true, &dir, "neudecide-q4", false)
+            !model_list(true, &dir, "neudecide-q4", false)
                 .iter()
                 .any(|m| m.id == "neudecide-q4"),
-            "Settings still has to show the decider it uses for Command Mode"
+            "the decider is a command row, not a polish list row"
         );
 
         // Unknown ids append nothing rather than panicking.

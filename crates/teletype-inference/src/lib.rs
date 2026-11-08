@@ -48,7 +48,6 @@ pub fn no_window_creation_flags() -> u32 {
     }
 }
 
-pub use catalog::CATALOG;
 pub use command_llm::{parse_command_json, LlmCommandExtractor, ProviderLookup};
 pub use download::{
     download_entry, download_entry_with_cancel, download_entry_with_progress, DownloadProgress,

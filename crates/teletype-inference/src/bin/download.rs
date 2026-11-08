@@ -13,9 +13,9 @@ fn main() {
         eprintln!("Usage: teletype-model-download <model-id> [dest-dir] [--accept-license]");
         eprintln!(
             "Available: {}",
-            teletype_inference::catalog::CATALOG
+            teletype_inference::catalog::catalog()
                 .iter()
-                .map(|e| e.id)
+                .map(|e| e.id().to_string())
                 .collect::<Vec<_>>()
                 .join(", ")
         );
@@ -27,19 +27,19 @@ fn main() {
     let entry = teletype_inference::catalog::find(id.as_str()).unwrap_or_else(|| {
         eprintln!(
             "Unknown model '{id}'. Available: {}",
-            teletype_inference::catalog::CATALOG
+            teletype_inference::catalog::catalog()
                 .iter()
-                .map(|e| e.id)
+                .map(|e| e.id().to_string())
                 .collect::<Vec<_>>()
                 .join(", ")
         );
         std::process::exit(1);
     });
 
-    if entry.requires_license_accept && !accept_license {
+    if entry.requires_license_accept() && !accept_license {
         eprintln!(
             "Model '{id}' requires a license acceptance.\nLicense: {}",
-            entry.license_url.unwrap_or("(unknown)")
+            entry.license_url().unwrap_or("(unknown)")
         );
         eprintln!("Re-run with --accept-license after reading it.");
         std::process::exit(1);
@@ -64,8 +64,8 @@ fn main() {
         return;
     }
 
-    println!("Downloading {} (~{} MB)…", entry.name, entry.size_mb);
-    match teletype_inference::download_entry(entry, &dest_dir) {
+    println!("Downloading {} (~{} MB)…", entry.name(), entry.size_mb());
+    match teletype_inference::download_entry(&entry, &dest_dir) {
         Ok(path) => println!("Done: {}", path.display()),
         Err(e) => {
             eprintln!("Download failed: {e}");

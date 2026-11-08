@@ -1082,14 +1082,15 @@ pub struct CommandDeciderInfo {
 pub fn command_decider_rows(models_dir: &std::path::Path) -> Vec<CommandDeciderInfo> {
     let mut rows: Vec<CommandDeciderInfo> = Vec::new();
 
-    // 1. NeuDecide Q4: the inference catalog row, checked against disk.
-    if let Some(entry) = teletype_inference::catalog::find("neudecide-q4") {
+    // 1. NeuDecide Q4: the command catalog row (command.json), checked
+    // against disk.
+    if let Some(d) = teletype_catalog::Catalog::bundled().command_by_id("neudecide-q4") {
         let installed = NeuDecideAvailable::check(models_dir);
         rows.push(CommandDeciderInfo {
-            id: entry.id.to_string(),
-            name: entry.name.to_string(),
+            id: d.id.clone(),
+            name: d.name.clone(),
             installed,
-            size_mb: u64::from(entry.size_mb),
+            size_mb: u64::from(d.size_mb),
             available: installed,
             reason: (!installed).then(|| "not downloaded".to_string()),
         });
@@ -1166,9 +1167,9 @@ fn qwen_asr_size_mb() -> u64 {
 /// LLM is installed" is the availability gate, not the user's current
 /// selection.
 pub(crate) fn local_llm_installed(models_dir: &std::path::Path) -> bool {
-    teletype_inference::catalog::CATALOG
-        .iter()
-        .filter(|e| e.polish_capable)
+    teletype_inference::catalog::catalog()
+        .into_iter()
+        .filter(|e| e.polish_capable())
         .any(|e| e.is_downloaded(models_dir))
 }
 
@@ -1499,17 +1500,19 @@ pub fn migrate_removed_models(settings: &mut Settings) -> bool {
     //
     // Needle 3 is no longer in the catalog, so the lookup misses for it; the
     // id stays in the list so a saved needle3 selection is still refused as
-    // a stale pick rather than loaded.
-    const REMOVED_DECIDERS: &[&str] = &["needle3"];
+    // a stale pick rather than loaded. NeuDecide is a command decider in
+    // command.json, not an LLM row, so a saved pick of it is refused the
+    // same way.
+    const REMOVED_DECIDERS: &[&str] = &["needle3", "neudecide-q4"];
     let stale_id = settings.selected_llm_model.as_str();
     let entry = teletype_inference::catalog::find(stale_id);
     let removed_decider = REMOVED_DECIDERS.contains(&stale_id);
     if let Some(entry) = entry {
-        if !entry.polish_capable {
+        if !entry.polish_capable() {
             settings.pending_notice = Some(format!(
                 "{} is a Command Mode model, not a polish engine. Teletype switched text cleanup \
                  to SpeakoFlow Mini.",
-                entry.name
+                entry.name()
             ));
             settings.selected_llm_model = "speakoflow-mini".to_string();
             return true;
@@ -1578,7 +1581,7 @@ pub fn polish_model_label(settings: &Settings) -> Option<String> {
     match settings.selected_llm_provider.as_str() {
         "local-server" => Some(
             teletype_inference::catalog::find(&settings.selected_llm_model)
-                .map(|e| e.name.to_string())
+                .map(|e| e.name().to_string())
                 .unwrap_or_else(|| settings.selected_llm_model.clone()),
         )
         .filter(|s| !s.is_empty()),
@@ -1677,12 +1680,13 @@ mod tests {
             polish_model_label(&s).as_deref(),
             Some("not-in-the-catalog")
         );
-        let first = teletype_inference::catalog::CATALOG
-            .first()
-            .map(|e| (e.id, e.name));
+        let first = teletype_inference::catalog::catalog()
+            .into_iter()
+            .next()
+            .map(|e| (e.id().to_string(), e.name().to_string()));
         if let Some((id, name)) = first {
-            s.selected_llm_model = id.into();
-            assert_eq!(polish_model_label(&s).as_deref(), Some(name));
+            s.selected_llm_model = id;
+            assert_eq!(polish_model_label(&s).as_deref(), Some(name.as_str()));
         }
     }
 
