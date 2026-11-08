@@ -120,6 +120,10 @@ pub struct PipelineResult {
     /// ran. `None` when no decision provider is loaded or the input is
     /// typed (intent routing is voice-only).
     pub intent: Option<Intent>,
+    /// The model's confidence in its intent pick, in [0,1], when the
+    /// decision provider measures one. `None` for forced-command takes,
+    /// typed input, no decision provider, or non-measuring providers.
+    pub route_confidence: Option<f32>,
     /// The embedding of the transcript, when a decision provider produced
     /// one. Stored for personalization (similar-utterance matching).
     /// `None` when no decision provider is loaded or embedding failed.
@@ -347,7 +351,7 @@ impl<'a> Pipeline<'a> {
         //
         //      When no decision provider is loaded, this is a no-op and the
         //      pipeline behaves exactly as before.
-        let (intent, embedding, command) = if is_voice {
+        let (intent, route_confidence, embedding, command) = if is_voice {
             match self.decision {
                 Some(dp) => {
                     // P2.2: an armed command take bypasses auto-classification
@@ -355,11 +359,11 @@ impl<'a> Pipeline<'a> {
                     // decision provider there is nothing to extract with, so
                     // the take falls through to dictation behavior (P2.7
                     // fallback plugs this hole).
-                    let intent = if self.force_command {
+                    let (intent, route_confidence) = if self.force_command {
                         tracing::info!("intent_routing_forced_command");
-                        crate::llm::Intent::Command
+                        (crate::llm::Intent::Command, None)
                     } else {
-                        dp.classify_intent(&input_text)
+                        dp.classify_intent_with_confidence(&input_text)
                     };
                     let embedding = dp.embed_text(&input_text);
                     let command = if intent == crate::llm::Intent::Command {
@@ -386,12 +390,12 @@ impl<'a> Pipeline<'a> {
                     if !intent.needs_polish() {
                         tracing::info!(intent = intent.label(), "intent_routing_skip_polish");
                     }
-                    (Some(intent), embedding, command)
+                    (Some(intent), route_confidence, embedding, command)
                 }
-                None => (None, None, None),
+                None => (None, None, None, None),
             }
         } else {
-            (None, None, None)
+            (None, None, None, None)
         };
 
         // 1. Protect AutoText values (typed `/trigger`s) and, for voice,
@@ -804,6 +808,7 @@ impl<'a> Pipeline<'a> {
             polish_change,
             transform_skipped_no_model,
             intent,
+            route_confidence,
             embedding,
             command,
             screen_term_snaps: snap_count,

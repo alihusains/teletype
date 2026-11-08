@@ -75,6 +75,12 @@ pub trait DecisionProvider: Send + Sync {
     /// polish pass, which is the existing behavior).
     fn classify_intent(&self, text: &str) -> Intent;
 
+    /// Like `classify_intent`, but also returns the model's confidence in its
+    /// pick in [0,1], or `None` when the provider does not measure one.
+    fn classify_intent_with_confidence(&self, text: &str) -> (Intent, Option<f32>) {
+        (self.classify_intent(text), None)
+    }
+
     /// Embeds text into a fixed-dimension vector for semantic matching.
     ///
     /// Returns `None` when the provider doesn't support embedding or the

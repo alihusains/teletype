@@ -76,55 +76,68 @@ impl TinyDecideProvider {
     /// perform an action RIGHT NOW. Statements, questions, future
     /// intentions, and quoted phrases are all "dictation".
     fn classify(&self, text: &str) -> Intent {
+        self.classify_with_confidence(text).0
+    }
+
+    /// The model's raw confidence in its own pick, with the three-layer
+    /// intent logic on top. Heuristic/keyword layers may override the
+    /// INTENT, but the probability stays the model's raw confidence in its
+    /// own pick (it is not a probability of the final intent).
+    ///
+    /// The model runs exactly once; both public methods build on this.
+    fn classify_with_confidence(&self, text: &str) -> (Intent, Option<f32>) {
         // Three-layer classification:
         // 1. TinyDecide raw classification
         // 2. Heuristic post-filter (catches false positives: past tense,
         //    questions, quoted phrases, figurative use)
         // 3. Command-keyword boost (catches false negatives: "Mute the
         //    speaker", "Turn the volume up", "Lower the brightness")
-        let raw = self.classify_raw(text);
+        let (raw, conf) = self.classify_raw(text);
 
         // Layer 2: if TinyDecide said "command", verify with heuristics.
         if raw == Intent::Command {
             if is_likely_dictation(text) {
                 tracing::debug!(text = %text, "tinydecide said command but heuristics say dictation");
-                return Intent::Dictation;
+                return (Intent::Dictation, conf);
             }
-            return Intent::Command;
+            return (Intent::Command, conf);
         }
 
         // Layer 3: TinyDecide said "dictation" — check if it's actually
         // a command that TinyDecide missed.
         if self.command_keyword_boost(text) && !is_likely_dictation(text) {
             tracing::debug!(text = %text, "tinydecide said dictation but keyword boost says command");
-            return Intent::Command;
+            return (Intent::Command, conf);
         }
 
-        Intent::Dictation
+        (Intent::Dictation, conf)
     }
 
-    /// Raw TinyDecide classification without heuristic filtering.
-    fn classify_raw(&self, text: &str) -> Intent {
+    /// Raw TinyDecide classification without heuristic filtering, plus the
+    /// model's probability for its own pick (`None` on every failure path
+    /// that returns `Intent::Dictation`).
+    fn classify_raw(&self, text: &str) -> (Intent, Option<f32>) {
         let question =
             tinydecide::Question::choice("Is this a command to the computer?", INTENT_OPTIONS);
         let response = match self.model.answer(text, std::slice::from_ref(&question)) {
             Ok(r) => r,
             Err(e) => {
                 tracing::debug!(error = %e, "tinydecide classify failed; defaulting to dictation");
-                return Intent::Dictation;
+                return (Intent::Dictation, None);
             }
         };
         let answer = match response.answers.first() {
             Some(a) => a,
-            None => return Intent::Dictation,
+            None => return (Intent::Dictation, None),
         };
         let pick = match answer.pick {
             Some(i) if i < INTENT_OPTIONS.len() => i,
-            _ => return Intent::Dictation,
+            _ => return (Intent::Dictation, None),
         };
+        let conf = answer.probs.get(pick).map(|p| *p as f32);
         match INTENT_OPTIONS[pick] {
-            "command" => Intent::Command,
-            _ => Intent::Dictation,
+            "command" => (Intent::Command, conf),
+            _ => (Intent::Dictation, conf),
         }
     }
 
@@ -428,6 +441,10 @@ impl DecisionProvider for TinyDecideProvider {
         self.classify(text)
     }
 
+    fn classify_intent_with_confidence(&self, text: &str) -> (Intent, Option<f32>) {
+        self.classify_with_confidence(text)
+    }
+
     fn embed_text(&self, _text: &str) -> Option<Vec<f32>> {
         // TinyDecide is a classifier, not an embedder. Embedding is handled
         // by Needle 3 (needle_sys::embed_text, 3072-dim, 1 ms). The pipeline
@@ -462,6 +479,15 @@ mod tests {
         assert!((2..=32).contains(&INTENT_OPTIONS.len()));
         // Exactly two intents: dictation and command.
         assert_eq!(INTENT_OPTIONS.len(), 2);
+    }
+
+    #[test]
+    fn classify_intent_exposes_a_confidence_in_unit_range() {
+        let Some(dir) = model_dir() else { return };
+        let provider = TinyDecideProvider::load(&dir).expect("tinydecide load failed");
+        let (_intent, conf) = provider.classify_intent_with_confidence("Open the terminal for me");
+        let conf = conf.expect("tinydecide must report a confidence");
+        assert!((0.0..=1.0).contains(&conf));
     }
 
     #[test]

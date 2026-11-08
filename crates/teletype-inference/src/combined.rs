@@ -99,6 +99,10 @@ impl DecisionProvider for CombinedDecisionProvider {
         self.classifier.classify_intent(text)
     }
 
+    fn classify_intent_with_confidence(&self, text: &str) -> (Intent, Option<f32>) {
+        self.classifier.classify_intent_with_confidence(text)
+    }
+
     fn embed_text(&self, text: &str) -> Option<Vec<f32>> {
         self.extractor.embed_text(text)
     }
