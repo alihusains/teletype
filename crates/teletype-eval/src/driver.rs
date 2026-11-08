@@ -368,23 +368,23 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
             Some(p) => p.clone(),
             None => {
                 let models_dir = cfg.models_dir.clone().unwrap_or_else(app_models_dir);
-                crate::bakeoff::model_path_for(&models_dir, model)
+                crate::bakeoff::model_path_for(&models_dir, &model)
             }
         };
         // FluidAudio is macOS-Apple-Silicon only; with
         // TELETYPE_FLUID_DISABLE_SWIFT=1 the stub refuses to load.
-        if crate::bakeoff::engine_kind(model) == crate::bakeoff::EngineKind::Fluid
+        if crate::bakeoff::engine_kind(&model) == crate::bakeoff::EngineKind::Fluid
             && !crate::bakeoff::fluid_bridge_available()
         {
             return Err(format!(
                 "--engine {} needs the FluidAudio bridge (macOS 14+ Apple \
                  Silicon); this build has the stub \
                  (TELETYPE_FLUID_DISABLE_SWIFT=1 or non-macOS target)",
-                model.id
+                model.id()
             ));
         }
         let inner: Box<dyn teletype_speech::SpeechProvider> =
-            match crate::bakeoff::engine_kind(model) {
+            match crate::bakeoff::engine_kind(&model) {
                 crate::bakeoff::EngineKind::GgmlParakeet => {
                     Box::new(teletype_speech::ParakeetProvider::new())
                 }
@@ -392,10 +392,10 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                     Box::new(teletype_speech::whisper::WhisperProvider::new())
                 }
                 crate::bakeoff::EngineKind::Sherpa => {
-                    teletype_speech::SherpaParakeetProvider::new(model.id)
+                    teletype_speech::SherpaParakeetProvider::new(model.id())
                         .map(Box::new)
                         .ok_or_else(|| {
-                            format!("unsupported --engine {}: unknown sherpa model", model.id)
+                            format!("unsupported --engine {}: unknown sherpa model", model.id())
                         })?
                 }
 
@@ -410,7 +410,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                              (parakeet-cpp-sys did not produce one, or \
                              TELETYPE_SPEECH_PARAKEET_CPP_LIB points at a \
                              missing file)",
-                            model.id
+                            model.id()
                         ));
                     }
                     // The provider reads the GGUF path from the catalog row's
@@ -419,7 +419,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                     Box::new(teletype_speech::parakeet_cpp::ParakeetCppProvider::new())
                 }
                 crate::bakeoff::EngineKind::Fluid => {
-                    let version = match model.id {
+                    let version = match model.id() {
                         "parakeet-v2-coreml" => teletype_fluid::FluidVersion::V2,
                         "parakeet-v3-coreml" => teletype_fluid::FluidVersion::V3,
                         _ => teletype_fluid::FluidVersion::Ultra,
@@ -434,7 +434,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                     return Err(format!(
                         "--engine {}: Qwen3-ASR is served by llama-server over HTTP and \
                          is not drivable from this harness; measure it through the app",
-                        model.id
+                        model.id()
                     ));
                 }
                 crate::bakeoff::EngineKind::AppleSpeech => {
@@ -442,7 +442,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                     // locale's OS assets on first load (bounded by a 10 minute
                     // timeout), so it is drivable wherever the bridge is
                     // linked. macOS 26+ only.
-                    let module = if model.id == "apple-dictation-transcriber" {
+                    let module = if model.id() == "apple-dictation-transcriber" {
                         teletype_apple::AppleModule::Dictation
                     } else {
                         teletype_apple::AppleModule::Transcriber
@@ -458,7 +458,7 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                         return Err(format!(
                             "--engine {}: this build has no transcribe.cpp engine \
                              (the dependency is wired macOS-only in this tree)",
-                            model.id
+                            model.id()
                         ));
                     }
                     Box::new(teletype_speech::TranscribeCppProvider::new())

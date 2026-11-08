@@ -18,7 +18,7 @@ pub mod transcribe;
 pub mod whisper;
 pub mod whistle;
 
-pub use catalog::{find, language_name, SpeechModel, CATALOG};
+pub use catalog::{find, language_name, SpeechModel};
 pub use parakeet::ParakeetProvider;
 pub use parakeet_cpp::ParakeetCppProvider;
 pub use sherpa::SherpaParakeetProvider;

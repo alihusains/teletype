@@ -50,7 +50,7 @@ pub const MAX_BOOST_TERMS: usize = 5_000;
 /// error here.
 pub fn resolve_engine(
     engine_id: &str,
-) -> Result<&'static teletype_speech::catalog::SpeechModel, String> {
+) -> Result<teletype_speech::catalog::SpeechModel, String> {
     use teletype_speech::catalog::find;
     if let Some(m) = find(engine_id) {
         return Ok(m);
@@ -138,7 +138,7 @@ pub fn planned_cells(models_dir: &Path, out_root: &Path) -> Vec<BakeoffPlanCell>
         let Ok(model) = resolve_engine(engine) else {
             continue;
         };
-        let present = model_present(models_dir, model);
+        let present = model_present(models_dir, &model);
         for set in BAKEOFF_SETS {
             for boost in ["off", "on"] {
                 let out_dir = out_root.join(engine).join(format!("{set}-{boost}"));
@@ -194,7 +194,7 @@ pub enum EngineKind {
 
 pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind {
     use teletype_speech::catalog::Engine;
-    match model.engine {
+    match model.engine() {
         Engine::Parakeet => EngineKind::GgmlParakeet,
         Engine::Whisper => EngineKind::GgmlWhisper,
         Engine::SherpaParakeet => EngineKind::Sherpa,
@@ -203,6 +203,7 @@ pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind 
         Engine::Qwen3Asr => EngineKind::Qwen3Asr,
         Engine::AppleSpeech => EngineKind::AppleSpeech,
         Engine::TranscribeCpp => EngineKind::TranscribeCpp,
+        Engine::Onnx => unreachable!("Onnx decider is not a dictation engine"),
     }
 }
 
@@ -262,9 +263,7 @@ pub fn model_present(models_dir: &Path, model: &teletype_speech::catalog::Speech
         // presence still has to answer honestly.
         EngineKind::Qwen3Asr => {
             let dir = model_path_for(models_dir, model);
-            teletype_speech::catalog::QWEN3_ASR_ARTIFACTS
-                .iter()
-                .all(|a| dir.join(a.file).is_file())
+            model.artifacts().iter().all(|a| dir.join(&a.file).is_file())
         }
     }
 }
@@ -821,20 +820,20 @@ mod tests {
     #[test]
     fn resolve_engine_maps_catalog_ids_and_legacy_aliases() {
         let m = resolve_engine("parakeet-tdt-v3").unwrap();
-        assert_eq!(m.id, "parakeet-tdt-v3");
+        assert_eq!(m.id(), "parakeet-tdt-v3");
         let m = resolve_engine("parakeet-ultra-coreml").unwrap();
-        assert_eq!(m.id, "parakeet-ultra-coreml");
+        assert_eq!(m.id(), "parakeet-ultra-coreml");
         let m = resolve_engine("sherpa-parakeet-v3-int8").unwrap();
-        assert_eq!(m.id, "sherpa-parakeet-v3-int8");
+        assert_eq!(m.id(), "sherpa-parakeet-v3-int8");
         let m = resolve_engine("large-v3-turbo-q5").unwrap();
-        assert_eq!(m.id, "large-v3-turbo-q5");
+        assert_eq!(m.id(), "large-v3-turbo-q5");
         // Legacy aliases (the baseline was produced with these).
         let m = resolve_engine("parakeet-ultra").unwrap();
-        assert_eq!(m.id, "parakeet-tdt-v3");
+        assert_eq!(m.id(), "parakeet-tdt-v3");
         let m = resolve_engine("parakeet").unwrap();
-        assert_eq!(m.id, "parakeet-tdt-v3");
+        assert_eq!(m.id(), "parakeet-tdt-v3");
         let m = resolve_engine("whisper").unwrap();
-        assert_eq!(m.id, "large-v3-turbo");
+        assert_eq!(m.id(), "large-v3-turbo");
     }
 
     #[test]
@@ -849,16 +848,16 @@ mod tests {
     #[test]
     fn engine_kind_and_language_follow_the_catalog() {
         let m = resolve_engine("parakeet-tdt-v3").unwrap();
-        assert_eq!(engine_kind(m), EngineKind::GgmlParakeet);
-        assert_eq!(asr_language(m), "en");
+        assert_eq!(engine_kind(&m), EngineKind::GgmlParakeet);
+        assert_eq!(asr_language(&m), "en");
         let m = resolve_engine("parakeet-ultra-coreml").unwrap();
-        assert_eq!(engine_kind(m), EngineKind::Fluid);
-        assert_eq!(asr_language(m), "en");
+        assert_eq!(engine_kind(&m), EngineKind::Fluid);
+        assert_eq!(asr_language(&m), "en");
         let m = resolve_engine("sherpa-parakeet-v3-int8").unwrap();
-        assert_eq!(engine_kind(m), EngineKind::Sherpa);
+        assert_eq!(engine_kind(&m), EngineKind::Sherpa);
         let m = resolve_engine("large-v3-turbo-q5").unwrap();
-        assert_eq!(engine_kind(m), EngineKind::GgmlWhisper);
-        assert_eq!(asr_language(m), "auto");
+        assert_eq!(engine_kind(&m), EngineKind::GgmlWhisper);
+        assert_eq!(asr_language(&m), "auto");
     }
 
     #[test]
@@ -866,26 +865,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let m = resolve_engine("parakeet-tdt-v3").unwrap();
         assert_eq!(
-            model_path_for(dir.path(), m),
+            model_path_for(dir.path(), &m),
             dir.path().join("ggml-parakeet-tdt-0.6b-v3-q8_0.bin")
         );
-        assert!(!model_present(dir.path(), m));
-        std::fs::write(model_path_for(dir.path(), m), b"x").unwrap();
-        assert!(model_present(dir.path(), m));
+        assert!(!model_present(dir.path(), &m));
+        std::fs::write(model_path_for(dir.path(), &m), b"x").unwrap();
+        assert!(model_present(dir.path(), &m));
 
         let s = resolve_engine("sherpa-parakeet-v3-int8").unwrap();
         // The archive extracts to a directory named after the archive minus
         // `.tar.bz2`; the provider loads the directory, not the archive.
         assert_eq!(
-            model_path_for(dir.path(), s),
+            model_path_for(dir.path(), &s),
             dir.path()
                 .join("sherpa")
                 .join("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8")
         );
-        assert!(!model_present(dir.path(), s));
+        assert!(!model_present(dir.path(), &s));
 
         let f = resolve_engine("parakeet-ultra-coreml").unwrap();
-        assert_eq!(model_path_for(dir.path(), f), dir.path().join("fluid"));
+        assert_eq!(model_path_for(dir.path(), &f), dir.path().join("fluid"));
     }
 
     #[test]
@@ -1315,7 +1314,7 @@ mod tests {
         let apple_ok = apple_bridge_available();
         for c in &cells {
             let kind = resolve_engine(&c.engine)
-                .map(engine_kind)
+                .map(|model| engine_kind(&model))
                 .unwrap_or(EngineKind::GgmlParakeet);
             let present_allowed = match kind {
                 EngineKind::Fluid => fluid_ok,
@@ -1337,7 +1336,7 @@ mod tests {
         let out_root = dir.path().join("runs");
         // Put one model on disk (the ggml parakeet v3 file).
         let m = resolve_engine("parakeet-tdt-v3").unwrap();
-        std::fs::write(model_path_for(dir.path(), m), b"x").unwrap();
+        std::fs::write(model_path_for(dir.path(), &m), b"x").unwrap();
         // Pre-create the output for one cell (parakeet-tdt-v3/human/off).
         let done = out_root.join("parakeet-tdt-v3").join("human-off");
         std::fs::create_dir_all(&done).unwrap();

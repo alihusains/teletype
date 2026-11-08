@@ -2714,7 +2714,7 @@ impl Session {
         // pinned model that is not in the catalog falls back to the
         // kind-based list, so a custom build never loses the check.
         let english_only = teletype_speech::catalog::find(&settings.selected_speech_model)
-            .map(|m| m.english_only)
+            .map(|m| m.english_only())
             .unwrap_or_else(|| crate::dictation::is_english_only(kind));
         effective_language(resolved, english_only)
     }
@@ -5724,12 +5724,12 @@ impl Session {
                                         );
                                         match fb_result {
                                             Ok((t, words)) if !t.trim().is_empty() => {
-                                                let fb_label = entry.name;
+                                                let fb_label = entry.name().to_string();
                                                 let sel_label = teletype_speech::catalog::find(
                                                     &selected_id,
                                                 )
-                                                .map(|e| e.name)
-                                                .unwrap_or(&selected_id);
+                                                .map(|e| e.name().to_string())
+                                                .unwrap_or(selected_id.clone());
                                                 crate::log_entry(
                                                     crate::LogLevel::Warn,
                                                     format!(
@@ -8926,7 +8926,8 @@ pub fn resolve_speech_model_for_id(
     // is the documented fallback for ids outside the catalog, so it has to
     // be what actually decides the loader here.
     let engine = entry
-        .map(|m| m.engine)
+        .as_ref()
+        .map(|m| m.engine())
         .unwrap_or_else(|| match settings.speech_engine {
             crate::commands::SpeechEngine::Whisper => teletype_speech::catalog::Engine::Whisper,
             crate::commands::SpeechEngine::Parakeet => teletype_speech::catalog::Engine::Parakeet,
@@ -8943,9 +8944,13 @@ pub fn resolve_speech_model_for_id(
         teletype_speech::catalog::Engine::Qwen3Asr => SpeechEngineKind::Qwen3Asr,
         teletype_speech::catalog::Engine::AppleSpeech => SpeechEngineKind::AppleSpeech,
         teletype_speech::catalog::Engine::TranscribeCpp => SpeechEngineKind::TranscribeCpp,
+        teletype_speech::catalog::Engine::Onnx => {
+            unreachable!("Onnx decider is not a dictation engine")
+        }
     };
     let file = entry
-        .map(|m| m.file.to_string())
+        .as_ref()
+        .map(|m| m.file().to_string())
         .unwrap_or_else(|| format!("{model_id}.bin"));
     // Per-engine path semantics come from the catalog entry so the app, the
     // download command, and the eval harness cannot drift (see
@@ -8963,6 +8968,7 @@ pub fn resolve_speech_model_for_id(
         | SpeechEngineKind::Qwen3Asr
         | SpeechEngineKind::AppleSpeech
         | SpeechEngineKind::TranscribeCpp => entry
+            .as_ref()
             .map(|m| m.provider_path(models_dir))
             .unwrap_or_else(|| models_dir.join(&file)),
         SpeechEngineKind::Whisper | SpeechEngineKind::Parakeet | SpeechEngineKind::ParakeetCpp => {
@@ -8983,7 +8989,7 @@ pub(crate) fn neural_provider_for(
 ) -> Option<Box<dyn teletype_speech::SpeechProvider>> {
     use teletype_speech::catalog::Engine;
     let entry = teletype_speech::catalog::find(model_id)?;
-    match entry.engine {
+    match entry.engine() {
         Engine::ParakeetCoreml if teletype_fluid::bridge_built() => {
             let version = match model_id {
                 "parakeet-v2-coreml" => teletype_fluid::FluidVersion::V2,
@@ -9094,7 +9100,7 @@ pub fn effective_language_for_app(state: &AppState, kind: SpeechEngineKind) -> S
     // catalog falls back to the kind-based list, so a custom build never
     // loses the check.
     let english_only = teletype_speech::catalog::find(&settings.selected_speech_model)
-        .map(|m| m.english_only)
+        .map(|m| m.english_only())
         .unwrap_or_else(|| is_english_only(kind));
     effective_language(resolved, english_only)
 }
@@ -9218,11 +9224,11 @@ mod mismatch_notice_tests {
         // The find() path the helper uses agrees with the catalog row the
         // helper is checking — this is the drift test for the helper.
         assert!(
-            find("fluid-speech-mini").unwrap().english_only,
+            find("fluid-speech-mini").unwrap().english_only(),
             "fluid-speech-mini must be an English-only row for this test to be meaningful"
         );
-        assert!(!find("large-v3-turbo-q5").unwrap().english_only);
-        assert!(find("parakeet-v2-coreml").unwrap().english_only);
+        assert!(!find("large-v3-turbo-q5").unwrap().english_only());
+        assert!(find("parakeet-v2-coreml").unwrap().english_only());
         // The kind list is non-empty and contains the English-only kinds
         // this test relies on (guards against a future edit that removes
         // Sherpa from the list and silently breaks the fallback).
@@ -9507,7 +9513,7 @@ fn selected_speech_model_installed(selected_id: &str, models_dir: &std::path::Pa
     };
     use teletype_speech::catalog::Engine;
     let fluid_available = teletype_fluid::bridge_built();
-    match entry.engine {
+    match entry.engine() {
         Engine::ParakeetCoreml => fluid_available,
         // OS-managed assets: "installed" means the bridge is linked and the
         // OS reports the default locale as installed.
@@ -9524,20 +9530,19 @@ fn selected_speech_model_installed(selected_id: &str, models_dir: &std::path::Pa
         }
         Engine::Qwen3Asr => {
             let dir = entry.provider_path(models_dir);
-            teletype_speech::catalog::QWEN3_ASR_ARTIFACTS
-                .iter()
-                .all(|a| {
-                    dir.join(a.file)
-                        .metadata()
-                        .map(|m| m.is_file() && m.len() > 0)
-                        .unwrap_or(false)
-                })
+            entry.artifacts().iter().all(|a| {
+                dir.join(&a.file)
+                    .metadata()
+                    .map(|m| m.is_file() && m.len() > 0)
+                    .unwrap_or(false)
+            })
         }
         Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp | Engine::TranscribeCpp => entry
             .provider_path(models_dir)
             .metadata()
             .map(|m| m.is_file() && m.len() > 0)
             .unwrap_or(false),
+        Engine::Onnx => unreachable!("Onnx decider is not a dictation engine"),
     }
 }
 
@@ -9595,7 +9600,7 @@ pub fn trim_silence_vad_with_probe<'a>(
 /// The display name of a speech model id, falling back to the id itself.
 pub(crate) fn asr_model_label(id: &str) -> String {
     teletype_speech::catalog::find(id)
-        .map(|m| m.name.to_string())
+        .map(|m| m.name().to_string())
         .unwrap_or_else(|| id.to_string())
 }
 
@@ -10834,11 +10839,11 @@ mod tests {
         // The find() path the helper uses agrees with the catalog row the
         // helper is checking — this is the drift test for the helper.
         assert!(
-            find("fluid-speech-mini").unwrap().english_only,
+            find("fluid-speech-mini").unwrap().english_only(),
             "fluid-speech-mini must be an English-only row for this test to be meaningful"
         );
-        assert!(!find("large-v3-turbo-q5").unwrap().english_only);
-        assert!(find("parakeet-v2-coreml").unwrap().english_only);
+        assert!(!find("large-v3-turbo-q5").unwrap().english_only());
+        assert!(find("parakeet-v2-coreml").unwrap().english_only());
         // The kind list is non-empty and contains the English-only kinds
         // this test relies on (guards against a future edit that removes
         // Sherpa from the list and silently breaks the fallback).
@@ -14947,7 +14952,7 @@ fn f12_installed_check_reflects_the_file_on_disk() {
     );
     // Create the file: installed.
     let entry = teletype_speech::catalog::find(model_id).expect("catalog entry");
-    let file = models_dir.join(entry.file);
+    let file = models_dir.join(entry.file());
     std::fs::write(&file, b"fake model").expect("write model file");
     assert!(
         selected_speech_model_installed(model_id, &models_dir),

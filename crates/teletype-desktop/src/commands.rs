@@ -1142,24 +1142,22 @@ pub(crate) fn qwen_asr_installed(models_dir: &std::path::Path) -> bool {
         Some(e) => e,
         None => return false,
     };
-    if entry.engine != Engine::Qwen3Asr {
+    if entry.engine() != Engine::Qwen3Asr {
         return false;
     }
     let dir = entry.provider_path(models_dir);
-    teletype_speech::catalog::QWEN3_ASR_ARTIFACTS
-        .iter()
-        .all(|a| {
-            dir.join(a.file)
-                .metadata()
-                .map(|m| m.is_file() && m.len() > 0)
-                .unwrap_or(false)
+    entry.artifacts().iter().all(|a| {
+        dir.join(&a.file)
+            .metadata()
+            .map(|m| m.is_file() && m.len() > 0)
+            .unwrap_or(false)
         })
 }
 
 /// The Qwen3-ASR row's download size in MB, for the picker row.
 fn qwen_asr_size_mb() -> u64 {
     teletype_speech::catalog::find("qwen3-asr")
-        .map(|e| u64::from(e.size_mb))
+        .map(|e| u64::from(e.size_mb()))
         .unwrap_or(0)
 }
 
@@ -1207,7 +1205,7 @@ fn default_speech_model_id_for(
     platform: teletype_speech::catalog::Platform,
     language: Option<&str>,
     fluid_available: bool,
-) -> &'static str {
+) -> String {
     teletype_speech::catalog::recommended_speech_model_id(platform, language, fluid_available)
 }
 
@@ -1223,7 +1221,7 @@ fn default_speech_model_id_for(
 ///
 /// `pub` so the model-delete path can reset the selection back to a model the
 /// host can actually load after the user removes their current pick.
-pub fn default_speech_model_id() -> &'static str {
+pub fn default_speech_model_id() -> String {
     default_speech_model_id_for(
         teletype_speech::catalog::host_platform(),
         None,
@@ -1295,8 +1293,8 @@ impl Settings {
             // fallback (`speech_engine`) only covers ids outside the
             // catalog, so a TranscribeCpp row gets Whisper as its
             // stand-in, exactly like every other non-Parakeet engine.
-            let engine = if m.engine == teletype_speech::catalog::Engine::Parakeet
-                || m.engine == teletype_speech::catalog::Engine::ParakeetCpp
+            let engine = if m.engine() == teletype_speech::catalog::Engine::Parakeet
+                || m.engine() == teletype_speech::catalog::Engine::ParakeetCpp
             {
                 SpeechEngine::Parakeet
             } else {
@@ -1427,7 +1425,7 @@ pub fn migrate_unavailable_speech_model(
     let next =
         default_speech_model_id_for(platform, Some(settings.language.as_str()), fluid_available);
     let previous = std::mem::replace(&mut settings.selected_speech_model, next.to_string());
-    let notice = speech_migration_notice(&previous, next, platform, fluid_available);
+    let notice = speech_migration_notice(&previous, &next, platform, fluid_available);
     settings.pending_notice = Some(match settings.pending_notice.take() {
         // Keep an earlier migration notice (EG-1) instead of overwriting it:
         // two facts happened, the banner can carry two sentences.
@@ -1449,8 +1447,8 @@ pub fn speech_migration_notice(
 ) -> String {
     use teletype_speech::catalog::Engine;
     let new_name = teletype_speech::catalog::find(next)
-        .map(|m| m.name)
-        .unwrap_or(next);
+        .map(|m| m.name().to_string())
+        .unwrap_or_else(|| next.to_string());
     let Some(old) = teletype_speech::catalog::find(previous) else {
         // Empty or unknown id: a damaged or older settings file, not a choice
         // the user made.
@@ -1458,12 +1456,12 @@ pub fn speech_migration_notice(
             "No dictation model was selected that this computer can run, so Teletype is using {new_name}."
         );
     };
-    let old_name = old.name;
-    let reason = if old.auxiliary {
+    let old_name = old.name().to_string();
+    let reason = if old.auxiliary() {
         format!("{old_name} is a vocabulary helper, not a dictation model")
     } else if !old.available_on(platform) {
         format!("{old_name} cannot run on this computer")
-    } else if old.engine == Engine::ParakeetCoreml && !fluid_available {
+    } else if old.engine() == Engine::ParakeetCoreml && !fluid_available {
         format!("{old_name} needs the Neural Engine build this Teletype does not include")
     } else {
         format!("{old_name} is not available in this version of Teletype")
@@ -1727,7 +1725,7 @@ mod tests {
         assert_eq!(default_speech_model_id(), expected);
         // The default is persisted on a fresh install, so it must be a model
         // this exact binary can load and list.
-        let entry = teletype_speech::catalog::find(default_speech_model_id())
+        let entry = teletype_speech::catalog::find(&default_speech_model_id())
             .expect("the shipped default is a catalog entry");
         assert!(
             entry.offered_on(
@@ -1759,7 +1757,7 @@ mod tests {
                 for fluid in [true, false] {
                     let id = default_speech_model_id_for(platform, language, fluid);
                     assert!(
-                        teletype_speech::catalog::find(id)
+                        teletype_speech::catalog::find(&id)
                             .is_some_and(|m| m.offered_on(platform, fluid)),
                         "default '{id}' on {platform:?} for {language:?} with bridge={fluid} \
                          is not a model this build can run"

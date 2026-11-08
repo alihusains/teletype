@@ -85,9 +85,12 @@ impl Qwen3AsrProvider {
         }
 
         self.model_dir = dir.to_path_buf();
-        let artifacts = teletype_speech::catalog::QWEN3_ASR_ARTIFACTS;
-        let main = dir.join(artifacts[0].file);
-        let mmproj = dir.join(artifacts[1].file);
+        let Some(model) = teletype_speech::catalog::find("qwen3-asr") else {
+            return Err(SpeechError::ModelLoad("qwen3-asr missing from catalog".to_string()));
+        };
+        let artifacts = model.artifacts().to_vec();
+        let main = dir.join(&artifacts[0].file);
+        let mmproj = dir.join(&artifacts[1].file);
         if !main.is_file() || !mmproj.is_file() {
             return Err(SpeechError::ModelLoad(format!(
                 "Qwen3-ASR model files not found in {}: need {} and {}",

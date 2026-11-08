@@ -510,10 +510,10 @@ pub async fn delete_speech_model(
     // What "installed" means per engine already lives in `speech_model_installed`;
     // mirror it so we only ever delete files that are actually present.
     let fluid_available = teletype_fluid::bridge_built();
-    if !speech_model_installed(entry, &state.models_dir, fluid_available) {
+    if !speech_model_installed(&entry, &state.models_dir, fluid_available) {
         return Err(CommandError::model(format!(
             "{} is not downloaded, so there is nothing to delete.",
-            entry.name
+            entry.name()
         )));
     }
 
@@ -522,7 +522,7 @@ pub async fn delete_speech_model(
     if in_use {
         // Unload the engine slot that serves this model so its files are not
         // held open by a live provider.
-        unload_speech_slot_for(&state, entry);
+        unload_speech_slot_for(&state, &entry);
         let mut settings = state.settings();
         settings.selected_speech_model = crate::commands::default_speech_model_id().into();
         state.replace_settings(settings)?;
@@ -546,7 +546,7 @@ pub async fn delete_speech_model(
 /// engine, so deleting the model's files never fights a live provider.
 fn unload_speech_slot_for(state: &AppState, entry: &teletype_speech::catalog::SpeechModel) {
     use teletype_speech::catalog::Engine;
-    match entry.engine {
+    match entry.engine() {
         Engine::ParakeetCoreml
         | Engine::SherpaParakeet
         | Engine::Qwen3Asr
@@ -555,6 +555,7 @@ fn unload_speech_slot_for(state: &AppState, entry: &teletype_speech::catalog::Sp
         Engine::ParakeetCpp => state.parakeet_cpp.unload(),
         Engine::Parakeet => state.parakeet.unload(),
         Engine::Whisper => state.speech.unload(),
+        Engine::Onnx => unreachable!("Onnx decider is not a dictation engine"),
     }
 }
 
@@ -1221,13 +1222,13 @@ fn speech_model_installed(
     fluid_available: bool,
 ) -> bool {
     use teletype_speech::catalog::Engine;
-    match entry.engine {
+    match entry.engine() {
         Engine::ParakeetCoreml => fluid_available,
         // OS-managed assets: "installed" means the bridge is linked and the
         // OS reports the default locale as installed (the research doc warns
         // `status(forModules:)` lies, so the installed list is the truth).
         Engine::AppleSpeech => {
-            let module = if entry.id == "apple-dictation-transcriber" {
+            let module = if entry.id() == "apple-dictation-transcriber" {
                 teletype_apple::AppleModule::Dictation
             } else {
                 teletype_apple::AppleModule::Transcriber
@@ -1246,20 +1247,19 @@ fn speech_model_installed(
             // A llama-server started with only one of the pair fails to load,
             // so the row is downloaded only when both GGUFs are on disk.
             let dir = entry.provider_path(models_dir);
-            teletype_speech::catalog::QWEN3_ASR_ARTIFACTS
-                .iter()
-                .all(|a| {
-                    dir.join(a.file)
-                        .metadata()
-                        .map(|m| m.is_file() && m.len() > 0)
-                        .unwrap_or(false)
-                })
+            entry.artifacts().iter().all(|a| {
+                dir.join(&a.file)
+                    .metadata()
+                    .map(|m| m.is_file() && m.len() > 0)
+                    .unwrap_or(false)
+            })
         }
         Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp | Engine::TranscribeCpp => entry
             .provider_path(models_dir)
             .metadata()
             .map(|m| m.is_file() && m.len() > 0)
             .unwrap_or(false),
+        Engine::Onnx => unreachable!("Onnx decider is not a dictation engine"),
     }
 }
 
@@ -1297,45 +1297,42 @@ fn speech_model_list(
     let recommended =
         teletype_speech::catalog::recommended_speech_model_id(platform, language, fluid_available);
     debug_assert!(
-        teletype_speech::catalog::find(recommended).is_some(),
+        teletype_speech::catalog::find(&recommended).is_some(),
         "the recommendation must be a catalog entry"
     );
 
-    let status = |m: &'static teletype_speech::catalog::SpeechModel| SpeechModelStatus {
-        id: m.id.into(),
-        name: m.name.into(),
-        engine: format!("{:?}", m.engine).to_lowercase(),
-        engine_label: m.engine.label().into(),
-        platform_label: m.engine.platform_label().into(),
-        size_mb: m.size_mb,
-        description: m.description.into(),
-        recommended: m.id == recommended,
-        english_only: m.english_only,
+    let status = |m: &teletype_speech::catalog::SpeechModel| SpeechModelStatus {
+        id: m.id().into(),
+        name: m.name().into(),
+        engine: format!("{:?}", m.engine()).to_lowercase(),
+        engine_label: m.engine().label().into(),
+        platform_label: m.engine().platform_label().into(),
+        size_mb: m.size_mb(),
+        description: m.description().into(),
+        recommended: m.id() == recommended,
+        english_only: m.english_only(),
         downloaded: speech_model_installed(m, models_dir, fluid_available),
-        selected: selected_id == m.id,
-        speed: m.speed,
-        accuracy: m.accuracy,
-        min_ram_gb: m.min_ram_gb,
+        selected: selected_id == m.id(),
+        speed: m.speed(),
+        accuracy: m.accuracy(),
+        min_ram_gb: m.min_ram_gb(),
         language_label: m.language_label(),
         languages: m
-            .languages
+            .languages()
             .map(|l| l.iter().map(|s| s.to_string()).collect()),
         purposes: m
-            .purposes
+            .purposes()
             .iter()
             .map(|p| SpeechPurposeStatus {
-                label: p.label.into(),
-                basis: match p.basis {
-                    teletype_speech::catalog::PurposeBasis::Measured => "measured".into(),
-                    teletype_speech::catalog::PurposeBasis::Inferred => "inferred".into(),
-                },
-                evidence: p.evidence.map(String::from),
+                label: p.label.clone(),
+                basis: p.basis.clone(),
+                evidence: p.evidence.clone(),
             })
             .collect(),
     };
 
     if !shortlist {
-        return teletype_speech::catalog::CATALOG
+        return teletype_speech::catalog::catalog()
             .iter()
             .filter(|m| m.offered_on(platform, fluid_available))
             .map(status)
@@ -1346,11 +1343,13 @@ fn speech_model_list(
     let mut rows: Vec<SpeechModelStatus> = ids
         .iter()
         .filter_map(|id| teletype_speech::catalog::find(id))
-        .map(status)
+        .map(|m| status(&m))
         .collect();
     if let Some(entry) = teletype_speech::catalog::find(selected_id) {
-        if entry.offered_on(platform, fluid_available) && !ids.contains(&entry.id) {
-            rows.push(status(entry));
+        if entry.offered_on(platform, fluid_available)
+            && !ids.iter().any(|i| i.as_str() == entry.id())
+        {
+            rows.push(status(&entry));
         }
     }
     rows
@@ -1509,16 +1508,16 @@ fn speech_languages_static() -> Vec<SpeechLanguage> {
 pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> CommandResult<()> {
     let entry = teletype_speech::catalog::find(&id)
         .ok_or_else(|| CommandError::model(format!("Unknown speech model '{id}'")))?;
-    if entry.auxiliary {
+    if entry.auxiliary() {
         return Err(CommandError::user(format!(
             "'{}' is a vocabulary spotter, not a dictation model.",
-            entry.name
+            entry.name()
         )));
     }
     if !entry.available_on(teletype_speech::catalog::host_platform()) {
         return Err(CommandError::model(format!(
             "'{}' cannot run on this computer.",
-            entry.name
+            entry.name()
         )));
     }
     // F-12: refuse to select a model whose bytes are not installed. The
@@ -1527,10 +1526,10 @@ pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> Comm
     // otherwise press the hotkey and get a "not downloaded" pill after
     // speaking. The error names the model and points at the download.
     let fluid_available = teletype_fluid::bridge_built();
-    if !speech_model_installed(entry, &state.models_dir, fluid_available) {
+    if !speech_model_installed(&entry, &state.models_dir, fluid_available) {
         return Err(CommandError::user(format!(
             "'{}' is not downloaded. Download it first.",
-            entry.name
+            entry.name()
         )));
     }
     let mut settings = state.settings();
@@ -1572,7 +1571,7 @@ struct SpeechFileSpec {
     dest: std::path::PathBuf,
     /// The publisher's SHA-256 when the catalog pins this file. Authoritative:
     /// a file already on disk that matches is not fetched again.
-    sha256: Option<&'static str>,
+    sha256: Option<String>,
     /// Published size in bytes: the progress denominator, and the completeness
     /// bound when there is no pin (`size_mb` is the publisher's rounded figure).
     bytes: u64,
@@ -1582,7 +1581,7 @@ struct SpeechFileSpec {
 /// a retry after a cancelled multi-file download does not re-fetch 300 MB that
 /// is already verified. Unpinned rows always re-download.
 fn speech_file_already_installed(spec: &SpeechFileSpec) -> bool {
-    let Some(want) = spec.sha256 else {
+    let Some(want) = spec.sha256.as_ref() else {
         return false;
     };
     let exact_size = spec
@@ -1590,7 +1589,7 @@ fn speech_file_already_installed(spec: &SpeechFileSpec) -> bool {
         .metadata()
         .map(|m| m.is_file() && m.len() == spec.bytes)
         .unwrap_or(false);
-    exact_size && sha256_file(&spec.dest).is_ok_and(|got| got.eq_ignore_ascii_case(want))
+    exact_size && sha256_file(&spec.dest).is_ok_and(|got| got.eq_ignore_ascii_case(want.as_str()))
 }
 
 #[tauri::command]
@@ -1605,12 +1604,12 @@ pub async fn download_speech_model(
     // Core ML: the FluidAudio bridge owns the checkpoint layout and downloads
     // it on first load, so there is nothing for this command to fetch. Its
     // "downloaded" state is the bridge's presence (see `speech_model_list`).
-    if entry.engine == teletype_speech::catalog::Engine::ParakeetCoreml {
+    if entry.engine() == teletype_speech::catalog::Engine::ParakeetCoreml {
         if !fluid_available {
             return Err(CommandError::model(format!(
                 "{} runs on the Neural Engine and needs the FluidAudio bridge, \
                  which this build does not include.",
-                entry.name
+                entry.name()
             )));
         }
         return Ok(entry
@@ -1621,12 +1620,12 @@ pub async fn download_speech_model(
     // Apple speech: the OS owns the assets (system storage), so there is
     // nothing for this command to fetch. "Downloaded" means the locale assets
     // are installed, which `speech_model_installed` reports.
-    if entry.engine == teletype_speech::catalog::Engine::AppleSpeech {
+    if entry.engine() == teletype_speech::catalog::Engine::AppleSpeech {
         if !teletype_apple::bridge_built() {
             return Err(CommandError::model(format!(
                 "{} runs on Apple's on-device speech and needs the TeletypeApple \
                  bridge, which this build does not include.",
-                entry.name
+                entry.name()
             )));
         }
         return Ok(entry
@@ -1634,7 +1633,7 @@ pub async fn download_speech_model(
             .to_string_lossy()
             .to_string());
     }
-    if speech_model_installed(entry, &state.models_dir, fluid_available) {
+    if speech_model_installed(&entry, &state.models_dir, fluid_available) {
         return Ok(entry
             .install_path(&state.models_dir)
             .to_string_lossy()
@@ -1645,46 +1644,45 @@ pub async fn download_speech_model(
     // audio projector must sit in one directory, and llama.cpp refuses to load
     // with only one of the pair, so both are fetched and both are
     // checksum-verified before the row counts as installed.
-    let files: Vec<SpeechFileSpec> = if entry.engine == teletype_speech::catalog::Engine::Qwen3Asr {
-        let base = entry.base_url.ok_or_else(|| {
+    let files: Vec<SpeechFileSpec> = if entry.engine() == teletype_speech::catalog::Engine::Qwen3Asr {
+        let base = entry.base_url().ok_or_else(|| {
             CommandError::model(format!(
                 "Catalog error: the '{}' row needs a base_url to fetch its two files.",
-                entry.id
+                entry.id()
             ))
         })?;
         let dir = entry.provider_path(&state.models_dir);
-        teletype_speech::catalog::QWEN3_ASR_ARTIFACTS
-            .iter()
-            .map(|a| SpeechFileSpec {
-                name: a.file.to_string(),
-                url: format!("{base}/{}", a.file),
-                dest: dir.join(a.file),
-                sha256: Some(a.sha256),
-                bytes: a.bytes,
-            })
-            .collect()
+        entry.artifacts().iter().map(|a| SpeechFileSpec {
+            name: a.file.to_string(),
+            url: format!("{base}/{}", a.file),
+            dest: dir.join(&a.file),
+            sha256: a.sha256.clone(),
+            bytes: a.bytes,
+        })
+        .collect()
     } else {
-        let dest = match entry.engine {
+        let dest = match entry.engine() {
             teletype_speech::catalog::Engine::SherpaParakeet => {
-                state.models_dir.join("sherpa").join(entry.file)
+                state.models_dir.join("sherpa").join(entry.file())
             }
             _ => entry.install_path(&state.models_dir),
         };
         vec![SpeechFileSpec {
-            name: entry.file.to_string(),
+            name: entry.file().to_string(),
             url: entry.url(),
             dest,
-            sha256: entry.sha256,
-            bytes: (entry.size_mb as u64).saturating_mul(1024 * 1024),
+            sha256: entry.sha256().map(|s| s.to_string()),
+            bytes: (entry.size_mb() as u64).saturating_mul(1024 * 1024),
         }]
     };
 
-    let entry_name = entry.name.to_string();
+    let entry_name = entry.name().to_string();
+    let entry_for_closure = entry.clone();
 
     // Pre-flight: fail fast on a full disk before any bytes are transferred.
     // `check_disk_space` already applies its 2.2x headroom factor internally,
     // so pass the raw size.
-    let needed = (entry.size_mb as u64).saturating_mul(1024 * 1024);
+    let needed = (entry.size_mb() as u64).saturating_mul(1024 * 1024);
     if needed > 0 {
         teletype_inference::download::check_disk_space(&state.models_dir, needed)
             .map_err(|e| format!("{entry_name}: {e}"))?;
@@ -1881,9 +1879,9 @@ pub async fn download_speech_model(
                 );
 
                 let pinned = spec.sha256.is_some();
-                if let Some(want_sha) = spec.sha256 {
+                if let Some(want_sha) = spec.sha256.as_ref() {
                     let actual = sha256_file(tmp)?;
-                    if !actual.eq_ignore_ascii_case(want_sha) {
+                    if !actual.eq_ignore_ascii_case(want_sha.as_str()) {
                         let _ = std::fs::remove_file(tmp);
                         return Err(format!(
                             "{entry_name} failed its checksum. The download was discarded; \
@@ -1905,12 +1903,12 @@ pub async fn download_speech_model(
                     ));
                 }
 
-                if entry.engine == teletype_speech::catalog::Engine::SherpaParakeet {
+                if entry_for_closure.engine() == teletype_speech::catalog::Engine::SherpaParakeet {
                     // The archive extracts to `<models>/sherpa/<archive stem>`,
                     // which is the directory the provider loads. Keep the archive
                     // only long enough to unpack it: sherpa releases are ~640 MB
                     // and the extracted files are what the app reads.
-                    let extract_to = entry.provider_path(&state_dir);
+                    let extract_to = entry_for_closure.provider_path(&state_dir);
                     let parent = extract_to.parent().ok_or("invalid sherpa model path")?;
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                     let archive_file = std::fs::File::open(tmp).map_err(|e| e.to_string())?;
@@ -2034,9 +2032,11 @@ fn speech_model_ready(
     fluid_available: bool,
 ) -> SpeechModelReady {
     let entry = teletype_speech::catalog::find(id);
-    let ready = entry.is_some_and(|e| speech_model_installed(e, models_dir, fluid_available));
-    let exists = entry.is_some_and(|e| {
-        match e.engine {
+    let ready = entry
+        .as_ref()
+        .is_some_and(|e| speech_model_installed(e, models_dir, fluid_available));
+    let exists = entry.as_ref().is_some_and(|e| {
+        match e.engine() {
             teletype_speech::catalog::Engine::ParakeetCoreml => fluid_available,
             // The assets live in system storage, not under models_dir: the
             // bridge being linked is what "present" means for this engine.
@@ -2044,7 +2044,7 @@ fn speech_model_ready(
             _ => e.provider_path(models_dir).exists(),
         }
     });
-    let name = entry.map(|e| e.name).unwrap_or("Your model");
+    let name = entry.map(|e| e.name().to_string()).unwrap_or_else(|| "Your model".to_string());
     let message = if ready {
         format!("{name} is ready. Hold your hotkey and speak.")
     } else if exists {
@@ -2138,7 +2138,10 @@ fn speech_runtime(
     loaded: bool,
 ) -> ComponentRuntime {
     let entry = teletype_speech::catalog::find(selected_id);
-    let name = entry.map(|e| e.name).unwrap_or("Dictation model");
+    let name = entry
+        .as_ref()
+        .map(|e| e.name().to_string())
+        .unwrap_or_else(|| "Dictation model".to_string());
     let id = selected_id.to_string();
 
     if selected_id.is_empty() {
@@ -2155,7 +2158,7 @@ fn speech_runtime(
     // from an interrupted download, or a sherpa archive that was never
     // extracted, reads as present and is not usable.
     let usable = match entry {
-        Some(e) => speech_model_installed(e, models_dir, fluid_available),
+        Some(e) => speech_model_installed(&e, models_dir, fluid_available),
         // Unknown id: fall back to the loader's own naming so this agrees
         // with `resolve_speech_model`, which would look for `<id>.bin`.
         None => models_dir
@@ -2168,7 +2171,7 @@ fn speech_runtime(
     if !usable {
         return ComponentRuntime::new(
             "missing",
-            name,
+            &name,
             &id,
             format!("{name} is selected but not downloaded yet."),
             true,
@@ -2177,7 +2180,7 @@ fn speech_runtime(
     if loaded {
         return ComponentRuntime::new(
             "loaded",
-            name,
+            &name,
             &id,
             format!("{name} is loaded and ready. {engine_label}"),
             false,
@@ -2188,7 +2191,7 @@ fn speech_runtime(
     // happens on the first dictation after an idle unload (BUG-003).
     ComponentRuntime::new(
         "ready",
-        name,
+        &name,
         &id,
         format!("{name} is downloaded and loads on your first dictation."),
         false,
@@ -3228,26 +3231,26 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         let ggml = find("parakeet-tdt-v3").unwrap();
-        assert!(!speech_model_installed(ggml, &dir, true));
+        assert!(!speech_model_installed(&ggml, &dir, true));
         std::fs::write(ggml.provider_path(&dir), b"x").unwrap();
-        assert!(speech_model_installed(ggml, &dir, true));
+        assert!(speech_model_installed(&ggml, &dir, true));
 
         let sherpa = find("sherpa-parakeet-v3-int8").unwrap();
         let sherpa_dir = sherpa.provider_path(&dir);
         std::fs::create_dir_all(&sherpa_dir).unwrap();
         // The archive itself is not the model.
-        std::fs::write(dir.join("sherpa").join(sherpa.file), b"archive").unwrap();
-        assert!(!speech_model_installed(sherpa, &dir, true));
+        std::fs::write(dir.join("sherpa").join(sherpa.file()), b"archive").unwrap();
+        assert!(!speech_model_installed(&sherpa, &dir, true));
         for file in teletype_speech::sherpa::MODEL_FILES {
             std::fs::write(sherpa_dir.join(file), b"x").unwrap();
         }
-        assert!(speech_model_installed(sherpa, &dir, true));
+        assert!(speech_model_installed(&sherpa, &dir, true));
 
         // Core ML is downloaded by the bridge on first load, so the bridge's
         // presence is what makes it usable.
         let fluid = find("parakeet-ultra-coreml").unwrap();
-        assert!(!speech_model_installed(fluid, &dir, false));
-        assert!(speech_model_installed(fluid, &dir, true));
+        assert!(!speech_model_installed(&fluid, &dir, false));
+        assert!(speech_model_installed(&fluid, &dir, true));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -3256,7 +3259,8 @@ mod tests {
     fn speech_model_ready_reports_absent_empty_and_present() {
         // Use a real catalog id so the file name is known.
         let id = "parakeet-tdt-v3";
-        let file = teletype_speech::catalog::find(id).unwrap().file;
+        let entry = teletype_speech::catalog::find(id).unwrap();
+        let file = entry.file();
         let dir = std::env::temp_dir().join(format!(
             "teletype-speech-ready-test-{}-{}",
             std::process::id(),
@@ -3298,8 +3302,9 @@ mod tests {
         let dir = std::env::temp_dir().join("teletype-speech-runtime");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let id = teletype_speech::catalog::CATALOG[0].id;
-        let file = dir.join(teletype_speech::catalog::CATALOG[0].file);
+        let first = teletype_speech::catalog::catalog().first().cloned().unwrap();
+        let id = first.id().to_string();
+        let file = dir.join(first.file());
 
         // Nothing selected.
         let r = speech_runtime("", &dir, "Whisper engine", false, false);
@@ -3308,7 +3313,7 @@ mod tests {
 
         // Selected but absent from disk. This is the state the old Home
         // banner got wrong: another model existed, so it said nothing.
-        let r = speech_runtime(id, &dir, "Whisper engine", false, false);
+        let r = speech_runtime(&id, &dir, "Whisper engine", false, false);
         assert_eq!(r.state, "missing");
         assert!(r.blocking, "a missing model must block: {r:?}");
         assert!(
@@ -3318,13 +3323,13 @@ mod tests {
 
         // Present but empty: exists() would call this ready.
         std::fs::write(&file, b"").unwrap();
-        let r = speech_runtime(id, &dir, "Whisper engine", false, false);
+        let r = speech_runtime(&id, &dir, "Whisper engine", false, false);
         assert_eq!(r.state, "missing", "0-byte is not usable: {r:?}");
 
         // On disk, not loaded. Must NOT be blocking: dictation loads it on
         // first use, and this is the normal state after an idle unload.
         std::fs::write(&file, b"model-bytes").unwrap();
-        let r = speech_runtime(id, &dir, "Whisper engine", true, false);
+        let r = speech_runtime(&id, &dir, "Whisper engine", true, false);
         assert_eq!(r.state, "ready");
         assert!(
             !r.blocking,
@@ -3333,7 +3338,7 @@ mod tests {
         assert!(r.detail.contains("first dictation"), "{r:?}");
 
         // Loaded.
-        let r = speech_runtime(id, &dir, "Parakeet engine", true, true);
+        let r = speech_runtime(&id, &dir, "Parakeet engine", true, true);
         assert_eq!(r.state, "loaded");
         assert!(!r.blocking, "{r:?}");
         assert!(
@@ -3352,10 +3357,11 @@ mod tests {
         let dir = std::env::temp_dir().join("teletype-speech-runtime-loaded");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let id = teletype_speech::catalog::CATALOG[0].id;
+        let first = teletype_speech::catalog::catalog().first().cloned().unwrap();
+        let id = first.id().to_string();
 
-        std::fs::write(dir.join(teletype_speech::catalog::CATALOG[0].file), b"").unwrap();
-        let r = speech_runtime(id, &dir, "Whisper engine", true, true);
+        std::fs::write(dir.join(first.file()), b"").unwrap();
+        let r = speech_runtime(&id, &dir, "Whisper engine", true, true);
         assert_ne!(
             r.state, "loaded",
             "reported loaded with an empty file: {r:?}"
@@ -3497,23 +3503,23 @@ mod tests {
 
     #[test]
     fn qwen3_asr_is_installed_only_when_both_ggufs_are_present() {
-        use teletype_speech::catalog::QWEN3_ASR_ARTIFACTS as Arts;
         let dir = tempfile::tempdir().unwrap();
         let entry =
             teletype_speech::catalog::find("qwen3-asr").expect("qwen3-asr is in the catalog");
+        let arts = entry.artifacts().to_vec();
         let d = entry.provider_path(dir.path());
-        assert!(!speech_model_installed(entry, dir.path(), true));
+        assert!(!speech_model_installed(&entry, dir.path(), true));
         std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join(Arts[0].file), b"gguf").unwrap();
+        std::fs::write(d.join(&arts[0].file), b"gguf").unwrap();
         assert!(
-            !speech_model_installed(entry, dir.path(), true),
+            !speech_model_installed(&entry, dir.path(), true),
             "the audio projector is still missing"
         );
-        std::fs::write(d.join(Arts[1].file), b"mmproj").unwrap();
-        assert!(speech_model_installed(entry, dir.path(), true));
-        std::fs::write(d.join(Arts[1].file), b"").unwrap();
+        std::fs::write(d.join(&arts[1].file), b"mmproj").unwrap();
+        assert!(speech_model_installed(&entry, dir.path(), true));
+        std::fs::write(d.join(&arts[1].file), b"").unwrap();
         assert!(
-            !speech_model_installed(entry, dir.path(), true),
+            !speech_model_installed(&entry, dir.path(), true),
             "a zero-byte file is not a model"
         );
     }
@@ -3532,48 +3538,53 @@ mod tests {
     #[test]
     #[ignore = "queries huggingface.co; run explicitly"]
     fn speech_pins_hold_against_hugging_face() {
-        use teletype_speech::catalog::PINNED_SPEECH_ARTIFACTS as Pinned;
-        use teletype_speech::catalog::QWEN3_ASR_ARTIFACTS as QwenArts;
+        use teletype_speech::catalog::find;
 
-        // (repo, file, bytes, sha256) for every pinned artifact.
-        let all: &[(&str, &str, u64, &str)] = &[
-            (
-                "ggml-org/Qwen3-ASR-1.7B-GGUF",
-                QwenArts[0].file,
-                QwenArts[0].bytes,
-                QwenArts[0].sha256,
-            ),
-            (
-                "ggml-org/Qwen3-ASR-1.7B-GGUF",
-                QwenArts[1].file,
-                QwenArts[1].bytes,
-                QwenArts[1].sha256,
-            ),
-            (
-                "handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf",
-                Pinned[0].file,
-                Pinned[0].bytes,
-                Pinned[0].sha256,
-            ),
-            (
-                "handy-computer/moonshine-streaming-medium-gguf",
-                Pinned[1].file,
-                Pinned[1].bytes,
-                Pinned[1].sha256,
-            ),
-            (
-                "handy-computer/granite-speech-5.0-470m-turboctc-gguf",
-                Pinned[2].file,
-                Pinned[2].bytes,
-                Pinned[2].sha256,
-            ),
-        ];
+        // (repo, file, bytes, sha256) for every pinned artifact, read from
+        // the catalog entries.
+        let mut all: Vec<(String, String, u64, String)> = Vec::new();
+
+        // Qwen3-ASR: two GGUFs in ggml-org/Qwen3-ASR-1.7B-GGUF.
+        if let Some(qwen) = find("qwen3-asr") {
+            for a in qwen.artifacts() {
+                if let Some(sha) = &a.sha256 {
+                    all.push((
+                        "ggml-org/Qwen3-ASR-1.7B-GGUF".to_string(),
+                        a.file.clone(),
+                        a.bytes,
+                        sha.clone(),
+                    ));
+                }
+            }
+        }
+
+        // Streaming ASR rows: one GGUF each in handy-computer repos.
+        for id in [
+            "nemotron-3.5-asr-streaming-q4",
+            "moonshine-streaming-medium-q8",
+            "granite-speech-470m-q4",
+        ] {
+            if let Some(m) = find(id) {
+                let base = m.base_url().unwrap_or("");
+                let repo = base
+                    .strip_prefix("https://huggingface.co/")
+                    .unwrap_or(base)
+                    .split("/resolve/")
+                    .next()
+                    .unwrap_or(base);
+                for a in m.artifacts() {
+                    if let Some(sha) = &a.sha256 {
+                        all.push((repo.to_string(), a.file.clone(), a.bytes, sha.clone()));
+                    }
+                }
+            }
+        }
 
         // Deduplicate repos so we only hit the tree API once per repo.
-        let mut repos: Vec<&str> = Vec::new();
-        for (repo, _, _, _) in all {
+        let mut repos: Vec<String> = Vec::new();
+        for (repo, _, _, _) in &all {
             if !repos.contains(repo) {
-                repos.push(repo);
+                repos.push(repo.clone());
             }
         }
 
@@ -3585,10 +3596,10 @@ mod tests {
                 .expect("HF tree API body");
             let tree: serde_json::Value = serde_json::from_str(&body).expect("HF tree JSON");
             let items = tree.as_array().expect("HF tree is an array");
-            for (r, file, bytes, sha) in all.iter().filter(|(r, _, _, _)| *r == *repo) {
+            for (r, file, bytes, sha) in all.iter().filter(|(r, _, _, _)| r == repo) {
                 let entry = items
                     .iter()
-                    .find(|e| e["path"].as_str() == Some(*file))
+                    .find(|e| e["path"].as_str() == Some(file.as_str()))
                     .unwrap_or_else(|| panic!("{file} is no longer in {r}"));
                 assert_eq!(
                     entry["size"].as_u64(),
@@ -3615,7 +3626,7 @@ mod tests {
             name: "a.gguf".into(),
             url: String::new(),
             dest: path.clone(),
-            sha256: Some(sha),
+            sha256: Some(sha.to_string()),
             bytes,
         };
         assert!(
@@ -3635,7 +3646,7 @@ mod tests {
                 name: "a.gguf".into(),
                 url: String::new(),
                 dest: dir.path().join("absent.gguf"),
-                sha256: Some(digest),
+                sha256: Some(digest.to_string()),
                 bytes: 4,
             }),
             "no file on disk is never already installed"
@@ -3650,7 +3661,7 @@ mod tests {
             .expect("large-v3-turbo-q5 is in the catalog");
         let path = entry.install_path(dir.path());
         std::fs::write(&path, b"ggml").unwrap();
-        remove_speech_model_files(dir.path(), entry).unwrap();
+        remove_speech_model_files(dir.path(), &entry).unwrap();
         assert!(!path.exists());
     }
 
@@ -3659,7 +3670,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let entry = teletype_speech::catalog::find("large-v3-turbo-q5")
             .expect("large-v3-turbo-q5 is in the catalog");
-        assert!(remove_speech_model_files(dir.path(), entry).is_err());
+        assert!(remove_speech_model_files(dir.path(), &entry).is_err());
     }
 
     #[test]

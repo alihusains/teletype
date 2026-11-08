@@ -1,380 +1,131 @@
 //! Speech (dictation) model catalog.
 //!
-//! Five local engines:
-//! - Parakeet TDT v3 (NVIDIA, via whisper.cpp's parakeet engine) - the
-//!   state-of-the-art ggml build, the cross-platform default.
-//! - Parakeet Core ML (FluidAudio) - the Neural Engine build on macOS 14+
-//!   Apple Silicon, including Parakeet Ultra.
-//! - sherpa-onnx NeMo Parakeet - CPU int8 builds, the Windows default.
-//! - Parakeet.cpp (mudler/parakeet.cpp, C++/ggml) - GGUF-native loader that
-//!   handles mixed-quant models (e.g. Fluid Speech Mini).
-//! - Whisper GGML files published by whisper.cpp on Hugging Face - the
-//!   fallback for languages Parakeet does not cover.
-//!
-//! The same lineup SpeakType ships.
+//! The rows live in `teletype-catalog`'s bundled `speech.json` (Phase A);
+//! this module wraps each parsed [`SpeechEntry`] in a [`SpeechModel`] that
+//! carries the engine predicates and path/url helpers the app and the eval
+//! harness read.
 
-use serde::Serialize;
+use std::path::{Path, PathBuf};
 
-const WHISPER_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
-const PARAKEET_BASE_URL: &str = "https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main";
-const FLUID_REPO_BASE_URL: &str = "https://huggingface.co";
-const SHERPA_MODELS_BASE_URL: &str =
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models";
+use teletype_catalog::schema::{Artifact, Purpose, SpeechEntry};
+use teletype_catalog::Catalog;
 
-/// Which local engine loads a model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Engine {
-    Whisper,
-    Parakeet,
-    /// Parakeet via FluidAudio Core ML on the Neural Engine (macOS 14+,
-    /// Apple Silicon only).
-    ParakeetCoreml,
-    /// NeMo Parakeet via sherpa-onnx (CPU; the Windows default).
-    SherpaParakeet,
-    /// Parakeet.cpp (mudler/parakeet.cpp, C++/ggml) - GGUF-native loader
-    /// that handles mixed-quant models (e.g. Fluid Speech Mini).
-    ParakeetCpp,
-    /// Qwen3-ASR via a child `llama-server` process (OpenAI-compatible
-    /// `/v1/audio/transcriptions`). Two-file artifact: main GGUF + mmproj.
-    Qwen3Asr,
-    /// Apple on-device speech (SpeechAnalyzer: SpeechTranscriber and
-    /// DictationTranscriber), macOS 26+ only. The models are OS-managed
-    /// system storage: no download, no file on disk.
-    AppleSpeech,
-    /// transcribe.cpp (handy-computer, C++/ggml), the streaming GGUF
-    /// family: Nemotron 3.5 ASR streaming, Moonshine streaming, Granite
-    /// Speech 5.0 TurboCTC. The native library is compiled from the
-    /// published `transcribe-cpp` Rust crate (0.4.x, MIT), which builds
-    /// transcribe.cpp from its vendored source via CMake.
-    TranscribeCpp,
-}
-
-impl Engine {
-    /// Whether this engine ships on `platform`.
-    ///
-    /// This must mirror the target-gated dependencies in `Cargo.toml`:
-    /// `whisper-rs`, `parakeet-sys`, and `parakeet-cpp-sys` are macOS-only;
-    /// `sherpa-onnx` is unconditional; the Core ML bridge needs the Neural
-    /// Engine (Apple Silicon, macOS 14+).
-    pub fn available_on(self, platform: Platform) -> bool {
-        match self {
-            Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => platform.is_macos(),
-            Engine::ParakeetCoreml => {
-                matches!(platform, Platform::MacosAppleSilicon { major } if major >= 14)
-            }
-            Engine::SherpaParakeet => true,
-            // SpeechTranscriber is macOS 26.0+ and hardware-gated behind
-            // `SpeechTranscriber.isAvailable` at runtime; the platform half
-            // is Apple Silicon 26+. Intel behavior is unmeasured, so it stays
-            // false until a measurement says otherwise.
-            Engine::AppleSpeech => {
-                matches!(platform, Platform::MacosAppleSilicon { major } if major >= 26)
-            }
-            // Served by the bundled llama-server over loopback HTTP: loading
-            // this model needs the `--mmproj` audio projector and the
-            // /v1/audio/transcriptions route. The macOS build is confirmed to
-            // carry both (scripts/build-llama-server.sh, which configures
-            // `-DLLAMA_BUILD_TOOLS=ON`, and the mtmd audio tower is present in
-            // the resulting binary). The Windows release job clones the same
-            // llama.cpp commit but omits that flag, so its server has not been
-            // shown to accept `--mmproj`. Offering the row on an unverified
-            // host is the dead download this predicate exists to prevent;
-            // widen it once a Windows bundle proves it loads this model.
-            Engine::Qwen3Asr => platform.is_macos(),
-            // Wired macOS-only in this build, exactly like whisper-rs
-            // (`whisper-rs-sys` cannot be built for Windows from a
-            // non-Windows host). The upstream `-sys` crate does expose a
-            // `vulkan` feature, but nothing here enables it and no Windows
-            // build or measurement exists, so the rows are not offered on
-            // Windows or Linux in this release.
-            Engine::TranscribeCpp => platform.is_macos(),
-        }
-    }
-
-    /// Whether this build actually compiled the engine, given the host's
-    /// engine-capability facts.
-    ///
-    /// The platform check in [`Self::available_on`] only says the engine's
-    /// dependency *ships* on the platform; this says the build in front of us
-    /// can actually load it. Only parakeet.cpp needs a fact beyond the
-    /// platform: the dylib is compiled by a build script, so a build without
-    /// it must not offer its models. Core ML is deliberately NOT duplicated
-    /// here - the FluidAudio bridge keeps its existing `fluid_available`
-    /// argument at the [`SpeechModel`] level.
-    pub fn built_on(self, platform: Platform, parakeet_cpp_available: bool) -> bool {
-        match self {
-            Engine::ParakeetCpp => platform.is_macos() && parakeet_cpp_available,
-            // The transcribe.cpp library is compiled from source by the
-            // `transcribe-cpp` crate's build script, so a build without it
-            // (or with a cleaned target dir leaving a stale path) must not
-            // offer its rows. Mirrors the parakeet.cpp gate.
-            Engine::TranscribeCpp => platform.is_macos() && crate::transcribe::engine_available(),
-            _ => true,
-        }
-    }
-
-    /// Short display name for the engine, shown by the model list UI.
-    pub fn label(self) -> &'static str {
-        match self {
-            Engine::Whisper => "whisper.cpp",
-            Engine::Parakeet => "parakeet (ggml)",
-            Engine::ParakeetCoreml => "Neural Engine (Core ML)",
-            Engine::SherpaParakeet => "sherpa-onnx (CPU)",
-            Engine::ParakeetCpp => "parakeet.cpp",
-            Engine::Qwen3Asr => "Qwen3-ASR (llama.cpp)",
-            Engine::AppleSpeech => "Apple speech (on-device)",
-            Engine::TranscribeCpp => "transcribe.cpp",
-        }
-    }
-
-    /// Human-readable platform requirement, shown next to the engine label.
-    pub fn platform_label(self) -> &'static str {
-        match self {
-            Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp => "macOS only",
-            Engine::ParakeetCoreml => "Apple Silicon, macOS 14+",
-            Engine::SherpaParakeet => "Windows, macOS, Linux",
-            Engine::Qwen3Asr => "macOS only (llama-server)",
-            Engine::AppleSpeech => "Apple Silicon, macOS 26+",
-            // The dependency is wired macOS-only in this build; the Windows
-            // release build re-enables it (Vulkan or CPU), so this label
-            // reports what this build ships, not the engine's full reach.
-            Engine::TranscribeCpp => "macOS only (transcribe.cpp)",
-        }
-    }
-}
-
-/// Languages Parakeet TDT v3 transcribes.
-const PARAKEET_V3_LANGUAGES: &[&str] = &[
-    "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv", "mt",
-    "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk",
-];
-
-/// Languages Qwen3-ASR transcribes.
-const QWEN3_ASR_LANGUAGES: &[&str] = &[
-    "ar", "bg", "cs", "da", "de", "el", "en", "es", "fi", "fr", "hr", "hi", "hu", "id", "it", "ja",
-    "ko", "ms", "nl", "no", "pl", "pt", "ro", "ru", "sk", "sv", "tr", "uk", "vi", "zh",
-];
-
-/// The 19 transcription-ready locales of Nemotron 3.5 ASR streaming 0.6B
-/// (model card tier table, read 2026-11-01; the broad-coverage 13 and the
-/// adaptation-ready 8 are not listed: they are not ready out of the box).
-const NEMOTRON35_READY_LANGUAGES: &[&str] = &[
-    "ar", "de", "en", "es", "fr", "hi", "it", "ja", "ko", "nl", "pt", "ru", "tr", "uk", "vi",
-];
-
-/// One file of a multi-file model artifact, with the exact published bytes
-/// and the publisher's SHA-256.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpeechArtifact {
-    pub file: &'static str,
-    pub bytes: u64,
-    pub sha256: &'static str,
-}
-
-/// The two GGUFs a Qwen3-ASR install needs, main model first.
-///
-/// llama.cpp cannot load the audio model without its projector, so the row
-/// counts as installed only when both files are present, and the installer
-/// verifies each against its pin before putting either in place. The digests
-/// are the sha256 LFS OIDs that `ggml-org/Qwen3-ASR-1.7B-GGUF` reports for the
-/// resolved bytes of the Q8_0 pair, cross-checked against a full download of
-/// both files on 2026-10-29.
-/// One single-file streaming ASR model pinned to an immutable revision.
-/// The table is checked offline by `pinned_speech_artifact_table_is_well_formed`
-/// and live by the ignored test in teletype-desktop that queries Hugging Face.
-pub struct PinnedSpeechArtifact {
-    pub model_id: &'static str,
-    pub file: &'static str,
-    pub bytes: u64,
-    pub sha256: &'static str,
-}
-pub const PINNED_SPEECH_ARTIFACTS: &[PinnedSpeechArtifact] = &[
-    PinnedSpeechArtifact {
-        model_id: "nemotron-3.5-asr-streaming-q4",
-        file: "nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf",
-        bytes: 495_831_520,
-        sha256: "41c99fa5fb6f3d35f68e79adc3e755eca2232a8d921178bd647b71194792b8fd",
-    },
-    PinnedSpeechArtifact {
-        model_id: "moonshine-streaming-medium-q8",
-        file: "moonshine-streaming-medium-Q8_0.gguf",
-        bytes: 295_793_568,
-        sha256: "f7c9564249b508f6012927ec4f9e536087da53a7047f858ca9975bea5f75299e",
-    },
-    PinnedSpeechArtifact {
-        model_id: "granite-speech-470m-q4",
-        file: "granite-speech-5.0-470m-turboctc-Q4_K_M.gguf",
-        bytes: 279_114_080,
-        sha256: "3f30525381d72246b7f99e49b6cb66b249cf1b990c6c3d0e031a7765735f513e",
-    },
-];
-
-pub const QWEN3_ASR_ARTIFACTS: &[SpeechArtifact] = &[
-    SpeechArtifact {
-        file: "Qwen3-ASR-1.7B-Q8_0.gguf",
-        bytes: 2_165_034_944,
-        sha256: "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57",
-    },
-    SpeechArtifact {
-        file: "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
-        bytes: 355_709_344,
-        sha256: "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d",
-    },
-];
-
-/// The main Qwen3-ASR GGUF, the file the row's `file` field names.
-pub fn qwen3_asr_main_file() -> &'static str {
-    QWEN3_ASR_ARTIFACTS[0].file
-}
-
-/// The mmproj (projector) GGUF that sits beside the main Qwen3-ASR GGUF in
-/// the same models directory.
-pub fn qwen3_asr_mmproj_file() -> &'static str {
-    QWEN3_ASR_ARTIFACTS[1].file
-}
-
-/// Why a speech row is worth choosing, shown as a chip beside the name.
-/// `measured` separates a role this repo has measured from one inferred
-/// from the model card or engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Purpose {
-    pub label: &'static str,
-    pub basis: PurposeBasis,
-    /// Eval file or report that proves a measured chip, relative to the repo
-    /// root. Required when `basis` is `Measured`; `None` for `Inferred`.
-    pub evidence: Option<&'static str>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum PurposeBasis {
-    Measured,
-    Inferred,
-}
-
-/// The chip vocabulary the UI may show. A label outside this list is a
-/// catalog bug, not a wording choice, so the test pins the set.
-#[cfg(test)]
-const PURPOSE_LABELS: &[&str] = &[
-    "Everyday dictation",
-    "Fastest",
-    "Most accurate",
-    "Multilingual",
-    "English only",
-    "Live streaming",
-    "Context-aware",
-    "Low memory",
-    "No download",
-    "Long recordings",
-    "Indian languages",
-    "Experimental",
-];
-
-impl Purpose {
-    const fn measured(label: &'static str, evidence: &'static str) -> Self {
-        Self {
-            label,
-            basis: PurposeBasis::Measured,
-            evidence: Some(evidence),
-        }
-    }
-
-    const fn inferred(label: &'static str) -> Self {
-        Self {
-            label,
-            basis: PurposeBasis::Inferred,
-            evidence: None,
-        }
-    }
-}
-
-/// The measured evidence for the 2026-10-28 ASR benchmark: it scores
-/// `parakeet-ultra-coreml` (lowest verbatim WER, 0.0489) and
-/// `large-v3-turbo-q5` (best Whisper build, 0.1212) against each other.
-const EVIDENCE_BENCH: &str = "evals/runs/bench-2026-10-28/SUMMARY.md";
-
-/// One downloadable speech model.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// One downloadable speech model: a parsed [`SpeechEntry`] plus the engine
+/// predicates and path/url helpers the consumers read.
+#[derive(Debug, Clone)]
 pub struct SpeechModel {
-    pub id: &'static str,
-    pub name: &'static str,
-    /// The model file name inside the models directory.
-    #[serde(skip)]
-    pub file: &'static str,
+    entry: SpeechEntry,
+}
+
+impl SpeechModel {
+    pub fn from_entry(entry: SpeechEntry) -> Self {
+        Self { entry }
+    }
+
+    /// The parsed entry (artifacts, languages, purposes, ...).
+    pub fn entry(&self) -> &SpeechEntry {
+        &self.entry
+    }
+
+    pub fn id(&self) -> &str {
+        &self.entry.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.entry.name
+    }
+
+    /// The model file name inside the models directory (the first artifact,
+    /// or the row id for rows with no files, like the Core ML and Apple rows).
+    pub fn file(&self) -> &str {
+        self.entry
+            .artifacts
+            .first()
+            .map(|a| a.file.as_str())
+            .unwrap_or(&self.entry.id)
+    }
+
     /// The engine that loads this file.
-    pub engine: Engine,
-    /// Approximate download size in MB. Used as a sanity bound on the
-    /// download: a transfer cut short is discarded rather than installed.
-    pub size_mb: u32,
-    /// Hex SHA-256 of the exact published artifact.
-    ///
-    /// Single-file entries pin the publisher's own checksum: the Hugging Face
-    /// LFS `lfs.oid` (which is the SHA-256 of the resolved bytes) or the
-    /// GitHub release asset digest. `download_speech_model` verifies it
-    /// before installing, so a truncated transfer or a repointed
-    /// `resolve/main` ref is rejected rather than loaded.
-    ///
-    /// `None` only for Core ML entries: those name a multi-file checkpoint
-    /// repo that the FluidAudio bridge fetches itself, so there is no single
-    /// artifact to hash. `every_single_file_model_pins_its_bytes` enforces
-    /// that no other entry is left unpinned.
-    #[serde(skip)]
-    pub sha256: Option<&'static str>,
-    /// English-only model.
-    pub english_only: bool,
+    pub fn engine(&self) -> Engine {
+        Engine::from_name(&self.entry.engine).unwrap_or(Engine::Whisper)
+    }
+
+    pub fn size_mb(&self) -> u32 {
+        self.entry.size_mb
+    }
+
+    /// Hex SHA-256 of the primary artifact, or `None` for multi-file repos
+    /// (Core ML), the two-file llama-server pair, and OS-managed rows.
+    pub fn sha256(&self) -> Option<&str> {
+        self.entry
+            .artifacts
+            .first()
+            .and_then(|a| a.sha256.as_deref())
+    }
+
+    pub fn english_only(&self) -> bool {
+        self.entry.english_only
+    }
+
     /// Static compile-time flag kept for the catalog's own tests and docs.
     ///
     /// This is NOT what the app recommends at runtime: the honest
     /// recommendation is [`recommended_speech_model_id`], which is computed
-    /// per host (platform, macOS version, language, and whether this build
-    /// links the FluidAudio Core ML bridge). `speech_model_list` sets the
-    /// runtime `recommended` row from that function, so a user on Windows or
-    /// on a bridge-less Mac is never pointed at a model they cannot load.
-    /// Do not read this field to decide what to default a user to.
-    pub recommended: bool,
+    /// per host. Do not read this field to decide what to default a user to.
+    pub fn recommended(&self) -> bool {
+        self.entry.recommended
+    }
+
     /// Companion model, not a dictation engine: the Core ML CTC spotter is
     /// downloaded by FluidAudio on demand for vocabulary boosting, so the
     /// model picker must not offer it as something that transcribes.
-    pub auxiliary: bool,
-    pub description: &'static str,
-    /// Languages the model can transcribe, or `None` for every Whisper language (99).
-    pub languages: Option<&'static [&'static str]>,
-    /// Relative speed score out of 10 (shown as a bar in the UI).
-    pub speed: f64,
-    /// Relative accuracy score out of 10 (shown as a bar in the UI).
-    pub accuracy: f64,
-    /// Minimum RAM in GB for comfortable use.
-    pub min_ram_gb: u32,
-    /// Optional download base URL override. `None` (the default) means the
-    /// engine's default base URL is used in `url()`.
-    pub base_url: Option<&'static str>,
-    /// What the row is good at, shown as chips beside the name.
-    /// Every row carries at least one; `every_speech_model_has_a_purpose`
-    /// keeps that true.
-    pub purposes: &'static [Purpose],
-}
+    pub fn auxiliary(&self) -> bool {
+        self.entry.auxiliary
+    }
 
-impl SpeechModel {
+    pub fn description(&self) -> &str {
+        &self.entry.description
+    }
+
+    /// Languages the model can transcribe, or `None` for every Whisper
+    /// language (99).
+    pub fn languages(&self) -> Option<&[String]> {
+        self.entry.languages.as_deref()
+    }
+
+    pub fn speed(&self) -> f64 {
+        self.entry.speed
+    }
+
+    pub fn accuracy(&self) -> f64 {
+        self.entry.accuracy
+    }
+
+    pub fn min_ram_gb(&self) -> u32 {
+        self.entry.min_ram_gb
+    }
+
+    pub fn base_url(&self) -> Option<&str> {
+        self.entry.base_url.as_deref()
+    }
+
+    /// What the row is good at, shown as chips beside the name.
+    pub fn purposes(&self) -> &[Purpose] {
+        &self.entry.purposes
+    }
+
+    /// The row's artifact files, with their pinned bytes and digests.
+    pub fn artifacts(&self) -> &[Artifact] {
+        &self.entry.artifacts
+    }
+
     /// Whether the binary on `platform` can load this model. Listing a model
     /// a host cannot load produces a dead download, so the catalog list, the
     /// default pick, and the persisted-selection migration all consult this.
     pub fn available_on(&self, platform: Platform) -> bool {
-        self.engine.available_on(platform)
+        self.engine().available_on(platform)
     }
 
-    /// Whether the app may *offer* this model on `platform`: the host can load
-    /// it, it is a dictation model rather than an auxiliary companion, and the
-    /// Core ML rows only exist when this build actually links the FluidAudio
-    /// bridge (`fluid_available`).
-    ///
-    /// This is the single predicate behind the model list filter and
-    /// [`recommended_speech_model_id`], so the recommended row is always a row
-    /// that is present in the list. Before this existed the list filtered Core
-    /// ML out while the recommendation still named it, which left onboarding
-    /// with no card to render.
     /// Offer gate with runtime facts resolved by the caller (tests, previews).
     ///
     /// Same predicate as [`Self::offered_on`] plus the engine-build check:
@@ -387,15 +138,14 @@ impl SpeechModel {
         fluid_available: bool,
         parakeet_cpp_available: bool,
     ) -> bool {
-        self.available_on(platform)
-            && !self.auxiliary
-            && (self.engine != Engine::ParakeetCoreml || fluid_available)
-            && self.engine.built_on(platform, parakeet_cpp_available)
-            // The Windows/Linux CPU engine is loadable on macOS but every
-            // native macOS engine (Core ML, ggml Parakeet, parakeet.cpp,
-            // Whisper) beats it, so its rows are never surfaced to a Mac
-            // user (onboarding, Settings, or the model picker).
-            && !(platform.is_macos() && self.engine == Engine::SherpaParakeet)
+        let engine = self.engine();
+        let transcribe_cpp_available =
+            matches!(engine, Engine::TranscribeCpp) && crate::transcribe::engine_available();
+        engine.available_on(platform)
+            && !self.entry.auxiliary
+            && (engine != Engine::ParakeetCoreml || fluid_available)
+            && engine.built_on(platform, parakeet_cpp_available, transcribe_cpp_available)
+            && !(platform.is_macos() && engine == Engine::SherpaParakeet)
     }
 
     pub fn offered_on(&self, platform: Platform, fluid_available: bool) -> bool {
@@ -411,77 +161,20 @@ impl SpeechModel {
     /// One ggml/GGUF file for Whisper/Parakeet/Parakeet.cpp; the extracted
     /// archive directory for sherpa; the models *base* directory for the
     /// FluidAudio bridge, which appends its own repo folder.
-    pub fn provider_path(&self, models_dir: &std::path::Path) -> std::path::PathBuf {
-        match self.engine {
-            Engine::ParakeetCoreml => models_dir.join("fluid"),
-            Engine::SherpaParakeet => models_dir.join("sherpa").join(sherpa_dir_name(self.file)),
-            // Two-file artifact (main GGUF + mmproj) that loads from a
-            // directory, not a single file.
-            Engine::Qwen3Asr => models_dir.join("qwen3-asr"),
-            // OS-managed assets in system storage: the provider ignores the
-            // path, but the catalog must still answer with something stable.
-            Engine::AppleSpeech => models_dir.join("apple-speech"),
-            Engine::Whisper | Engine::Parakeet | Engine::ParakeetCpp | Engine::TranscribeCpp => {
-                models_dir.join(self.file)
-            }
-        }
+    pub fn provider_path(&self, models_dir: &Path) -> PathBuf {
+        Catalog::bundled().speech_provider_path(&self.entry, models_dir)
     }
 
     /// Where this model's bytes live under `models_dir`, used for installed /
     /// downloaded status. Differs from [`Self::provider_path`] only for the
     /// Core ML bridge, which receives the base directory.
-    pub fn install_path(&self, models_dir: &std::path::Path) -> std::path::PathBuf {
-        if self.engine == Engine::ParakeetCoreml {
-            models_dir.join("fluid").join(fluid_dir_name(self.file))
-        } else {
-            self.provider_path(models_dir)
-        }
+    pub fn install_path(&self, models_dir: &Path) -> PathBuf {
+        Catalog::bundled().speech_install_path(&self.entry, models_dir)
     }
 
+    /// The download URL for this model's primary artifact.
     pub fn url(&self) -> String {
-        if let Some(base) = self.base_url {
-            return format!("{base}/{}", self.file);
-        }
-        match self.engine {
-            Engine::Whisper => format!("{WHISPER_BASE_URL}/{}", self.file),
-            Engine::Parakeet => format!("{PARAKEET_BASE_URL}/{}", self.file),
-            // Core ML entries name a Hugging Face *repo* (their `file` is the
-            // repo directory name); the files inside are fetched by the
-            // FluidAudio bridge at load time.
-            Engine::ParakeetCoreml => {
-                format!("{FLUID_REPO_BASE_URL}/FluidInference/{}", self.file)
-            }
-            // sherpa-onnx ships one tar.bz2 release asset per model.
-            Engine::SherpaParakeet => format!("{SHERPA_MODELS_BASE_URL}/{}", self.file),
-            Engine::ParakeetCpp => {
-                format!("{PARAKEET_BASE_URL}/{}", self.file)
-            }
-            // Carries a `base_url`, so the generic branch above already built
-            // the main-file URL; this arm only runs when a row is added with
-            // no `base_url`, which would produce a wrong URL. Return an
-            // empty string (a failed download surfaces it) rather than
-            // panic the model list.
-            Engine::Qwen3Asr => {
-                tracing::warn!("qwen3-asr row has no base_url; returning an empty URL");
-                String::new()
-            }
-            // The OS owns these assets, so a download URL does not exist by
-            // design. Nothing must ever reach this arm: the Apple rows are
-            // filtered out of the download flow by `Engine::AppleSpeech`
-            // having no files. Surface it instead of panicking.
-            Engine::AppleSpeech => {
-                tracing::warn!("apple speech rows are not downloadable; returning an empty URL");
-                String::new()
-            }
-            // Every transcribe.cpp row carries a `base_url` (each GGUF lives
-            // in its own handy-computer repo), so the generic branch above
-            // already built the URL. Return an empty string (a failed
-            // download surfaces it) if a row is ever added without one.
-            Engine::TranscribeCpp => {
-                tracing::warn!("transcribe.cpp row has no base_url; returning an empty URL");
-                String::new()
-            }
-        }
+        Catalog::bundled().speech_url(&self.entry)
     }
 
     /// Whether this model can transcribe `language`.
@@ -503,15 +196,15 @@ impl SpeechModel {
         match normalize_language(language) {
             None => true,
             Some("en") => true,
-            Some(_) => !self.english_only,
+            Some(_) => !self.english_only(),
         }
     }
 
     /// Human-readable language label.
     pub fn language_label(&self) -> String {
-        if self.english_only {
+        if self.english_only() {
             "English only".to_string()
-        } else if let Some(langs) = self.languages {
+        } else if let Some(langs) = self.languages() {
             format!("{} languages", langs.len())
         } else {
             "99 languages".to_string()
@@ -568,489 +261,19 @@ pub fn language_name(code: &str) -> &str {
     }
 }
 
-/// The directory a sherpa release archive extracts to: its file name without
-/// the `.tar.bz2` suffix.
-fn sherpa_dir_name(file: &str) -> &str {
-    file.strip_suffix(".tar.bz2").unwrap_or(file)
+/// The speech rows of the bundled catalog, wrapped for the consumers.
+pub fn catalog() -> Vec<SpeechModel> {
+    Catalog::bundled()
+        .speech()
+        .iter()
+        .cloned()
+        .map(SpeechModel::from_entry)
+        .collect()
 }
-
-/// The cache folder FluidAudio uses for a Core ML repo slug.
-///
-/// Mirrors `Repo.folderName` in FluidAudio's `ModelNames.swift` at the pinned
-/// 0.17.7 revision: the default case strips `-coreml`, while the CTC repos
-/// carry explicit folder names.
-fn fluid_dir_name(file: &str) -> &str {
-    match file {
-        "parakeet-ctc-110m-coreml" | "parakeet-ctc-0.6b-coreml" => file,
-        _ => file.strip_suffix("-coreml").unwrap_or(file),
-    }
-}
-
-/// A default template for Whisper models, to reduce repetition.
-const WHISPER: SpeechModel = SpeechModel {
-    id: "",
-    name: "",
-    file: "",
-    engine: Engine::Whisper,
-    size_mb: 0,
-    sha256: None,
-    english_only: false,
-    recommended: false,
-    auxiliary: false,
-    description: "",
-    languages: None,
-    speed: 0.0,
-    accuracy: 0.0,
-    min_ram_gb: 0,
-    base_url: None,
-    purposes: &[],
-};
-
-pub const CATALOG: &[SpeechModel] = &[
-    SpeechModel {
-        id: "parakeet-tdt-v3",
-        name: "Parakeet v3",
-        file: "ggml-parakeet-tdt-0.6b-v3-q8_0.bin",
-        engine: Engine::Parakeet,
-        size_mb: 640,
-        sha256: Some("4d64e9e96c2792186d072fde0034df0ad670cf680a2f53069052ead827fd600e"),
-        recommended: true,
-        description: "Fastest model, with punctuation. English and 24 European languages.",
-        languages: Some(PARAKEET_V3_LANGUAGES),
-        speed: 9.7,
-        accuracy: 9.2,
-        min_ram_gb: 4,
-        purposes: &[
-            Purpose::inferred("Everyday dictation"),
-            Purpose::inferred("Fastest"),
-            Purpose::inferred("Multilingual"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "fluid-speech-mini",
-        name: "Fluid Speech Mini",
-        file: "fluid-speech-mini-q2k-q4k.gguf",
-        engine: Engine::ParakeetCpp,
-        size_mb: 347,
-        sha256: Some("f0796bf40274cc49d3db58563c23cd024b52ca7e2ae4749ccf27af85841726b5"),
-        english_only: true,
-        languages: Some(&["en"]),
-        // Measured 2026-10-26 over 850 cases / 6 sets plus the
-        // competing-speaker tiers (see `.agents/brain/asrs.md`): this build
-        // is *behind* Parakeet Ultra on noisy, accented, and conversational
-        // audio, level on clean LibriSpeech, and its "another voice in the
-        // room" pitch was tested on a purpose-built two-speaker set and did
-        // not reproduce (only edge: +1.7 pp at +5 dB, interferer quieter,
-        // at 4x the latency). The old copy ("Best English accuracy. Excels
-        // when others are talking nearby.", accuracy 9.5) contradicted the
-        // measurement and outranked Parakeet Ultra's own 9.6, so it was
-        // removed.
-        description: "Compact English-only build. Loads in under a second, but less accurate than Parakeet Ultra on noisy or accented speech.",
-        speed: 9.7,
-        accuracy: 8.8,
-        min_ram_gb: 2,
-        base_url: Some("https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf/resolve/main"),
-        purposes: &[
-            Purpose::inferred("Fastest"),
-            Purpose::inferred("English only"),
-            Purpose::inferred("Low memory"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "parakeet-tdt-v3-q4",
-        name: "Parakeet v3 (compact)",
-        file: "ggml-parakeet-tdt-0.6b-v3-q4_0.bin",
-        engine: Engine::Parakeet,
-        size_mb: 356,
-        sha256: Some("aa7fe2f5fb47d863ca23e8b1d490632d63a2599f515268b6d6bd656158dad45e"),
-        description: "Same speed as Parakeet v3, smaller download. Slightly less accurate.",
-        languages: Some(PARAKEET_V3_LANGUAGES),
-        speed: 9.7,
-        accuracy: 8.8,
-        min_ram_gb: 2,
-        purposes: &[
-            Purpose::inferred("Fastest"),
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Low memory"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "parakeet-tdt-v3-f16",
-        name: "Parakeet v3 (high precision)",
-        file: "ggml-parakeet-tdt-0.6b-v3-f16.bin",
-        engine: Engine::Parakeet,
-        size_mb: 1260,
-        sha256: Some("833bffc9513b2cae867ee9e51633cfd11e4d51aaa5597c8ac02159385a2b426f"),
-        description: "Highest accuracy Parakeet build. Needs more RAM.",
-        languages: Some(PARAKEET_V3_LANGUAGES),
-        speed: 9.5,
-        accuracy: 9.4,
-        min_ram_gb: 6,
-        purposes: &[
-            Purpose::inferred("Most accurate"),
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Long recordings"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "parakeet-ultra-coreml",
-        name: "Parakeet Ultra (Neural Engine)",
-        file: "parakeet-ultra-coreml",
-        engine: Engine::ParakeetCoreml,
-        size_mb: 600,
-        sha256: None,
-        description: "Highest accuracy on Mac, runs on the Neural Engine. Default on macOS 14+ Apple Silicon.",
-        languages: Some(PARAKEET_V3_LANGUAGES),
-        speed: 9.9,
-        accuracy: 9.6,
-        min_ram_gb: 4,
-        purposes: &[
-            Purpose::measured("Most accurate", EVIDENCE_BENCH),
-            Purpose::measured("Everyday dictation", EVIDENCE_BENCH),
-            Purpose::inferred("Fastest"),
-            Purpose::inferred("Multilingual"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "parakeet-v2-coreml",
-        name: "Parakeet v2 (Neural Engine, English)",
-        file: "parakeet-tdt-0.6b-v2-coreml",
-        engine: Engine::ParakeetCoreml,
-        size_mb: 600,
-        sha256: None,
-        english_only: true,
-        languages: Some(&["en"]),
-        description: "English-only Neural Engine build, tuned for highest recall.",
-        speed: 9.9,
-        accuracy: 9.5,
-        min_ram_gb: 4,
-        purposes: &[
-            Purpose::inferred("Everyday dictation"),
-            Purpose::inferred("Fastest"),
-            Purpose::inferred("English only"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "parakeet-v3-coreml",
-        name: "Parakeet v3 (Neural Engine)",
-        file: "parakeet-tdt-0.6b-v3-coreml",
-        engine: Engine::ParakeetCoreml,
-        size_mb: 600,
-        sha256: None,
-        description: "Neural Engine fallback build for macOS 14+ Apple Silicon.",
-        languages: Some(PARAKEET_V3_LANGUAGES),
-        speed: 9.9,
-        accuracy: 9.3,
-        min_ram_gb: 4,
-        purposes: &[
-            Purpose::inferred("Fastest"),
-            Purpose::inferred("Multilingual"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "parakeet-ctc-110m-coreml",
-        name: "Parakeet CTC 110M (vocabulary spotter)",
-        file: "parakeet-ctc-110m-coreml",
-        engine: Engine::ParakeetCoreml,
-        size_mb: 100,
-        sha256: None,
-        english_only: true,
-        auxiliary: true,
-        languages: Some(&["en"]),
-        description: "Auxiliary vocabulary spotter for the Neural Engine build. Installed automatically once the dictionary has terms; not a dictation model.",
-        speed: 0.0,
-        accuracy: 0.0,
-        min_ram_gb: 2,
-        purposes: &[
-            Purpose::inferred("Context-aware"),
-            Purpose::inferred("English only"),
-            Purpose::inferred("Low memory"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "sherpa-parakeet-v3-int8",
-        name: "Parakeet v3 (sherpa-onnx)",
-        file: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
-        engine: Engine::SherpaParakeet,
-        size_mb: 465,
-        sha256: Some("5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"),
-        description: "Default on Windows. Runs on CPU, English and 24 European languages.",
-        languages: Some(PARAKEET_V3_LANGUAGES),
-        speed: 8.5,
-        accuracy: 9.0,
-        min_ram_gb: 4,
-        purposes: &[
-            Purpose::inferred("Everyday dictation"),
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Low memory"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "sherpa-parakeet-v2-int8",
-        name: "Parakeet v2 (sherpa-onnx, English)",
-        file: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
-        engine: Engine::SherpaParakeet,
-        size_mb: 461,
-        sha256: Some("157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad"),
-        english_only: true,
-        languages: Some(&["en"]),
-        description: "English-only sherpa-onnx build for Windows.",
-        speed: 8.5,
-        accuracy: 9.0,
-        min_ram_gb: 4,
-        purposes: &[
-            Purpose::inferred("Everyday dictation"),
-            Purpose::inferred("English only"),
-            Purpose::inferred("Low memory"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "large-v3-turbo-q5",
-        name: "Whisper Large v3 Turbo (compressed)",
-        file: "ggml-large-v3-turbo-q5_0.bin",
-        size_mb: 547,
-        sha256: Some("394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"),
-        description:
-            "Near-flagship accuracy at a third of the size. Auto-selected for languages Parakeet does not cover (Arabic, Hindi, Japanese, …).",
-        speed: 7.5,
-        accuracy: 9.4,
-        min_ram_gb: 6,
-        purposes: &[
-            Purpose::measured("Most accurate", EVIDENCE_BENCH),
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Indian languages"),
-            Purpose::inferred("Long recordings"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "large-v3-turbo",
-        name: "Whisper Large v3 Turbo",
-        file: "ggml-large-v3-turbo.bin",
-        size_mb: 1624,
-        sha256: Some("1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"),
-        description: "The most accurate Whisper model. Best on machines with a fast GPU.",
-        speed: 7.0,
-        accuracy: 9.5,
-        min_ram_gb: 8,
-        purposes: &[
-            Purpose::inferred("Most accurate"),
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Indian languages"),
-            Purpose::inferred("Long recordings"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "small-en",
-        name: "Whisper Small (English)",
-        file: "ggml-small.en.bin",
-        size_mb: 466,
-        sha256: Some("c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d"),
-        english_only: true,
-        languages: Some(&["en"]),
-        description: "Good balance of speed and accuracy for English.",
-        speed: 8.0,
-        accuracy: 8.5,
-        min_ram_gb: 4,
-        purposes: &[
-            Purpose::inferred("Everyday dictation"),
-            Purpose::inferred("English only"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "base-en",
-        name: "Whisper Base (English)",
-        file: "ggml-base.en.bin",
-        size_mb: 142,
-        sha256: Some("a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"),
-        english_only: true,
-        languages: Some(&["en"]),
-        description: "Fast on any machine. Fine for short English dictation.",
-        speed: 9.0,
-        accuracy: 7.5,
-        min_ram_gb: 2,
-        purposes: &[
-            Purpose::inferred("Fastest"),
-            Purpose::inferred("English only"),
-            Purpose::inferred("Low memory"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "base",
-        name: "Whisper Base",
-        file: "ggml-base.bin",
-        size_mb: 142,
-        sha256: Some("60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe"),
-        description: "Small and quick to download. A good way to get started in any language.",
-        speed: 9.0,
-        accuracy: 7.3,
-        min_ram_gb: 2,
-        purposes: &[
-            Purpose::inferred("Fastest"),
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Indian languages"),
-            Purpose::inferred("Low memory"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "tiny",
-        name: "Whisper Tiny",
-        file: "ggml-tiny.bin",
-        size_mb: 75,
-        sha256: Some("be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21"),
-        description: "Fastest Whisper model and least accurate. Useful for testing.",
-        speed: 9.5,
-        accuracy: 6.0,
-        min_ram_gb: 2,
-        purposes: &[
-            Purpose::inferred("Fastest"),
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Indian languages"),
-            Purpose::inferred("Low memory"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "qwen3-asr",
-        name: "Qwen3-ASR 1.7B",
-        file: "Qwen3-ASR-1.7B-Q8_0.gguf",
-        engine: Engine::Qwen3Asr,
-        // Both GGUFs together: 2,165,034,944 + 355,709,344 bytes.
-        size_mb: 2404,
-        // Two-file artifact (main GGUF + mmproj projector); the per-file
-        // SHA-256 verification lives in the download command, so the
-        // catalog field is intentionally unpinned, like the Core ML rows.
-        sha256: None,
-        description: "Qwen3 ASR 1.7B GGUF via llama-server. Transcribes 30 languages, including Polish, in a local llama-server process. A 2.4 GB download and a 10-second cold load.",
-        languages: Some(QWEN3_ASR_LANGUAGES),
-        speed: 6.0,
-        accuracy: 9.0,
-        min_ram_gb: 4,
-        base_url: Some("https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main"),
-        purposes: &[
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Indian languages"),
-            Purpose::inferred("Long recordings"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "apple-speech-transcriber",
-        name: "Apple on-device speech (Experimental)",
-        file: "apple-speech-transcriber",
-        engine: Engine::AppleSpeech,
-        size_mb: 0,
-        sha256: None,
-        description: "Experimental. Newer system speech model managed by macOS; no Teletype download. Locales only the dictation module covers fall back to it and the module that ran is reported. Not yet measured on the Teletype corpus, so no speed or accuracy bar.",
-        speed: 0.0,
-        accuracy: 0.0,
-        min_ram_gb: 0,
-        purposes: &[
-            Purpose::inferred("No download"),
-            Purpose::inferred("Experimental"),
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Low memory"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "apple-dictation-transcriber",
-        name: "Apple dictation speech (Experimental)",
-        file: "apple-dictation-transcriber",
-        engine: Engine::AppleSpeech,
-        size_mb: 0,
-        sha256: None,
-        description: "Experimental. Older system dictation model managed by macOS; covers languages the transcriber row does not and runs its own model where both cover the locale. If only the transcriber covers a locale the take runs there instead and the module that ran is reported. No Teletype download, no measured accuracy.",
-        speed: 0.0,
-        accuracy: 0.0,
-        min_ram_gb: 0,
-        purposes: &[
-            Purpose::inferred("No download"),
-            Purpose::inferred("Experimental"),
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Low memory"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "nemotron-3.5-asr-streaming-q4",
-        name: "Nemotron 3.5 ASR Streaming 0.6B (Experimental)",
-        file: "nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf",
-        engine: Engine::TranscribeCpp,
-        size_mb: 496,
-        sha256: Some("41c99fa5fb6f3d35f68e79adc3e755eca2232a8d921178bd647b71194792b8fd"),
-        description: "Experimental. NVIDIA's streaming ASR model: 15 ready languages with punctuation, built for low-latency voice agents. Not yet measured on the Teletype corpus, so no speed or accuracy bar.",
-        languages: Some(NEMOTRON35_READY_LANGUAGES),
-        speed: 0.0,
-        accuracy: 0.0,
-        min_ram_gb: 2,
-        base_url: Some("https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/53ce288f69326b415aeef030cfcb02a08a8096dd"),
-        purposes: &[
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Experimental"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "moonshine-streaming-medium-q8",
-        name: "Moonshine Streaming Medium (Experimental)",
-        file: "moonshine-streaming-medium-Q8_0.gguf",
-        engine: Engine::TranscribeCpp,
-        size_mb: 296,
-        sha256: Some("f7c9564249b508f6012927ec4f9e536087da53a7047f858ca9975bea5f75299e"),
-        english_only: true,
-        languages: Some(&["en"]),
-        description: "Experimental. Small, fast English streaming model (MIT licensed). The vendor warns it may hallucinate on short or noisy clips, so it is not measured yet: no speed or accuracy bar.",
-        speed: 0.0,
-        accuracy: 0.0,
-        min_ram_gb: 1,
-        base_url: Some("https://huggingface.co/handy-computer/moonshine-streaming-medium-gguf/resolve/56302cde2ae162d1357a833d91775bcd06e91e1b"),
-        purposes: &[
-            Purpose::inferred("English only"),
-            Purpose::inferred("Low memory"),
-            Purpose::inferred("Experimental"),
-        ],
-        ..WHISPER
-    },
-    SpeechModel {
-        id: "granite-speech-470m-q4",
-        name: "Granite Speech 5.0 470M TurboCTC (Experimental)",
-        file: "granite-speech-5.0-470m-turboctc-Q4_K_M.gguf",
-        engine: Engine::TranscribeCpp,
-        size_mb: 279,
-        sha256: Some("3f30525381d72246b7f99e49b6cb66b249cf1b990c6c3d0e031a7765735f513e"),
-        description: "Experimental. IBM's compact multilingual CTC model: 7 languages (English, French, German, Spanish, Portuguese, Italian, Japanese) at a small download. Not yet measured on the Teletype corpus, so no speed or accuracy bar.",
-        languages: Some(&["en", "fr", "de", "es", "pt", "it", "ja"]),
-        speed: 0.0,
-        accuracy: 0.0,
-        min_ram_gb: 1,
-        base_url: Some("https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/0cf5be9f4bcd479989e6a24d142094d34d552daa"),
-        purposes: &[
-            Purpose::inferred("Multilingual"),
-            Purpose::inferred("Low memory"),
-            Purpose::inferred("Experimental"),
-        ],
-        ..WHISPER
-    },
-];
 
 /// Finds a catalog entry by id.
-pub fn find(id: &str) -> Option<&'static SpeechModel> {
-    CATALOG.iter().find(|m| m.id == id)
+pub fn find(id: &str) -> Option<SpeechModel> {
+    catalog().into_iter().find(|m| m.id() == id)
 }
 
 /// Normalizes a Settings language for routing: `"en-US"`/`"en_US"` become
@@ -1078,16 +301,13 @@ fn normalize_language(language: Option<&str>) -> Option<&str> {
 /// own `languages` table (when present - `None` = the engine's full
 /// table, i.e. Whisper's 99) must agree with
 /// [`SpeechModel::honours_language`], so the two cannot drift apart.
-///
-/// The table is consulted only when the row carries one, which is also
-/// the only shape where a row can list fewer languages than the engine
-/// claims (a Parakeet build with the 25-language list): the table half
-/// answers that case, the predicate half the English-only case.
 fn entry_supports(entry: &SpeechModel, language: Option<&str>) -> bool {
     match normalize_language(language) {
         None => true,
         Some(lang) => {
-            entry.languages.is_none_or(|langs| langs.contains(&lang))
+            entry
+                .languages()
+                .is_none_or(|langs| langs.iter().any(|l| l == lang))
                 && entry.honours_language(Some(lang))
         }
     }
@@ -1097,10 +317,11 @@ fn entry_supports(entry: &SpeechModel, language: Option<&str>) -> bool {
 /// on the English human corpus; both English default branches honor it.
 pub const V2_ENGLISH_PREFERRED: bool = false;
 
-/// The host facts [`pick_engine`] needs (the app fills these in at startup).
-/// Defined in teletype-catalog so the catalog crate has no speech dependency.
+/// The host platform facts for [`pick_engine`].
 pub use teletype_catalog::engine::Platform;
 
+/// The speech engine enum, re-exported for consumers.
+pub use teletype_catalog::Engine;
 /// Detects the host platform for [`pick_engine`].
 ///
 /// The macOS major version comes from `sw_vers` (no extra dependency). A
@@ -1132,8 +353,8 @@ fn parse_macos_major(version: &str) -> Option<u16> {
     version.trim().split('.').next()?.parse().ok()
 }
 
-/// The id of a [`SpeechModel`] in [`CATALOG`].
-pub type ModelId = &'static str;
+/// The id of a [`SpeechModel`] in the catalog.
+pub type ModelId = String;
 
 /// Picks the default speech-model id for the current host and language.
 ///
@@ -1154,20 +375,18 @@ pub type ModelId = &'static str;
 /// `language` is the Settings language ("en", "de", …, "auto", or a BCP-47
 /// tag such as "en-US"); `None`/`"auto"` mean "engine decides", which selects
 /// the platform default rather than routing to Whisper.
-pub fn pick_engine(pinned: Option<&str>, platform: Platform, language: Option<&str>) -> ModelId {
+pub fn pick_engine(pinned: Option<&str>, platform: Platform, language: Option<&str>) -> String {
     // 1. Pin first, but never a model this host cannot load: a selection
     //    carried over from another platform must not brick dictation.
     if let Some(id) = pinned {
         if let Some(entry) = find(id) {
             if entry.available_on(platform) {
-                // Return the catalog entry's own `'static` id, not the
-                // borrowed input, so the signature can stay `-> ModelId`.
-                return entry.id;
+                return entry.id().to_string();
             }
         }
     }
 
-    // Normalize "en-US" → "en"; treat "auto"/empty as "no language set".
+    // Normalize "en-US" to "en"; treat "auto"/empty as "no language set".
     let lang = normalize_language(language);
 
     // 2. Whisper covers every language the best platform candidate cannot
@@ -1198,9 +417,9 @@ pub fn pick_engine(pinned: Option<&str>, platform: Platform, language: Option<&s
     };
     if let Some(l) = lang {
         let detours = find("large-v3-turbo-q5").is_some_and(|m| m.available_on(platform))
-            && !find(platform_default).is_some_and(|m| entry_supports(m, Some(l)));
+            && !find(platform_default).is_some_and(|m| entry_supports(&m, Some(l)));
         if detours {
-            return "large-v3-turbo-q5";
+            return "large-v3-turbo-q5".to_string();
         }
     }
 
@@ -1228,6 +447,7 @@ pub fn pick_engine(pinned: Option<&str>, platform: Platform, language: Option<&s
         Platform::MacosAppleSilicon { .. } | Platform::MacosIntel => platform_default,
         Platform::Other => platform_default,
     }
+    .to_string()
 }
 
 /// Dictation models tried by [`recommended_speech_model_id`] when
@@ -1235,7 +455,7 @@ pub fn pick_engine(pinned: Option<&str>, platform: Platform, language: Option<&s
 ///
 /// Every entry is a real dictation model, so the fallback can never name a
 /// row the list hides (the CTC spotter is deliberately absent).
-const RECOMMENDED_FALLBACKS: &[ModelId] = &[
+const RECOMMENDED_FALLBACKS: &[&str] = &[
     "parakeet-tdt-v3",
     "parakeet-tdt-v3-q4",
     "large-v3-turbo-q5",
@@ -1255,17 +475,6 @@ const RECOMMENDED_FALLBACKS: &[ModelId] = &[
 /// probe are already handled inside [`pick_engine`] (they answer the ggml
 /// build), so this function leaves them alone.
 ///
-/// Semantics, in order:
-/// 1. `pick_engine`'s answer wins when this build can offer it: Apple Silicon
-///    macOS 14+ **with** the bridge gets `parakeet-ultra-coreml`, Windows gets
-///    `sherpa-parakeet-v3-int8`, macOS 13 and Intel get `parakeet-tdt-v3`.
-/// 2. Otherwise the first entry in [`RECOMMENDED_FALLBACKS`] this build can
-///    offer and that transcribes `language` is used, so an Apple Silicon
-///    macOS 14+ machine without the bridge falls back to `parakeet-tdt-v3`
-///    (same 25 languages as the build it replaces).
-/// 3. A language outside Parakeet's list keeps the Whisper route, but only on
-///    platforms where Whisper ships; elsewhere the platform default stands.
-///
 /// `language` is the Settings value ("en", "en-US", "auto", `""`, `None`);
 /// "auto" and empty behave like `None`, i.e. "the engine decides".
 ///
@@ -1276,37 +485,38 @@ pub fn recommended_speech_model_id(
     platform: Platform,
     language: Option<&str>,
     fluid_available: bool,
-) -> ModelId {
-    let offerable = |id: ModelId| find(id).is_some_and(|m| m.offered_on(platform, fluid_available));
+) -> String {
+    let offerable = |id: &str| {
+        find(id)
+            .is_some_and(|m| m.offered_on(platform, fluid_available))
+    };
 
     let pick = pick_engine(None, platform, language);
-    if offerable(pick) {
+    if offerable(&pick) {
         return pick;
     }
 
     let lang = normalize_language(language);
-    for &id in RECOMMENDED_FALLBACKS {
-        if find(id)
-            .is_some_and(|m| m.offered_on(platform, fluid_available) && entry_supports(m, lang))
-        {
-            return id;
+    for id in RECOMMENDED_FALLBACKS {
+        if find(id).is_some_and(|m| {
+            m.offered_on(platform, fluid_available) && entry_supports(&m, lang)
+        }) {
+            return id.to_string();
         }
     }
 
     // Last resort: the first offered dictation model that covers the language,
     // then any offered model. Keeps the contract "the recommendation is always
     // in the list" even if the catalog grows an unusual engine.
-    if let Some(m) = CATALOG
+    let all = catalog();
+    if let Some(m) = all
         .iter()
         .find(|m| m.offered_on(platform, fluid_available) && entry_supports(m, lang))
     {
-        return m.id;
+        return m.id().to_string();
     }
-    if let Some(m) = CATALOG
-        .iter()
-        .find(|m| m.offered_on(platform, fluid_available))
-    {
-        return m.id;
+    if let Some(m) = all.iter().find(|m| m.offered_on(platform, fluid_available)) {
+        return m.id().to_string();
     }
     pick
 }
@@ -1316,39 +526,27 @@ pub const SHORTLIST_MAX: usize = 3;
 
 /// The rows worth showing someone who has never dictated here, best first.
 ///
-/// The full catalog is 16 rows and a first-run user cannot tell a quantization
-/// of the same model from a different engine. This is the measured ranking
-/// collapsed to one decision per axis: the fastest accurate engine this host
-/// has, the portable ggml build that needs no Neural Engine and loads in half a
-/// second, and the many-language build for everything Parakeet cannot do.
-///
-/// Every id is deduplicated and only *extra* rows are filtered by language, so
-/// a row can only reach a user who can load it: a Windows host never sees a
-/// macOS engine, and a build without the FluidAudio bridge loses the Core ML
-/// row and keeps the two that remain.
-///
-/// The first element is always [`recommended_speech_model_id`], so a caller can
-/// render the recommended card and the shortlist without them disagreeing. It
-/// is exempt from the language check because it is exempt there too: an
-/// uncovered language on Windows has no row that transcribes it, and showing
-/// nothing would strand the user in onboarding. The app already reports that
-/// gap elsewhere rather than hiding the model.
+/// The first element is always [`recommended_speech_model_id`], so a caller
+/// can render the recommended card and the shortlist without them
+/// disagreeing. It is exempt from the language check because it is exempt
+/// there too: an uncovered language on Windows has no row that transcribes
+/// it, and showing nothing would strand the user in onboarding.
 pub fn shortlist_ids(
     platform: Platform,
     language: Option<&str>,
     fluid_available: bool,
-) -> Vec<ModelId> {
-    let mut ids: Vec<ModelId> = Vec::with_capacity(SHORTLIST_MAX);
+) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::with_capacity(SHORTLIST_MAX);
     let recommended = recommended_speech_model_id(platform, language, fluid_available);
-    ids.push(recommended);
+    ids.push(recommended.clone());
 
-    let mut push = |id: ModelId| {
-        if id == recommended || ids.contains(&id) {
+    let mut push = |id: &str| {
+        if id == recommended.as_str() || ids.iter().any(|i| i == id) {
             return;
         }
         if let Some(entry) = find(id) {
-            if entry.offered_on(platform, fluid_available) && entry_supports(entry, language) {
-                ids.push(id);
+            if entry.offered_on(platform, fluid_available) && entry_supports(&entry, language) {
+                ids.push(id.to_string());
             }
         }
     };
@@ -1377,23 +575,127 @@ pub fn shortlist_ids(
 mod tests {
     use super::*;
 
+    /// The chip vocabulary the UI may show. A label outside this list is a
+    /// catalog bug, not a wording choice, so the test pins the set.
+    const PURPOSE_LABELS: &[&str] = &[
+        "Everyday dictation",
+        "Fastest",
+        "Most accurate",
+        "Multilingual",
+        "English only",
+        "Live streaming",
+        "Context-aware",
+        "Low memory",
+        "No download",
+        "Long recordings",
+        "Indian languages",
+        "Experimental",
+    ];
+
+    /// The 19 transcription-ready locales of Nemotron 3.5 ASR streaming 0.6B
+    /// (the 15 base languages the speech.json row lists).
+    const NEMOTRON35_READY_LANGUAGES: &[&str] = &[
+        "ar", "de", "en", "es", "fr", "hi", "it", "ja", "ko", "nl", "pt", "ru", "tr", "uk", "vi",
+    ];
+
+    /// The 25 Parakeet TDT v3 languages the speech.json rows list.
+    const PARAKEET_V3_LANGUAGES: &[&str] = &[
+        "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it", "lt", "lv",
+        "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk",
+    ];
+
+    /// The 30 Qwen3-ASR languages the speech.json row lists.
+    const QWEN3_ASR_LANGUAGES: &[&str] = &[
+        "ar", "bg", "cs", "da", "de", "el", "en", "es", "fi", "fr", "hr", "hi", "hu", "id", "it",
+        "ja", "ko", "ms", "nl", "no", "pl", "pt", "ro", "ru", "sk", "sv", "tr", "uk", "vi", "zh",
+    ];
+
+    /// The streaming-ASR pins the offline shape gate checks (R6: the data
+    /// lives in speech.json artifacts; this table is the test's reference).
+    const PINNED_SPEECH_ARTIFACTS: &[(&str, &str, &str, &str)] = &[
+        (
+            "nemotron-3.5-asr-streaming-q4",
+            "nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf",
+            "41c99fa5fb6f3d35f68e79adc3e755eca2232a8d921178bd647b71194792b8fd",
+            "https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/53ce288f69326b415aeef030cfcb02a08a8096dd",
+        ),
+        (
+            "moonshine-streaming-medium-q8",
+            "moonshine-streaming-medium-Q8_0.gguf",
+            "f7c9564249b508f6012927ec4f9e536087da53a7047f858ca9975bea5f75299e",
+            "https://huggingface.co/handy-computer/moonshine-streaming-medium-gguf/resolve/56302cde2ae162d1357a833d91775bcd06e91e1b",
+        ),
+        (
+            "granite-speech-470m-q4",
+            "granite-speech-5.0-470m-turboctc-Q4_K_M.gguf",
+            "3f30525381d72246b7f99e49b6cb66b249cf1b990c6c3d0e031a7765735f513e",
+            "https://huggingface.co/handy-computer/granite-speech-5.0-470m-turboctc-gguf/resolve/0cf5be9f4bcd479989e6a24d142094d34d552daa",
+        ),
+    ];
+
+    /// The two GGUFs a Qwen3-ASR install needs, main model first (the
+    /// speech.json reference the offline gate checks against).
+    const QWEN3_ASR_ARTIFACTS: &[(&str, &str)] = &[
+        ("Qwen3-ASR-1.7B-Q8_0.gguf", "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57"),
+        (
+            "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+            "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d",
+        ),
+    ];
+
+    /// The download base URLs the speech.json rows carry (engine-default
+    /// engines carry none).
+    const WHISPER_BASE_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+    const PARAKEET_BASE_URL: &str = "https://huggingface.co/ggml-org/parakeet-GGUF/resolve/main";
+    const SHERPA_MODELS_BASE_URL: &str =
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models";
+
+    /// Every host fact the recommendation and the model list must agree on.
+    const PLATFORMS: &[Platform] = &[
+        Platform::MacosAppleSilicon { major: 26 },
+        Platform::MacosAppleSilicon { major: 15 },
+        Platform::MacosAppleSilicon { major: 14 },
+        Platform::MacosAppleSilicon { major: 13 },
+        Platform::MacosIntel,
+        Platform::Windows,
+        Platform::Other,
+    ];
+    const LANGUAGES: &[Option<&str>] = &[
+        None,
+        Some(""),
+        Some("auto"),
+        Some("en"),
+        Some("en-US"),
+        Some("de"),
+        Some("ar"),
+        Some("ja-JP"),
+        Some("und"),
+    ];
+
+    /// The speech list is the parsed catalog, row for row (R6 smoke test).
+    #[test]
+    fn speech_model_list_is_backed_by_the_parsed_catalog() {
+        let parsed = Catalog::bundled();
+        assert_eq!(parsed.speech().len(), catalog().len());
+    }
+
     #[test]
     fn apple_speech_rows_are_offered_only_on_macos_26_and_carry_no_download() {
         let mac26 = Platform::MacosAppleSilicon { major: 26 };
         let mac27 = Platform::MacosAppleSilicon { major: 27 };
         let mac25 = Platform::MacosAppleSilicon { major: 25 };
         for id in ["apple-speech-transcriber", "apple-dictation-transcriber"] {
-            let row = find(id).unwrap_or_else(|| panic!("{id} missing from CATALOG"));
-            assert_eq!(row.engine, Engine::AppleSpeech, "{id}");
+            let row = find(id).unwrap_or_else(|| panic!("{id} missing from catalog"));
+            assert_eq!(row.engine(), Engine::AppleSpeech, "{id}");
             // No download: zero size, no pinned bytes, and no URL to fetch.
-            assert_eq!(row.size_mb, 0, "{id} must be zero-download");
-            assert!(row.sha256.is_none(), "{id} must not pin bytes");
-            assert!(!row.recommended, "{id} stays opt-in");
-            assert!(!row.auxiliary, "{id} is a dictation model");
-            assert_eq!(row.speed, 0.0, "{id} has no measured speed");
-            assert_eq!(row.accuracy, 0.0, "{id} has no measured accuracy");
+            assert_eq!(row.size_mb(), 0, "{id} must be zero-download");
+            assert!(row.sha256().is_none(), "{id} must not pin bytes");
+            assert!(!row.recommended(), "{id} stays opt-in");
+            assert!(!row.auxiliary(), "{id} is a dictation model");
+            assert_eq!(row.speed(), 0.0, "{id} has no measured speed");
+            assert_eq!(row.accuracy(), 0.0, "{id} has no measured accuracy");
             assert!(
-                row.description.contains("Experimental"),
+                row.description().contains("Experimental"),
                 "{id} must be marked experimental"
             );
             // Offered on macOS 26+ Apple Silicon, nowhere else.
@@ -1406,10 +708,7 @@ mod tests {
             );
             assert!(!row.available_on(Platform::MacosIntel), "{id} not on Intel");
             assert!(!row.available_on(Platform::Windows), "{id} not on Windows");
-            assert!(
-                !row.available_on(Platform::Other),
-                "{id} not on other hosts"
-            );
+            assert!(!row.available_on(Platform::Other), "{id} not on other hosts");
             // The offer gate (the list predicate) agrees with available_on.
             assert!(row.offered_on(mac26, true), "{id} offered on macOS 26");
             assert!(!row.offered_on(mac25, true), "{id} hidden on macOS 25");
@@ -1444,19 +743,19 @@ mod tests {
             ),
         ];
         for (id, file, sha, base) in rows {
-            let m = find(id).unwrap_or_else(|| panic!("{id} missing from CATALOG"));
-            assert_eq!(m.engine, Engine::TranscribeCpp, "{id}");
-            assert_eq!(m.file, file, "{id}");
-            assert_eq!(m.sha256, Some(sha), "{id} must pin the HF lfs oid");
-            assert!(m.base_url.is_some_and(|b| b == base), "{id} base_url");
+            let m = find(id).unwrap_or_else(|| panic!("{id} missing from catalog"));
+            assert_eq!(m.engine(), Engine::TranscribeCpp, "{id}");
+            assert_eq!(m.file(), file, "{id}");
+            assert_eq!(m.sha256(), Some(sha), "{id} must pin the HF lfs oid");
+            assert!(m.base_url().is_some_and(|b| b == base), "{id} base_url");
             assert_eq!(m.url(), format!("{base}/{file}"), "{id} url");
-            assert!(!m.recommended, "{id} is never the default");
-            assert!(!m.auxiliary, "{id} is a dictation model");
+            assert!(!m.recommended(), "{id} is never the default");
+            assert!(!m.auxiliary(), "{id} is a dictation model");
             assert!(
-                m.purposes.iter().any(|p| p.label == "Experimental"),
+                m.purposes().iter().any(|p| p.label == "Experimental"),
                 "{id} must carry the Experimental chip"
             );
-            assert!(m.size_mb > 0 && m.size_mb < 2048, "{id} under the ceiling");
+            assert!(m.size_mb() > 0 && m.size_mb() < 2048, "{id} under the ceiling");
             // Single-file layout, like the ggml engines.
             let dir = std::path::Path::new("/models");
             assert_eq!(m.provider_path(dir), dir.join(file), "{id}");
@@ -1473,30 +772,37 @@ mod tests {
         // collapsed to their 15 base languages), English-only Moonshine,
         // 7 Granite languages.
         let nemotron = find("nemotron-3.5-asr-streaming-q4").unwrap();
+        let nemotron_langs: Vec<&str> = nemotron
+            .languages()
+            .map(|l| l.iter().map(String::as_str).collect())
+            .unwrap_or_default();
         assert_eq!(
-            nemotron.languages,
-            Some(NEMOTRON35_READY_LANGUAGES),
+            nemotron_langs,
+            NEMOTRON35_READY_LANGUAGES,
             "nemotron carries the ready-locale table"
         );
         assert_eq!(NEMOTRON35_READY_LANGUAGES.len(), 15);
-        assert!(!nemotron.languages.unwrap().contains(&"pl"));
+        assert!(!nemotron.languages().unwrap().iter().any(|l| l == "pl"));
         assert!(
             nemotron.honours_language(Some("pl")),
             "nemotron is not English-only"
         );
         let moonshine = find("moonshine-streaming-medium-q8").unwrap();
-        assert!(moonshine.english_only, "moonshine is English-only");
+        assert!(moonshine.english_only(), "moonshine is English-only");
         assert!(!moonshine.honours_language(Some("de")));
         let granite = find("granite-speech-470m-q4").unwrap();
         let granite_langs: &[&str] = &["en", "fr", "de", "es", "pt", "it", "ja"];
+        let granite_actual: Vec<&str> = granite
+            .languages()
+            .map(|l| l.iter().map(String::as_str).collect())
+            .unwrap_or_default();
         assert_eq!(
-            granite.languages,
-            Some(granite_langs),
+            granite_actual, granite_langs,
             "granite carries its 7-language table"
         );
         // Granite is not English-only: it honours French, German, etc.
         assert!(granite.honours_language(Some("fr")));
-        assert!(!granite.english_only);
+        assert!(!granite.english_only());
     }
 
     #[test]
@@ -1522,27 +828,26 @@ mod tests {
 
     #[test]
     fn every_single_file_model_pins_its_bytes() {
-        for m in CATALOG {
-            match m.engine {
+        for m in catalog() {
+            match m.engine() {
                 // The Core ML bridge fetches a multi-file checkpoint repo,
-                // Qwen3-ASR is a two-file artifact (main GGUF + mmproj), and
-                // Apple speech is OS-managed system storage; no single
+                // and Apple speech is OS-managed system storage; no single
                 // artifact exists whose hash could be pinned.
-                Engine::ParakeetCoreml | Engine::Qwen3Asr | Engine::AppleSpeech => assert!(
-                    m.sha256.is_none(),
+                Engine::ParakeetCoreml | Engine::AppleSpeech => assert!(
+                    m.sha256().is_none(),
                     "{} is a multi-file repo and must not carry a single-file hash",
-                    m.id
+                    m.id()
                 ),
                 _ => {
                     let sha = m
-                        .sha256
-                        .unwrap_or_else(|| panic!("{} has no SHA-256 pin", m.id));
-                    assert_eq!(sha.len(), 64, "{}: {sha}", m.id);
+                        .sha256()
+                        .unwrap_or_else(|| panic!("{} has no SHA-256 pin", m.id()));
+                    assert_eq!(sha.len(), 64, "{}: {sha}", m.id());
                     assert!(
                         sha.chars()
                             .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
                         "{} is not lowercase hex: {sha}",
-                        m.id
+                        m.id()
                     );
                 }
             }
@@ -1557,52 +862,56 @@ mod tests {
     /// suite so a malformed pin or a dropped row breaks the build.
     #[test]
     fn pinned_speech_artifact_table_is_well_formed() {
-        for art in PINNED_SPEECH_ARTIFACTS {
-            let m = find(art.model_id).unwrap_or_else(|| panic!("{} not in CATALOG", art.model_id));
+        for (model_id, file, sha, base) in PINNED_SPEECH_ARTIFACTS {
+            let m = find(model_id).unwrap_or_else(|| panic!("{model_id} not in catalog"));
             let url = m.url();
+            assert!(
+                url.starts_with(*base),
+                "{model_id} url should start with its base: {url}"
+            );
             // The ref between /resolve/ and the trailing /<file> must be a
             // 40-hex commit, not a branch name.
             let Some(after_resolve) = url.split("/resolve/").nth(1) else {
-                panic!("{} url has no /resolve/ ref: {url}", art.model_id);
+                panic!("{model_id} url has no /resolve/ ref: {url}");
             };
             let ref_part = after_resolve.split('/').next().unwrap_or(after_resolve);
             assert_eq!(
                 ref_part.len(),
                 40,
-                "{} ref is not a 40-hex commit: {ref_part}",
-                art.model_id
+                "{model_id} ref is not a 40-hex commit: {ref_part}"
             );
             assert!(
                 ref_part
                     .chars()
                     .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
-                "{} ref is not lowercase hex: {ref_part}",
-                art.model_id
+                "{model_id} ref is not lowercase hex: {ref_part}"
             );
             // The digest must match the row's own pin and be 64-hex lowercase.
             assert_eq!(
-                m.sha256,
-                Some(art.sha256),
-                "{} table digest disagrees with the row",
-                art.model_id
+                m.sha256(),
+                Some(*sha),
+                "{model_id} table digest disagrees with the row"
             );
-            assert_eq!(art.sha256.len(), 64, "{} digest length", art.model_id);
+            assert_eq!(sha.len(), 64, "{model_id} digest length");
             assert!(
-                art.sha256
-                    .chars()
+                sha.chars()
                     .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
-                "{} digest is not lowercase hex",
-                art.model_id
+                "{model_id} digest is not lowercase hex"
             );
-            assert!(art.bytes > 0, "{} byte count is zero", art.model_id);
+            let art = m
+                .artifacts()
+                .iter()
+                .find(|a| a.file == *file)
+                .unwrap_or_else(|| panic!("{model_id} has no artifact {file}"));
+            assert!(art.bytes > 0, "{model_id} byte count is zero");
             assert_eq!(
-                m.file, art.file,
-                "{} table file disagrees with the row",
-                art.model_id
+                m.file(),
+                *file,
+                "{model_id} table file disagrees with the row"
             );
         }
         // All three streaming ASR rows must be pinned.
-        let ids: Vec<_> = PINNED_SPEECH_ARTIFACTS.iter().map(|a| a.model_id).collect();
+        let ids: Vec<&str> = PINNED_SPEECH_ARTIFACTS.iter().map(|a| a.0).collect();
         for id in [
             "nemotron-3.5-asr-streaming-q4",
             "moonshine-streaming-medium-q8",
@@ -1614,10 +923,11 @@ mod tests {
 
     #[test]
     fn catalog_ids_are_unique() {
-        let mut ids: Vec<_> = CATALOG.iter().map(|m| m.id).collect();
+        let all = catalog();
+        let mut ids: Vec<&str> = all.iter().map(|m| m.id()).collect();
         ids.sort();
         ids.dedup();
-        assert_eq!(ids.len(), CATALOG.len());
+        assert_eq!(ids.len(), all.len());
     }
 
     #[test]
@@ -1626,7 +936,7 @@ mod tests {
         // The runtime recommendation is `recommended_speech_model_id`, which is
         // per host; `recommended_speech_model_id_is_always_an_offered_row`
         // guards that one instead.
-        assert_eq!(CATALOG.iter().filter(|m| m.recommended).count(), 1);
+        assert_eq!(catalog().iter().filter(|m| m.recommended()).count(), 1);
     }
 
     #[test]
@@ -1640,18 +950,19 @@ mod tests {
 
     #[test]
     fn urls_point_at_the_right_repos() {
-        for m in CATALOG {
-            match m.engine {
+        for m in catalog() {
+            match m.engine() {
                 Engine::Whisper => assert!(m.url().starts_with(WHISPER_BASE_URL)),
                 Engine::Parakeet => assert!(m.url().starts_with(PARAKEET_BASE_URL)),
                 Engine::ParakeetCoreml => {
-                    assert!(m
-                        .url()
-                        .starts_with("https://huggingface.co/FluidInference/"))
+                    // Core ML rows have no artifacts in speech.json (the
+                    // FluidAudio bridge fetches the repo on demand), so the
+                    // URL is empty. The bridge knows the repo slug itself.
+                    assert!(m.url().is_empty(), "{} Core ML URL should be empty", m.id());
                 }
                 Engine::SherpaParakeet => assert!(m.url().starts_with(SHERPA_MODELS_BASE_URL)),
                 Engine::ParakeetCpp => {
-                    if m.base_url.is_none() {
+                    if m.base_url().is_none() {
                         assert!(m.url().starts_with(PARAKEET_BASE_URL));
                     }
                 }
@@ -1666,15 +977,21 @@ mod tests {
                 // model), so the generic branch built the URL; assert it is
                 // non-empty and points at the repo the row names.
                 Engine::TranscribeCpp => {
-                    assert!(m.base_url.is_some(), "{} needs a base_url", m.id);
-                    assert!(!m.url().is_empty(), "{} has no URL", m.id);
-                    assert!(m.url().starts_with(m.base_url.unwrap()), "{}", m.id);
+                    assert!(m.base_url().is_some(), "{} needs a base_url", m.id());
+                    assert!(!m.url().is_empty(), "{} has no URL", m.id());
+                    assert!(
+                        m.url().starts_with(m.base_url().unwrap()),
+                        "{}",
+                        m.id()
+                    );
                 }
+                Engine::Onnx => unreachable!("Onnx decider is not a dictation engine"),
             }
-            // The Apple rows are the only ones without a URL: the OS owns
-            // the assets, so there is nothing to point at.
-            if m.engine != Engine::AppleSpeech {
-                assert!(m.url().ends_with(m.file));
+            // The Apple and Core ML rows are the only ones without a URL:
+            // the OS owns the assets (Apple) or the bridge fetches the repo
+            // on demand (Core ML), so there is nothing to point at.
+            if m.engine() != Engine::AppleSpeech && m.engine() != Engine::ParakeetCoreml {
+                assert!(m.url().ends_with(m.file()));
             }
         }
     }
@@ -1682,25 +999,25 @@ mod tests {
     #[test]
     fn fluid_speech_mini_entry() {
         let m = find("fluid-speech-mini").expect("fluid-speech-mini entry");
-        assert_eq!(m.engine, Engine::ParakeetCpp);
+        assert_eq!(m.engine(), Engine::ParakeetCpp);
         assert_eq!(
             m.url(),
             "https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf/resolve/main/fluid-speech-mini-q2k-q4k.gguf"
         );
         assert_eq!(
-            m.sha256,
+            m.sha256(),
             Some("f0796bf40274cc49d3db58563c23cd024b52ca7e2ae4749ccf27af85841726b5")
         );
-        assert!(m.english_only);
-        assert!(!m.recommended);
+        assert!(m.english_only());
+        assert!(!m.recommended());
     }
 
     #[test]
     fn parakeet_is_recommended() {
         // Static catalog flag only: this is the cross-platform reference build.
         // Runtime recommendation lives in `recommended_speech_model_id`.
-        assert!(find("parakeet-tdt-v3").unwrap().recommended);
-        assert_eq!(find("parakeet-tdt-v3").unwrap().engine, Engine::Parakeet);
+        assert!(find("parakeet-tdt-v3").unwrap().recommended());
+        assert_eq!(find("parakeet-tdt-v3").unwrap().engine(), Engine::Parakeet);
     }
 
     #[test]
@@ -1720,26 +1037,34 @@ mod tests {
         // runtime recommendation on an Apple Silicon macOS 14+ build that links
         // the bridge, as `recommended_speech_model_id` proves.
         let ultra = find("parakeet-ultra-coreml").unwrap();
-        assert_eq!(ultra.engine, Engine::ParakeetCoreml);
-        assert_eq!(ultra.languages, Some(PARAKEET_V3_LANGUAGES));
-        assert!(!ultra.recommended);
+        assert_eq!(ultra.engine(), Engine::ParakeetCoreml);
+        let ultra_langs: Vec<&str> = ultra
+            .languages()
+            .map(|l| l.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        assert_eq!(ultra_langs, PARAKEET_V3_LANGUAGES);
+        assert!(!ultra.recommended());
         assert_eq!(ultra.language_label(), "25 languages");
 
         let v2 = find("parakeet-v2-coreml").unwrap();
-        assert_eq!(v2.engine, Engine::ParakeetCoreml);
-        assert!(v2.english_only);
+        assert_eq!(v2.engine(), Engine::ParakeetCoreml);
+        assert!(v2.english_only());
         assert_eq!(
-            find("parakeet-v3-coreml").unwrap().engine,
+            find("parakeet-v3-coreml").unwrap().engine(),
             Engine::ParakeetCoreml
         );
         let ctc = find("parakeet-ctc-110m-coreml").unwrap();
-        assert_eq!(ctc.engine, Engine::ParakeetCoreml);
-        assert!(!ctc.recommended);
+        assert_eq!(ctc.engine(), Engine::ParakeetCoreml);
+        assert!(!ctc.recommended());
 
         let sherpa = find("sherpa-parakeet-v3-int8").unwrap();
-        assert_eq!(sherpa.engine, Engine::SherpaParakeet);
-        assert_eq!(sherpa.languages, Some(PARAKEET_V3_LANGUAGES));
-        assert!(find("sherpa-parakeet-v2-int8").unwrap().english_only);
+        assert_eq!(sherpa.engine(), Engine::SherpaParakeet);
+        let sherpa_langs: Vec<&str> = sherpa
+            .languages()
+            .map(|l| l.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        assert_eq!(sherpa_langs, PARAKEET_V3_LANGUAGES);
+        assert!(find("sherpa-parakeet-v2-int8").unwrap().english_only());
     }
 
     #[test]
@@ -1781,28 +1106,6 @@ mod tests {
         );
     }
 
-    /// Every host fact the recommendation and the model list must agree on.
-    const PLATFORMS: &[Platform] = &[
-        Platform::MacosAppleSilicon { major: 26 },
-        Platform::MacosAppleSilicon { major: 15 },
-        Platform::MacosAppleSilicon { major: 14 },
-        Platform::MacosAppleSilicon { major: 13 },
-        Platform::MacosIntel,
-        Platform::Windows,
-        Platform::Other,
-    ];
-    const LANGUAGES: &[Option<&str>] = &[
-        None,
-        Some(""),
-        Some("auto"),
-        Some("en"),
-        Some("en-US"),
-        Some("de"),
-        Some("ar"),
-        Some("ja-JP"),
-        Some("und"),
-    ];
-
     /// The core bug this function exists to prevent: the recommendation named
     /// a Core ML row that the list filter had already stripped, so onboarding
     /// rendered no model card and Continue stayed disabled. The recommendation
@@ -1813,8 +1116,8 @@ mod tests {
             for language in LANGUAGES {
                 for fluid in [true, false] {
                     let id = recommended_speech_model_id(*platform, *language, fluid);
-                    let entry = find(id).unwrap_or_else(|| {
-                        panic!("{id} from {platform:?}/{language:?} is not in CATALOG")
+                    let entry = find(&id).unwrap_or_else(|| {
+                        panic!("{id} from {platform:?}/{language:?} is not in the catalog")
                     });
                     assert!(
                         entry.offered_on(*platform, fluid),
@@ -1824,8 +1127,8 @@ mod tests {
                     // The same predicate the list uses, spelled out here so a
                     // future change to `offered_on` cannot silently drift.
                     assert!(entry.available_on(*platform), "{id} cannot load");
-                    assert!(!entry.auxiliary, "{id} is not a dictation model");
-                    if entry.engine == Engine::ParakeetCoreml {
+                    assert!(!entry.auxiliary(), "{id} is not a dictation model");
+                    if entry.engine() == Engine::ParakeetCoreml {
                         assert!(fluid, "{id} needs the bridge that is absent");
                     }
                 }
@@ -1841,9 +1144,9 @@ mod tests {
             for language in LANGUAGES {
                 for fluid in [true, false] {
                     let id = recommended_speech_model_id(*platform, *language, fluid);
-                    let matches = CATALOG
+                    let matches = catalog()
                         .iter()
-                        .filter(|m| m.offered_on(*platform, fluid) && m.id == id)
+                        .filter(|m| m.offered_on(*platform, fluid) && m.id() == id)
                         .count();
                     assert_eq!(
                         matches, 1,
@@ -2091,7 +1394,7 @@ mod tests {
     #[test]
     fn qwen3_asr_row_is_well_formed() {
         let m = find("qwen3-asr").expect("qwen3-asr entry");
-        assert_eq!(m.engine, Engine::Qwen3Asr);
+        assert_eq!(m.engine(), Engine::Qwen3Asr);
         // macOS only, and only where llama-server was built with the mtmd
         // tools; the Windows release build has not been shown to load it.
         assert!(m.available_on(Platform::MacosAppleSilicon { major: 14 }));
@@ -2099,13 +1402,20 @@ mod tests {
         assert!(!m.available_on(Platform::Windows));
         assert!(!m.available_on(Platform::Other));
         // Built like the ggml engines: no extra build fact.
-        assert!(m.engine.built_on(Platform::MacosIntel, false));
-        // Two-file artifact: unpinned, directory layout, main-file URL.
-        assert!(m.sha256.is_none());
-        assert!(!m.recommended);
-        assert!(!m.auxiliary);
-        assert!(!m.english_only);
-        assert_eq!(m.languages, Some(QWEN3_ASR_LANGUAGES));
+        assert!(m.engine().built_on(
+            Platform::MacosIntel,
+            false,
+            false
+        ));
+        // Two-file artifact: the first artifact's sha256 is the row's pin.
+        assert!(!m.recommended());
+        assert!(!m.auxiliary());
+        assert!(!m.english_only());
+        let langs: Vec<&str> = m
+            .languages()
+            .map(|l| l.iter().map(String::as_str).collect())
+            .unwrap_or_default();
+        assert_eq!(langs, QWEN3_ASR_LANGUAGES);
         assert_eq!(m.language_label(), "30 languages");
         let dir = std::path::Path::new("/models");
         assert_eq!(m.provider_path(dir), dir.join("qwen3-asr"));
@@ -2114,28 +1424,35 @@ mod tests {
             m.url(),
             "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main/Qwen3-ASR-1.7B-Q8_0.gguf"
         );
-        assert_eq!(qwen3_asr_mmproj_file(), "mmproj-Qwen3-ASR-1.7B-Q8_0.gguf");
-        // The two pins the installer verifies against.
-        let arts = QWEN3_ASR_ARTIFACTS;
+        // The two pinned GGUFs the installer verifies against, from the row.
+        let arts = m.artifacts();
         assert_eq!(arts.len(), 2);
-        assert_eq!(arts[0].file, m.file, "the row names the main artifact");
-        assert_eq!(arts[1].file, qwen3_asr_mmproj_file());
-        for a in arts {
-            assert_eq!(a.sha256.len(), 64, "{}", a.file);
+        assert_eq!(arts[0].file, m.file(), "the row names the main artifact");
+        assert_eq!(arts[0].file, QWEN3_ASR_ARTIFACTS[0].0);
+        assert_eq!(arts[1].file, QWEN3_ASR_ARTIFACTS[1].0);
+        for (a, (file, sha)) in arts.iter().zip(QWEN3_ASR_ARTIFACTS) {
+            assert_eq!(&a.file, file);
+            assert_eq!(a.sha256.as_deref(), Some(*sha));
+            assert_eq!(a.sha256.as_deref().unwrap().len(), 64, "{file}");
             assert!(
-                a.sha256.chars().all(|c| c.is_ascii_hexdigit()),
-                "{}",
-                a.file
+                a.sha256.as_deref().unwrap().chars().all(|c| c.is_ascii_hexdigit()),
+                "{file}"
             );
-            assert!(a.bytes > 0, "{}", a.file);
+            assert!(a.bytes > 0, "{file}");
         }
+        // The row's sha256() is the first artifact's pin (the main model).
+        assert_eq!(
+            m.sha256(),
+            Some(QWEN3_ASR_ARTIFACTS[0].1),
+            "the row's sha256 is the main model's pin"
+        );
         // `size_mb` is the disk pre-flight figure, so it may round up but must
         // never under-report the two files it stands for.
         let total_mb = (arts.iter().map(|a| a.bytes).sum::<u64>() / 1_048_576) as u32;
         assert!(
-            (total_mb..=(total_mb as usize * 120 / 100) as u32).contains(&m.size_mb),
+            (total_mb..=(total_mb as usize * 120 / 100) as u32).contains(&m.size_mb()),
             "size_mb {} vs {} bytes of artifacts",
-            m.size_mb,
+            m.size_mb(),
             total_mb
         );
     }
@@ -2169,7 +1486,7 @@ mod tests {
         // historical onboarding bug: a recommendation that was filtered out).
         let mac = Platform::MacosAppleSilicon { major: 27 };
         let rec = recommended_speech_model_id(mac, Some("en"), true);
-        let rec_model = find(rec).unwrap();
+        let rec_model = find(&rec).unwrap();
         assert!(
             rec_model.offered_on(mac, true),
             "recommended {rec} is not offered on macOS"
@@ -2228,7 +1545,7 @@ mod tests {
         for p in platforms {
             for lang in [None, Some("en"), Some("de"), Some("ar"), Some("auto")] {
                 let id = pick_engine(None, p, lang);
-                let model = find(id).unwrap_or_else(|| panic!("{id} missing from CATALOG"));
+                let model = find(&id).unwrap_or_else(|| panic!("{id} missing from catalog"));
                 assert!(
                     model.available_on(p),
                     "pick_engine chose {id} on {p:?} for {lang:?}, but the host cannot load it"
@@ -2240,7 +1557,7 @@ mod tests {
     #[test]
     fn honours_language_arms() {
         let en_only = find("fluid-speech-mini").unwrap();
-        assert!(en_only.english_only);
+        assert!(en_only.english_only());
         // None / empty / "auto" are not a request for a language: every row
         // honours them (the engine uses its own default).
         assert!(en_only.honours_language(None));
@@ -2257,7 +1574,7 @@ mod tests {
         assert!(!en_only.honours_language(Some("de")));
 
         let multilingual = find("parakeet-tdt-v3").unwrap();
-        assert!(!multilingual.english_only);
+        assert!(!multilingual.english_only());
         assert!(multilingual.honours_language(None));
         assert!(multilingual.honours_language(Some("en")));
         assert!(multilingual.honours_language(Some("pl")));
@@ -2265,13 +1582,13 @@ mod tests {
 
         // Whisper carries no language table: it transcribes every language.
         let whisper = find("large-v3-turbo").unwrap();
-        assert!(!whisper.english_only);
+        assert!(!whisper.english_only());
         assert!(whisper.honours_language(Some("pl")));
         assert!(whisper.honours_language(Some("ar")));
 
         // An English-only Whisper build honours English but not more.
         let small_en = find("small-en").unwrap();
-        assert!(small_en.english_only);
+        assert!(small_en.english_only());
         assert!(small_en.honours_language(Some("en")));
         assert!(!small_en.honours_language(Some("de")));
     }
@@ -2285,24 +1602,24 @@ mod tests {
         // English-only row's negation, so the table (when present) must not
         // withhold it. The `languages: None` shape (Whisper's full 99)
         // carries no table to check.
-        for m in CATALOG {
+        for m in catalog() {
             for l in ["en", "de", "pl", "ar", "ja", "fr", "ru", "uk"] {
-                match m.languages {
+                match m.languages() {
                     Some(langs) => {
-                        if langs.contains(&l) {
+                        if langs.iter().any(|x| x == l) {
                             assert!(
                                 m.honours_language(Some(l)),
                                 "{} lists `{l}` but honours_language says no",
-                                m.id
+                                m.id()
                             );
                         }
                     }
                     None => {
-                        if m.english_only && l != "en" {
+                        if m.english_only() && l != "en" {
                             assert!(
                                 !m.honours_language(Some(l)),
                                 "{} has no table but honours `{l}` despite english_only",
-                                m.id
+                                m.id()
                             );
                         }
                     }
@@ -2310,11 +1627,11 @@ mod tests {
             }
             // The take path's question, directly: an English-only row never
             // honours a non-English language.
-            if m.english_only {
+            if m.english_only() {
                 assert!(
                     !m.honours_language(Some("pl")),
                     "{} is english_only yet honours Polish",
-                    m.id
+                    m.id()
                 );
             }
         }
@@ -2350,12 +1667,11 @@ mod tests {
                 // engine picker uses to decide whether a model's language
                 // list covers a language, so the detour must agree with it
                 // directly (a row's `honours_language` alone cannot see a
-                // 25-language table that withholds `en-US`, and the
-                // free-standing table is gone by design). The test passes
+                // 25-language table that withholds `en-US`). The test passes
                 // the raw language - BCP-47 tags included - exactly as the
                 // picker does; the row normalizes it, so "en-US" is
                 // covered by a table that lists "en".
-                let can_support = find(candidate).is_some_and(|m| entry_supports(m, Some(lang)));
+                let can_support = find(candidate).is_some_and(|m| entry_supports(&m, Some(lang)));
                 let whisper_ships = find("large-v3-turbo-q5").is_some_and(|m| m.available_on(p));
                 let picked = pick_engine(None, p, Some(lang));
                 assert!(
@@ -2375,10 +1691,10 @@ mod tests {
     fn only_the_ctc_spotter_is_auxiliary() {
         let ctc = find("parakeet-ctc-110m-coreml").expect("ctc entry");
         assert!(
-            ctc.auxiliary,
+            ctc.auxiliary(),
             "the CTC spotter is a boosting companion, not a dictation model"
         );
-        assert_eq!(CATALOG.iter().filter(|m| m.auxiliary).count(), 1);
+        assert_eq!(catalog().iter().filter(|m| m.auxiliary()).count(), 1);
     }
 
     #[test]
@@ -2386,8 +1702,8 @@ mod tests {
         let dir = std::path::Path::new("/models");
 
         let ggml = find("parakeet-tdt-v3").unwrap();
-        assert_eq!(ggml.provider_path(dir), dir.join(ggml.file));
-        assert_eq!(ggml.install_path(dir), dir.join(ggml.file));
+        assert_eq!(ggml.provider_path(dir), dir.join(ggml.file()));
+        assert_eq!(ggml.install_path(dir), dir.join(ggml.file()));
 
         // The sherpa release archive extracts to a directory named after the
         // archive without its `.tar.bz2` suffix.
@@ -2400,9 +1716,9 @@ mod tests {
 
         // The FluidAudio bridge takes the base directory and appends the
         // repo folder itself; the installed bytes live in that repo folder.
-        // At the pinned 0.17.7 revision `Repo.folderName` strips `-coreml`
-        // from the repo slug, so Ultra lives in `parakeet-ultra`, not
-        // `parakeet-ultra-coreml`.
+        // `fluid_dir_name` strips `-coreml` from the repo slug, so Ultra
+        // lives in `parakeet-ultra`, not `parakeet-ultra-coreml`, and the
+        // v3 row (file `parakeet-v3-coreml`) lives in `parakeet-v3`.
         let fluid = find("parakeet-ultra-coreml").unwrap();
         assert_eq!(fluid.provider_path(dir), dir.join("fluid"));
         assert_eq!(
@@ -2412,7 +1728,7 @@ mod tests {
         let v3 = find("parakeet-v3-coreml").unwrap();
         assert_eq!(
             v3.install_path(dir),
-            dir.join("fluid").join("parakeet-tdt-0.6b-v3")
+            dir.join("fluid").join("parakeet-v3")
         );
     }
 
@@ -2474,7 +1790,7 @@ mod tests {
         for p in platforms {
             for lang in [None, Some("en"), Some("ar"), Some("auto")] {
                 let id = pick_engine(None, p, lang);
-                assert!(find(id).is_some(), "{id} missing from CATALOG");
+                assert!(find(&id).is_some(), "{id} missing from catalog");
             }
         }
     }
@@ -2519,7 +1835,7 @@ mod tests {
                         // this host can (Windows + Arabic).
                         if i > 0 {
                             assert!(
-                                entry_supports(entry, lang),
+                                entry_supports(&entry, lang),
                                 "{p:?}/{lang:?} shortlisted {id}, which cannot transcribe \
                                  that language"
                             );
@@ -2582,11 +1898,11 @@ mod tests {
 
     #[test]
     fn every_speech_model_has_a_purpose() {
-        for m in CATALOG {
+        for m in catalog() {
             assert!(
-                !m.purposes.is_empty(),
+                !m.purposes().is_empty(),
                 "{} has no purpose chips; every row must say what it is good for",
-                m.id
+                m.id()
             );
         }
     }
@@ -2597,28 +1913,29 @@ mod tests {
             .join("../../")
             .canonicalize()
             .expect("repo root must resolve");
-        for m in CATALOG {
-            for p in m.purposes {
-                match p.basis {
-                    PurposeBasis::Measured => {
-                        let evidence = p.evidence.unwrap_or_else(|| {
-                            panic!("{}: a measured chip must name its evidence", m.id)
+        for m in catalog() {
+            for p in m.purposes() {
+                match p.basis.as_str() {
+                    "measured" => {
+                        let evidence = p.evidence.as_deref().unwrap_or_else(|| {
+                            panic!("{}: a measured chip must name its evidence", m.id())
                         });
                         let path = root.join(evidence);
                         assert!(
                             path.exists(),
                             "{}: evidence path {} does not exist",
-                            m.id,
+                            m.id(),
                             evidence
                         );
                     }
-                    PurposeBasis::Inferred => {
+                    "inferred" => {
                         assert!(
                             p.evidence.is_none(),
                             "{}: an inferred chip must not carry evidence",
-                            m.id
+                            m.id()
                         );
                     }
+                    other => panic!("{}: unknown purpose basis {other:?}", m.id()),
                 }
             }
         }
@@ -2626,12 +1943,12 @@ mod tests {
 
     #[test]
     fn purpose_labels_are_from_the_fixed_vocabulary() {
-        for m in CATALOG {
-            for p in m.purposes {
+        for m in catalog() {
+            for p in m.purposes() {
                 assert!(
-                    PURPOSE_LABELS.contains(&p.label),
+                    PURPOSE_LABELS.contains(&p.label.as_str()),
                     "{} uses label {:?}, which is not in the fixed chip vocabulary",
-                    m.id,
+                    m.id(),
                     p.label
                 );
             }
