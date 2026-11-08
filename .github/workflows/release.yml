@@ -1137,6 +1137,48 @@ jobs:
             echo "::warning::only $n_dmg macOS dmg(s) present; the x86_64 job is continue-on-error, so this is expected when it fails."
           fi
           [ "$fail" -eq 0 ] || exit 1
+      - name: Build the catalog manifest
+        # R11 (locked, shared with the app's silent-update path): the manifest
+        # `files` map has keys EXACTLY speech, llm, command; each value is the
+        # sha256 of that .json body. `version` is a monotonic u64 taken from
+        # CATALOG_VERSION (CI sets it, e.g. to the GitHub run number), never
+        # parsed from the semver release tag. `url` is the release download
+        # base; the app fetches {url}/{key}.json for each key.
+        #
+        # The manifest is verified against the R11 contract before upload, so a
+        # bad generation fails the release rather than publishing an update the
+        # app would reject.
+        run: |
+          set -euo pipefail
+          CATALOG_VERSION="${CATALOG_VERSION:-${GITHUB_RUN_NUMBER}}"
+          BASE="https://github.com/"\
+            "${{ github.repository }}/releases/download/${GITHUB_REF_NAME}"
+          python3 - "$CATALOG_VERSION" "$BASE" <<'PY'
+          import hashlib, json, sys
+
+          version, base = int(sys.argv[1]), sys.argv[2]
+          files = {}
+          for key in ("speech", "llm", "command"):
+              with open(f"crates/teletype-catalog/{key}.json", "rb") as fh:
+                  files[key] = hashlib.sha256(fh.read()).hexdigest()
+          manifest = {"version": version, "files": files, "url": base}
+          with open("catalog-manifest.json", "w") as fh:
+              json.dump(manifest, fh, indent=2)
+          # Verify the R11 contract before it ships: exactly the three keys,
+          # 64-hex sha256 values, monotonic u64 version, non-empty base url.
+          assert set(files) == {"speech", "llm", "command"}, \
+              "R11: files keys must be exactly speech, llm, command"
+          for value in files.values():
+              assert len(value) == 64,
+                  "R11: sha256 must be 64 lowercase hex"
+              assert all(c in "0123456789abcdef" for c in value), \
+                  "R11: sha256 must be 64 lowercase hex"
+          assert isinstance(version, int) and version > 0, \
+              "R11: version must be a positive monotonic u64"
+          assert base.startswith("https://"), \
+              "R11: url must be the release download base"
+          print(json.dumps(manifest, indent=2))
+          PY
       - name: Check release asset names are unique
         # A duplicate name means one architecture silently does not ship, and
         # the manifest would advertise a download that resolves to the other
@@ -1173,3 +1215,7 @@ jobs:
             dist/**/*.nsis.zip
             dist/**/*.nsis.zip.sig
             latest.json
+            catalog-manifest.json
+            crates/teletype-catalog/speech.json
+            crates/teletype-catalog/llm.json
+            crates/teletype-catalog/command.json

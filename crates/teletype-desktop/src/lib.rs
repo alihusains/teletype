@@ -187,6 +187,11 @@ pub struct AppState {
     /// source of truth. The actor flushes on drop (bounded), so a panic
     /// cannot lose queued entries.
     pub persist: persist::PersistHandle,
+    /// The model catalog, loaded from the working copy at startup (seeded
+    /// from the bundled defaults and silently updated when a newer release
+    /// manifest is published); falls back to the bundled defaults when the
+    /// working copy is missing or invalid.
+    pub catalog: teletype_catalog::Catalog,
     /// The loaded inference provider, if any.
     ///
     /// P1.8: the provider is held behind an `Arc` so the dictation worker
@@ -375,6 +380,7 @@ impl AppState {
             dictation_state: Mutex::new(Default::default()),
             platform: Box::<teletype_core::platform::MockPlatform>::default(),
             persist,
+            catalog: teletype_catalog::Catalog::bundled(),
             inference: Mutex::new(None),
             decision: std::sync::Arc::new(std::sync::Mutex::new(None)),
             command_decider: command_mode::DeciderSlot::new(),
@@ -754,6 +760,12 @@ pub fn run() {
             let models_dir = data_dir.join("models");
             std::fs::create_dir_all(&models_dir).ok();
 
+            // Task 12: seed the catalog working copy from the bundled
+            // defaults, silently try an update (throttled, non-fatal), and
+            // load the catalog, falling back to the bundled defaults when
+            // the working copy is missing or invalid.
+            let catalog = load_catalog(&data_dir);
+
             let settings_store = JsonStore::new(&config_dir, "settings.json");
             let mut settings = settings_store.load(commands::Settings::default());
             // P3.9: a removed model selection (EG-1) migrates to its
@@ -954,6 +966,7 @@ pub fn run() {
                 dictation_state: Mutex::new(Default::default()),
                 platform,
                 persist,
+                catalog,
                 edit_watch: Mutex::new(Default::default()),
                 save_lock: Mutex::new(()),
                 download_cancel: Mutex::new(std::collections::HashMap::new()),
@@ -1546,6 +1559,65 @@ pub fn run() {
                 teletype_speech::parakeet::mark_teardown();
             }
         });
+}
+
+/// The live HTTP implementation of `teletype_catalog::update::Fetch`.
+///
+/// R11: the working copy is fetched from the release assets described by
+/// `catalog-manifest.json`. A fetch failure is an error here; the caller
+/// (`try_update`) treats it as non-fatal and keeps the last good copy.
+struct HttpFetch;
+
+impl teletype_catalog::update::Fetch for HttpFetch {
+    fn get(&self, url: &str) -> Result<Vec<u8>, String> {
+        reqwest::blocking::get(url)
+            .map_err(|e| e.to_string())?
+            .bytes()
+            .map_err(|e| e.to_string())
+            .map(|b| b.to_vec())
+    }
+}
+
+/// Seeds the catalog working copy, silently tries an update (throttled,
+/// non-fatal), and loads the catalog, falling back to the bundled defaults
+/// if the working copy is missing or invalid. Called once at startup.
+fn load_catalog(data_dir: &std::path::Path) -> teletype_catalog::Catalog {
+    let catalogs_dir = teletype_catalog::update::working_copy_dir(data_dir);
+    teletype_catalog::update::seed_from_bundled(&catalogs_dir);
+    // Throttled to once an hour by the persisted last-check timestamp; any
+    // failure keeps the last good working copy, so this is never fatal.
+    let result = teletype_catalog::update::try_update(data_dir, &HttpFetch);
+    tracing::info!(?result, "catalog silent update check");
+    teletype_catalog::Catalog::load_from_dir(&catalogs_dir)
+        .unwrap_or_else(|e| {
+            tracing::warn!(?e, "catalog working copy invalid; using bundled defaults");
+            teletype_catalog::Catalog::bundled()
+        })
+}
+
+#[cfg(test)]
+mod startup_tests {
+    /// The startup path must leave a loadable working copy: seeding writes
+    /// the bundled files, and a corrupted working copy falls back to the
+    /// bundled defaults, which are non-empty.
+    #[test]
+    fn startup_seeds_the_working_copy_and_falls_back_on_bad_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path();
+        let catalog = super::load_catalog(data_dir);
+        let catalogs_dir = teletype_catalog::update::working_copy_dir(data_dir);
+        assert!(catalogs_dir.join("speech.json").exists());
+        assert!(catalogs_dir.join("llm.json").exists());
+        assert!(catalogs_dir.join("command.json").exists());
+        // The seeded copy is valid, so the loaded catalog comes from it.
+        assert!(!catalog.speech().is_empty());
+        // Corrupt the working copy: startup must fall back to bundled.
+        std::fs::write(catalogs_dir.join("speech.json"), b"not json").unwrap();
+        let c = super::load_catalog(data_dir);
+        assert!(!c.speech().is_empty());
+        assert!(!c.llm().is_empty());
+        assert!(!c.command().is_empty());
+    }
 }
 
 #[cfg(test)]
