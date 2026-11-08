@@ -119,6 +119,11 @@ pub struct DictationTrace {
     /// log. Absent for traces written before the field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub take_kind: Option<String>,
+    /// R1: the decision provider's confidence in its route pick, in [0,1].
+    /// `None` when no provider measured one (typed input, forced command, or a
+    /// non-measuring provider). The route label itself is `take_kind`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_confidence: Option<f32>,
 }
 
 impl DictationTrace {
@@ -1229,5 +1234,16 @@ mod tests {
         assert_eq!(f.short_take_engine, None);
         assert_eq!(f.short_take_count, 25);
         assert_eq!(f.short_take_p95_ms, Some(5_000));
+    }
+
+    #[test]
+    fn dictation_trace_carries_route_confidence() {
+        let t = DictationTrace {
+            take_kind: Some("command".into()),
+            route_confidence: Some(0.92),
+            ..Default::default()
+        };
+        assert_eq!(t.take_kind.as_deref(), Some("command"));
+        assert_eq!(t.route_confidence, Some(0.92));
     }
 }

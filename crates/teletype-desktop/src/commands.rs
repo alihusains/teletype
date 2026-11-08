@@ -1315,7 +1315,7 @@ impl Default for Settings {
         Self {
             hotkey: String::new(),
             recording_mode: RecordingModeSetting::Hold,
-            selected_speech_model: default_speech_model_id().into(),
+            selected_speech_model: default_speech_model_id(),
             speech_engine: default_speech_engine(),
             language: "auto".into(),
             input_device: String::new(),

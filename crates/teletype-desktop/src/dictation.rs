@@ -2309,6 +2309,10 @@ pub struct PipelinePayload {
     pub decider_ms: Option<u32>,
     pub tool: Option<String>,
     pub args_source: Option<String>,
+    /// R1: the decision provider's confidence in its route pick, copied
+    /// from `PipelineResult.route_confidence`. `None` when no provider
+    /// measured one.
+    pub route_confidence: Option<f32>,
     /// T10b: the take's word-loss accounting (T03) — failed mid-take
     /// segments and a failed tail. The controller delivers the (partial)
     /// text first, then flashes the warning when either is lost. `None`
@@ -3227,6 +3231,7 @@ impl Session {
         decider_ms: Option<u32>,
         tool: Option<String>,
         args_source: Option<String>,
+        route_confidence: Option<f32>,
     ) {
         if decider.is_some() || decider_ms.is_some() || tool.is_some() || args_source.is_some() {
             t.decider = decider;
@@ -3234,6 +3239,11 @@ impl Session {
             t.tool = tool;
             t.args_source = args_source;
         }
+        // R1: record the route confidence for every take, not just command
+        // takes: `take_kind` already says which route ran, and a dictation
+        // take that the provider confidently kept as dictation is worth
+        // recording too.
+        t.route_confidence = route_confidence;
     }
 
     /// P2.9: append one command-take lifecycle event to the trace stored
@@ -7006,6 +7016,7 @@ impl Session {
                                         decider_ms,
                                         tool: tool_label.clone(),
                                         args_source: args_source.clone(),
+                                        route_confidence: result.route_confidence,
                                         losses: None,
                                     },
                                 });
@@ -7026,6 +7037,7 @@ impl Session {
                                         decider_ms,
                                         tool: tool_label,
                                         args_source,
+                                        route_confidence: result.route_confidence,
                                         losses,
                                     },
                                 });
@@ -7788,6 +7800,7 @@ impl Session {
                 payload.decider_ms,
                 payload.tool,
                 payload.args_source,
+                payload.route_confidence,
             );
             self.finish_trace(session, |t| {
                 t.apply_stage_marks(marks);
@@ -7797,6 +7810,7 @@ impl Session {
                     decider_marks.1,
                     decider_marks.2,
                     decider_marks.3,
+                    decider_marks.4,
                 );
                 t.errors.push(format!(
                     "cancelled (deliver {} ms): discarded; kept in history",
@@ -7847,6 +7861,7 @@ impl Session {
                 payload.decider_ms,
                 payload.tool,
                 payload.args_source,
+                payload.route_confidence,
             );
             if let Some(t) = self.traces.get_mut(&session) {
                 t.apply_stage_marks(marks);
@@ -7856,6 +7871,7 @@ impl Session {
                     decider_marks.1,
                     decider_marks.2,
                     decider_marks.3,
+                    decider_marks.4,
                 );
                 if restamp_command {
                     t.take_kind = Some(TakeKind::Command.label().to_string());
@@ -7939,6 +7955,7 @@ impl Session {
                 payload.decider_ms,
                 payload.tool.clone(),
                 payload.args_source.clone(),
+                payload.route_confidence,
             );
             let audio_ms = self.speech_ms.get(&session).copied().unwrap_or(0) as u32;
             self.finish_trace(session, |t| {
@@ -7949,6 +7966,7 @@ impl Session {
                     decider_marks.1,
                     decider_marks.2,
                     decider_marks.3,
+                    decider_marks.4,
                 );
                 t.audio_ms = audio_ms;
                 t.errors.push(format!(
@@ -8279,6 +8297,7 @@ impl Session {
             payload.decider_ms,
             payload.tool.clone(),
             payload.args_source.clone(),
+            payload.route_confidence,
         );
         // CMD-PIPELINE-REPAIR B: restamp the route the take actually ran.
         let restamp_command = payload.decider.is_some() || payload.tool.is_some();
@@ -8292,6 +8311,7 @@ impl Session {
                     decider_marks.1,
                     decider_marks.2,
                     decider_marks.3,
+                    decider_marks.4,
                 );
                 if restamp_command {
                     t.take_kind = Some(TakeKind::Command.label().to_string());
@@ -8307,6 +8327,7 @@ impl Session {
                     decider_marks.1,
                     decider_marks.2,
                     decider_marks.3,
+                    decider_marks.4,
                 );
                 if restamp_command {
                     t.take_kind = Some(TakeKind::Command.label().to_string());
@@ -10917,6 +10938,7 @@ mod tests {
             decider_ms: None,
             tool: None,
             args_source: None,
+            route_confidence: None,
             losses: None,
         }
     }

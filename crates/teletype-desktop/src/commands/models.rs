@@ -536,7 +536,7 @@ pub async fn delete_speech_model(
         // held open by a live provider.
         unload_speech_slot_for(&state, &entry);
         let mut settings = state.settings();
-        settings.selected_speech_model = crate::commands::default_speech_model_id().into();
+        settings.selected_speech_model = crate::commands::default_speech_model_id();
         state.replace_settings(settings)?;
     }
 
