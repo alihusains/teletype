@@ -8,6 +8,7 @@ pub mod engine;
 pub mod gate;
 pub mod loader;
 pub mod schema;
+pub mod update;
 pub mod validate;
 
 pub use engine::Engine;
