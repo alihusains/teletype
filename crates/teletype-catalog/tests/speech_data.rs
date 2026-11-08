@@ -1,7 +1,7 @@
 use teletype_catalog::Catalog;
 
 #[test]
-fn speech_json_has_all_22_models() {
+fn speech_json_has_all_23_models() {
     let c = Catalog::bundled();
     let expected = [
         "parakeet-tdt-v3",
@@ -26,14 +26,15 @@ fn speech_json_has_all_22_models() {
         "nemotron-3.5-asr-streaming-q4",
         "moonshine-streaming-medium-q8",
         "granite-speech-470m-q4",
+        "ivy",
     ];
     assert_eq!(c.speech().len(), expected.len());
     for id in expected {
         assert!(c.speech_by_id(id).is_some(), "missing speech row {id}");
     }
     assert!(
-        c.speech_by_id("ivy").is_none(),
-        "ivy is added in Task 13, not migrated"
+        c.speech_by_id("ivy").is_some(),
+        "ivy is added as pure data in Task 13"
     );
 }
 

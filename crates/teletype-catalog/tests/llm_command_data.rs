@@ -46,7 +46,7 @@ fn command_json_has_the_decider_with_display_fields() {
 #[test]
 fn bundled_catalog_is_complete() {
     let c = Catalog::bundled();
-    assert_eq!(c.speech().len(), 22);
+    assert_eq!(c.speech().len(), 23);
     assert_eq!(c.llm().len(), 9);
     assert_eq!(c.command().len(), 1);
 }

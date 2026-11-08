@@ -967,9 +967,10 @@ mod tests {
                     }
                 }
                 Engine::Qwen3Asr => {
-                    assert!(m.url().starts_with(
-                        "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main"
-                    ));
+                    let base = m
+                        .base_url()
+                        .unwrap_or("https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/main");
+                    assert!(m.url().starts_with(base), "{}", m.id());
                 }
                 // OS-managed: no URL exists, so the row is skipped here.
                 Engine::AppleSpeech => {}

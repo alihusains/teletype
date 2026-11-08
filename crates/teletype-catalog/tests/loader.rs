@@ -4,7 +4,7 @@ use teletype_catalog::Catalog;
 fn bundled_catalog_loads_with_populated_speech_rows() {
     let c = Catalog::bundled();
     assert!(c.speech_by_id("parakeet-tdt-v3").is_some());
-    assert_eq!(c.speech().len(), 22);
+    assert_eq!(c.speech().len(), 23);
 }
 
 #[test]

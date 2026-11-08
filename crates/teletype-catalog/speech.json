@@ -609,5 +609,38 @@
       {"label": "Experimental", "basis": "inferred", "evidence": null}
     ],
     "description": "Experimental. IBM's compact multilingual CTC model: 7 languages (English, French, German, Spanish, Portuguese, Italian, Japanese) at a small download. Not yet measured on the Teletype corpus, so no speed or accuracy bar."
+  },
+  {
+    "id": "ivy",
+    "name": "Ivy (Qwen3-ASR fine-tune)",
+    "engine": "llama-server",
+    "capabilities": ["asr"],
+    "languages": ["en"],
+    "englishOnly": true,
+    "artifacts": [
+      {
+        "file": "ivy-Q8_0.gguf",
+        "bytes": 1834422208,
+        "sha256": "da50c4dcfc9bb36baeca3a5dedb742988dbe1058ab282dbb62d8a31be27795ed"
+      },
+      {
+        "file": "mmproj-ivy-f16.gguf",
+        "bytes": 641774016,
+        "sha256": "07ed1cc9c96c19aba84354b9135c69332747a98d50363a321bf1418aececfc00"
+      }
+    ],
+    "baseUrl": "https://huggingface.co/raj7676/ivy-dictation/resolve/main",
+    "sizeMb": 2477,
+    "minRamGb": 4,
+    "speed": 6.0,
+    "accuracy": 8.5,
+    "recommended": false,
+    "auxiliary": false,
+    "runsOn": ["macos"],
+    "purposes": [
+      {"label": "English only", "basis": "inferred", "evidence": null},
+      {"label": "Experimental", "basis": "inferred", "evidence": null}
+    ],
+    "description": "Ivy, a Qwen3-ASR fine-tune for dictation, via llama-server. English-only GGUF pair (main plus mmproj). A 2.5 GB download and a 10-second cold load."
   }
 ]
