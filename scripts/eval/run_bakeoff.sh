@@ -30,6 +30,8 @@ ENGINES=(
   nemotron-3.5-asr-streaming-q4
   moonshine-streaming-medium-q8
   granite-speech-470m-q4
+  # Nemotron 3.5 via FluidAudio Core ML (Neural Engine).
+  nemotron-3.5-coreml-multilingual
 )
 # Sets (plan §3.8).
 SETS=(
@@ -100,7 +102,7 @@ model_present() {
   f="$(model_file "$engine")"
   [[ -n "$MODELS_DIR" ]] || return 1
   case "$engine" in
-    parakeet-ultra-coreml|parakeet-v2-coreml|parakeet-v3-coreml)
+    parakeet-ultra-coreml|parakeet-v2-coreml|parakeet-v3-coreml|nemotron-3.5-coreml-multilingual)
       # FluidAudio: present when the bridge can run (macOS Apple Silicon);
       # the checkpoint downloads on first load.
       [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]

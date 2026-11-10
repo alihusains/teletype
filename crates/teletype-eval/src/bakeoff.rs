@@ -86,6 +86,9 @@ pub const BAKEOFF_ENGINES: &[&str] = &[
     "nemotron-3.5-asr-streaming-q4",
     "moonshine-streaming-medium-q8",
     "granite-speech-470m-q4",
+    // Nemotron 3.5 via FluidAudio Core ML (Neural Engine), the second path
+    // for the same model: the bake-off ranks it against the GGUF row.
+    "nemotron-3.5-coreml-multilingual",
 ];
 
 /// The eval sets the bake-off covers (plan §3.8).
@@ -177,6 +180,9 @@ pub enum EngineKind {
     Sherpa,
     /// Parakeet Core ML via `teletype_fluid::FluidParakeet` (Neural Engine).
     Fluid,
+    /// Nemotron 3.5 ASR Streaming Core ML via `teletype_fluid::FluidNemotron`
+    /// (Neural Engine; the multilingual 560 ms variant).
+    FluidNemotron,
     /// ggml C++ Parakeet via `teletype_speech::ParakeetCppProvider` (native build).
     ParakeetCpp,
     /// Qwen3-ASR, served by the bundled llama-server over loopback HTTP. The
@@ -198,7 +204,15 @@ pub fn engine_kind(model: &teletype_speech::catalog::SpeechModel) -> EngineKind 
         Engine::Parakeet => EngineKind::GgmlParakeet,
         Engine::Whisper => EngineKind::GgmlWhisper,
         Engine::SherpaParakeet => EngineKind::Sherpa,
-        Engine::ParakeetCoreml => EngineKind::Fluid,
+        // Both Core ML rows share the `ParakeetCoreml` engine; the Nemotron
+        // row has its own bridge session, so it is split out by id.
+        Engine::ParakeetCoreml => {
+            if model.id == "nemotron-3.5-coreml-multilingual" {
+                EngineKind::FluidNemotron
+            } else {
+                EngineKind::Fluid
+            }
+        }
         Engine::ParakeetCpp => EngineKind::ParakeetCpp,
         Engine::Qwen3Asr => EngineKind::Qwen3Asr,
         Engine::AppleSpeech => EngineKind::AppleSpeech,
@@ -238,7 +252,7 @@ pub fn model_path_for(models_dir: &Path, model: &teletype_speech::catalog::Speec
 /// presence = the bridge can run at all).
 pub fn model_present(models_dir: &Path, model: &teletype_speech::catalog::SpeechModel) -> bool {
     match engine_kind(model) {
-        EngineKind::Fluid => fluid_bridge_available(),
+        EngineKind::Fluid | EngineKind::FluidNemotron => fluid_bridge_available(),
         // OS-managed assets: the bridge being linked is what "present" means
         // (the provider installs the locale on first load, bounded by a
         // 10 minute timeout).
@@ -1296,10 +1310,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out_root = dir.path().join("runs");
         let cells = planned_cells(dir.path(), &out_root);
-        // 9 engines (6 P3.8 candidates + 3 transcribe.cpp rows) × 10 sets
-        // × 2 boosts = 180 cells.
-        assert_eq!(cells.len(), 180, "full matrix");
-        assert_eq!(BAKEOFF_ENGINES.len(), 9, "engine list");
+        // 10 engines (6 P3.8 candidates + 3 transcribe.cpp rows + the
+        // Nemotron Core ML path) × 10 sets × 2 boosts = 200 cells.
+        assert_eq!(cells.len(), 200, "full matrix");
+        assert_eq!(BAKEOFF_ENGINES.len(), 10, "engine list");
         for c in &cells {
             assert!(!c.command.is_empty());
             assert!(c.command.contains("--boost"));
@@ -1318,7 +1332,7 @@ mod tests {
                 .map(engine_kind)
                 .unwrap_or(EngineKind::GgmlParakeet);
             let present_allowed = match kind {
-                EngineKind::Fluid => fluid_ok,
+                EngineKind::Fluid | EngineKind::FluidNemotron => fluid_ok,
                 EngineKind::AppleSpeech => apple_ok,
                 _ => false,
             };

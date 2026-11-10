@@ -426,6 +426,20 @@ pub fn execute(cfg: &RunConfig) -> Result<RunOutput, String> {
                     };
                     Box::new(teletype_fluid::FluidParakeet::new(version))
                 }
+                crate::bakeoff::EngineKind::FluidNemotron => {
+                    // The Nemotron Core ML session downloads the multilingual
+                    // variant on first load, so a build without the bridge
+                    // must fail with an instrumented error (mirrors Fluid).
+                    if !teletype_fluid::bridge_built() {
+                        return Err(format!(
+                            "--engine {}: this build has no FluidAudio bridge \
+                             (the Nemotron Core ML path needs macOS 14+ Apple \
+                             Silicon without TELETYPE_FLUID_DISABLE_SWIFT)",
+                            model.id
+                        ));
+                    }
+                    Box::new(teletype_fluid::FluidNemotron::new())
+                }
                 crate::bakeoff::EngineKind::Qwen3Asr => {
                     // The provider spawns the bundled llama-server and talks
                     // HTTP; it lives in `teletype-inference`, which this
