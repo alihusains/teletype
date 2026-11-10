@@ -1,0 +1,16 @@
+{
+  "boost": "on",
+  "corpus": null,
+  "engine": "nemotron-3.5-coreml-multilingual",
+  "entity_ref_count": 6,
+  "git_sha": "79524a3",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "ami"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1794279447",
+  "vocab_cases": 0
+}

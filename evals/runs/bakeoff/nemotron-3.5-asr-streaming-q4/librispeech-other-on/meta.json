@@ -1,0 +1,16 @@
+{
+  "boost": "on",
+  "corpus": null,
+  "engine": "nemotron-3.5-asr-streaming-q4",
+  "entity_ref_count": 3,
+  "git_sha": "79524a3",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "librispeech-other"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1794277331",
+  "vocab_cases": 0
+}

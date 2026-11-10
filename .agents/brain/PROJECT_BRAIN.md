@@ -1919,6 +1919,37 @@ re-verification. The two downloaded files hash-match the pins exactly.
 to include `Platform::Windows`. To measure this engine in the bake-off, the
 harness would need a `teletype-inference` dependency or a separate driver.
 
+### Decision D042
+
+**Title:** Nemotron 3.5 Core ML reuses `Engine::ParakeetCoreml` and is split
+out by model id, not by a new engine variant
+
+**Date:** 2026-11-10
+
+**Status:** accepted, implemented (branch `feat/nemotron-streaming-coreml`)
+
+**Decision:**
+1. The Core ML port of Nemotron 3.5 ASR Streaming (`catalog id
+   nemotron-3.5-coreml-multilingual`) keeps `Engine::ParakeetCoreml`. A second
+   `Engine` variant would touch every engine match site (catalog, dictation,
+   eval, installer, availability); the id check costs one comparison.
+2. The split points are exactly three: `neural_provider_for` in
+   `dictation.rs` (returns `FluidNemotron` before the `FluidVersion` match),
+   `engine_kind` in `teletype-eval` (`EngineKind::FluidNemotron`), and
+   `fluid_dir_name` in the catalog (`nemotron-multilingual` folder).
+3. The bridge keeps a second, independent session (`ttf_nemotron_*` in
+   `Bridge.swift`, `NemotronState`): its own load/unload lifecycle and
+   last-error string, so a Nemotron failure cannot clobber the Parakeet
+   session and both models can be resident at once.
+4. The multilingual 560 ms variant is the only one wired (664 MB,
+   `languageCode: "auto"`); per-language pruned variants and other chunk
+   tiers are a follow-up if the measurement justifies them.
+
+**Context:** the GGUF path for the same model already ships through
+`Engine::TranscribeCpp` (`nemotron-3.5-asr-streaming-q4`); this decision adds
+the Neural Engine path so the bake-off can rank the two runtimes for the same
+weights. Measured state lives in `.agents/brain/asrs.md`, not here.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
