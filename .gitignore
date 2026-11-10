@@ -93,6 +93,9 @@ ew/
 # (models/tinydecide/model.bin was removed from tracking; re-download with
 # the curl commands in crates/teletype-inference/src/tinydecide.rs.)
 models/tinydecide/model.bin
+# FluidAudio Core ML checkpoints (Parakeet + Nemotron variants, hundreds of
+# MB each; the bridge re-downloads into models/fluid/ on first load).
+models/fluid/
 # Conformance model builds for crates/tinydecide (upstream TinyDecide repo,
 # downloaded with the curl commands documented in .agents/brain/PROJECT_BRAIN.md;
 # the conformance fixtures in crates/conformance/ are committed):

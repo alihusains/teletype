@@ -26,10 +26,15 @@ mod bridge;
 #[cfg(teletype_fluid_swift)]
 pub use bridge::FluidParakeet;
 
+#[cfg(teletype_fluid_swift)]
+mod nemotron;
+#[cfg(teletype_fluid_swift)]
+pub use nemotron::FluidNemotron;
+
 #[cfg(not(teletype_fluid_swift))]
 mod unsupported;
 #[cfg(not(teletype_fluid_swift))]
-pub use unsupported::FluidParakeet;
+pub use unsupported::{FluidNemotron, FluidParakeet};
 
 /// Parakeet checkpoint family requested from FluidAudio.
 ///

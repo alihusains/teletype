@@ -10,11 +10,20 @@
 //   ttf_unload()
 //   ttf_last_error(out, outCap) -> Int32      // additive, not in plan §3.1
 //
-// Return contract: 0 = success; `ttf_transcribe` returns the needed output
-// buffer size as a positive number when the caller's buffer is too small
-// (retry with that capacity); -1 = failure (detail via `ttf_last_error`, plus
-// the `err` buffer for `ttf_init`). All entry points block and must not run on
-// the main thread (plan §3.1 rule).
+// Nemotron 3.5 streaming (independent session, see the MARK section below):
+//
+//   ttf_nemotron_init(modelsDir, chunkMs, err, errCap) -> Int32
+//   ttf_nemotron_is_ready() -> Int32
+//   ttf_nemotron_transcribe(pcm, n, lang, out, outCap) -> Int32
+//   ttf_nemotron_unload()
+//   ttf_nemotron_last_error(out, outCap) -> Int32
+//
+// Return contract: 0 = success; `ttf_transcribe` and
+// `ttf_nemotron_transcribe` return the needed output buffer size as a
+// positive number when the caller's buffer is too small (retry with that
+// capacity); -1 = failure (detail via the matching `ttf_*_last_error`, plus
+// the `err` buffer for the init entry points). All entry points block and
+// must not run on the main thread (plan §3.1 rule).
 //
 // Model storage: Parakeet models live under `<modelsDir>/<repo folder>/`,
 // where `<modelsDir>` is the app's `models/fluid` directory. Vocabulary
@@ -209,6 +218,10 @@ private struct OutTranscript: Codable {
     let tokens: [OutToken]
     let detected_terms: [String]
     let applied_terms: [String]
+    /// Detected language (BCP-47), when the engine reports one. The Parakeet
+    /// path never reports a detection and leaves this null; the Nemotron
+    /// path fills it from the model's own detector.
+    let language: String?
 }
 
 private func milliseconds(_ seconds: TimeInterval) -> Int {
@@ -260,7 +273,8 @@ private func encodeJSON(
     duration: TimeInterval,
     timings: [TokenTiming],
     detected: [String],
-    applied: [String]
+    applied: [String],
+    language: String? = nil
 ) throws -> String {
     let payload = OutTranscript(
         text: text,
@@ -276,7 +290,8 @@ private func encodeJSON(
             )
         },
         detected_terms: detected,
-        applied_terms: applied
+        applied_terms: applied,
+        language: language
     )
     let data = try JSONEncoder().encode(payload)
     guard let json = String(data: data, encoding: .utf8) else {
@@ -513,6 +528,166 @@ public func ttf_unload() {
 @_cdecl("ttf_last_error")
 public func ttf_last_error(_ out: UnsafeMutablePointer<CChar>, _ outCap: Int) -> Int32 {
     let message = withBridge { bridge.lastError }
+    if message.isEmpty { return 0 }
+    return Int32(copyOut(message, to: out, cap: outCap))
+}
+
+// MARK: - Nemotron 3.5 streaming (second, independent session)
+
+/// All mutable Nemotron bridge state, guarded by `lock`.
+///
+/// Deliberately separate from the Parakeet `bridge` state: the two models
+/// have independent load/unload lifecycles and can be resident at the same
+/// time, and a failure in one must not clobber the other's session or
+/// last-error string. The manager serializes its own inference; this lock
+/// only protects our reference and the last-error string, exactly as
+/// `BridgeState` does for Parakeet.
+private final class NemotronState: @unchecked Sendable {
+    let lock = NSLock()
+    var manager: StreamingNemotronMultilingualAsrManager?
+    var lastError = ""
+}
+
+private let nemotron = NemotronState()
+
+private func withNemotron<T>(_ body: () -> T) -> T {
+    nemotron.lock.lock()
+    defer { nemotron.lock.unlock() }
+    return body()
+}
+
+/// Record `message` as the last Nemotron bridge error, log it, and return -1.
+/// When the caller provided an error buffer (`ttf_nemotron_init`), the
+/// message is also written there.
+private func failNemotron(
+    _ err: UnsafeMutablePointer<CChar>?,
+    _ errCap: Int,
+    _ message: String
+) -> Int32 {
+    withNemotron { nemotron.lastError = message }
+    log.error("nemotron: \(message, privacy: .public)")
+    if let err {
+        _ = copyOut(message, to: err, cap: errCap)
+    }
+    return -1
+}
+
+/// Language hint for `setLanguage`. `nil` means "the model decides" (auto
+/// detection), which is what "auto"/empty request.
+private func nemotronLanguage(_ code: String) -> String? {
+    let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if trimmed.isEmpty || trimmed == "auto" { return nil }
+    return trimmed
+}
+
+@_cdecl("ttf_nemotron_init")
+public func ttf_nemotron_init(
+    _ modelsDir: UnsafePointer<CChar>,
+    _ chunkMs: Int,
+    _ err: UnsafeMutablePointer<CChar>,
+    _ errCap: Int
+) -> Int32 {
+    let base = URL(fileURLWithPath: String(cString: modelsDir), isDirectory: true)
+    do {
+        // "auto" downloads the full-vocab `multilingual` variant (the
+        // Latin-script languages get a pruned `latin` variant only when a
+        // specific Latin hint is passed, which the dictation path does not).
+        // The variant lands in `<base>/<repo folder>/<langDir>/<chunkMs>ms/`
+        // and cached downloads are reused.
+        let variantDir: URL = try runBlocking {
+            try await StreamingNemotronMultilingualAsrManager.downloadVariant(
+                languageCode: "auto",
+                chunkMs: chunkMs,
+                to: base
+            )
+        }
+        let manager = StreamingNemotronMultilingualAsrManager()
+        try runBlocking {
+            try await manager.loadModels(from: variantDir)
+        }
+        withNemotron {
+            nemotron.manager = manager
+            nemotron.lastError = ""
+        }
+        return 0
+    } catch {
+        return failNemotron(err, errCap, "ttf_nemotron_init: \(error)")
+    }
+}
+
+@_cdecl("ttf_nemotron_is_ready")
+public func ttf_nemotron_is_ready() -> Int32 {
+    withNemotron { nemotron.manager != nil ? 1 : 0 }
+}
+
+@_cdecl("ttf_nemotron_transcribe")
+public func ttf_nemotron_transcribe(
+    _ pcm: UnsafePointer<Float>,
+    _ sampleCount: Int,
+    _ lang: UnsafePointer<CChar>,
+    _ out: UnsafeMutablePointer<CChar>,
+    _ outCap: Int
+) -> Int32 {
+    guard sampleCount > 0 else {
+        return failNemotron(nil, 0, "ttf_nemotron_transcribe: empty audio")
+    }
+    let samples = Array(UnsafeBufferPointer(start: pcm, count: sampleCount))
+    let languageCode = String(cString: lang)
+    let manager = withNemotron { nemotron.manager }
+    guard let manager else {
+        return failNemotron(nil, 0, "ttf_nemotron_transcribe: Nemotron model is not loaded")
+    }
+
+    do {
+        // The manager chunks the stream internally and accumulates the
+        // utterance; `finishWithTokenTimings` returns the full-utterance text
+        // plus per-token timings and then clears the working buffers.
+        // `reset` first so a fresh take never inherits encoder state from a
+        // previous one (it is a no-op on a fresh session).
+        let result: (text: String, timings: [TokenTiming], language: String?) = try runBlocking {
+            () async throws -> (String, [TokenTiming], String?) in
+            await manager.reset()
+            await manager.setLanguage(nemotronLanguage(languageCode))
+            _ = try await manager.process(samples: samples)
+            let (text, timings) = try await manager.finishWithTokenTimings()
+            return (text, timings, await manager.detectedLanguage())
+        }
+
+        let duration = Double(samples.count) / 16_000.0
+        // The manager does not expose an utterance-level confidence; the mean
+        // per-token confidence is the honest aggregate. A take with no token
+        // timings (some families) reports the neutral 1.0, as the other
+        // engines do.
+        let confidence: Float = result.timings.isEmpty
+            ? 1.0
+            : result.timings.map(\.confidence).reduce(0, +) / Float(result.timings.count)
+
+        let json = try encodeJSON(
+            text: result.text,
+            confidence: confidence,
+            duration: duration,
+            timings: result.timings,
+            detected: [],
+            applied: [],
+            language: result.language
+        )
+        let written = copyOut(json, to: out, cap: outCap)
+        return written <= outCap ? 0 : Int32(written)
+    } catch {
+        return failNemotron(nil, 0, "ttf_nemotron_transcribe: \(error)")
+    }
+}
+
+@_cdecl("ttf_nemotron_unload")
+public func ttf_nemotron_unload() {
+    withNemotron {
+        nemotron.manager = nil
+    }
+}
+
+@_cdecl("ttf_nemotron_last_error")
+public func ttf_nemotron_last_error(_ out: UnsafeMutablePointer<CChar>, _ outCap: Int) -> Int32 {
+    let message = withNemotron { nemotron.lastError }
     if message.isEmpty { return 0 }
     return Int32(copyOut(message, to: out, cap: outCap))
 }

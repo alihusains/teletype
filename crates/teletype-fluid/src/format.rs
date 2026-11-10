@@ -46,6 +46,10 @@ struct RawTranscript {
     detected_terms: Vec<String>,
     #[serde(default)]
     applied_terms: Vec<String>,
+    /// Detected language (BCP-47). Present only for engines that report a
+    /// detection (the Nemotron path); the Parakeet path sends null.
+    #[serde(default)]
+    language: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -58,9 +62,10 @@ struct RawWord {
 
 /// Parse the bridge's transcript JSON into the shared [`Transcript`] shape.
 ///
-/// `language` is always `None`: FluidAudio does not report a detected
-/// language, and the caller-supplied hint (when any) is a lock, not a
-/// detection.
+/// `language` is the bridge-reported detection when the engine has one
+/// (the Nemotron path); the Parakeet path never reports a detection, so it
+/// stays `None` there. The caller-supplied hint (when any) is a lock, not a
+/// detection, and is never echoed back here.
 pub(crate) fn parse_transcript_json(json: &str) -> Result<ParsedTranscript, SpeechError> {
     let raw: RawTranscript = serde_json::from_str(json).map_err(|error| {
         SpeechError::Transcribe(format!("FluidAudio returned unparsable JSON: {error}"))
@@ -81,7 +86,7 @@ pub(crate) fn parse_transcript_json(json: &str) -> Result<ParsedTranscript, Spee
             text: raw.text,
             words,
             confidence: raw.confidence,
-            language: None,
+            language: raw.language,
         },
         detected_terms: raw.detected_terms,
         applied_terms: raw.applied_terms,
@@ -136,10 +141,17 @@ mod tests {
         assert_eq!(parsed.transcript.words[1].start_ms, 320);
         assert_eq!(parsed.transcript.words[1].end_ms, 600);
         assert!((parsed.transcript.confidence - 0.96).abs() < 1e-6);
-        // FluidAudio never reports a detected language.
+        // The Parakeet path sends no detection, so the field defaults to None.
         assert_eq!(parsed.transcript.language, None);
         assert_eq!(parsed.detected_terms, vec!["Teletype".to_string()]);
         assert_eq!(parsed.applied_terms, vec!["Teletype".to_string()]);
+    }
+
+    #[test]
+    fn a_reported_detected_language_is_carried_through() {
+        let parsed = parse_transcript_json(r#"{"text":"hola","language":"es-MX"}"#)
+            .expect("payload with a detection must parse");
+        assert_eq!(parsed.transcript.language.as_deref(), Some("es-MX"));
     }
 
     #[test]

@@ -578,10 +578,13 @@ fn sherpa_dir_name(file: &str) -> &str {
 ///
 /// Mirrors `Repo.folderName` in FluidAudio's `ModelNames.swift` at the pinned
 /// 0.17.7 revision: the default case strips `-coreml`, while the CTC repos
-/// carry explicit folder names.
+/// and the Nemotron multilingual repo carry explicit folder names.
 fn fluid_dir_name(file: &str) -> &str {
     match file {
         "parakeet-ctc-110m-coreml" | "parakeet-ctc-0.6b-coreml" => file,
+        // `Repo.nemotronMultilingual.folderName` is a short fixed name, not a
+        // slug transformation.
+        "Nemotron-3.5-ASR-Streaming-Multilingual-0.6b-CoreML" => "nemotron-multilingual",
         _ => file.strip_suffix("-coreml").unwrap_or(file),
     }
 }
@@ -993,12 +996,30 @@ pub const CATALOG: &[SpeechModel] = &[
         engine: Engine::TranscribeCpp,
         size_mb: 496,
         sha256: Some("41c99fa5fb6f3d35f68e79adc3e755eca2232a8d921178bd647b71194792b8fd"),
-        description: "Experimental. NVIDIA's streaming ASR model: 15 ready languages with punctuation, built for low-latency voice agents. Not yet measured on the Teletype corpus, so no speed or accuracy bar.",
+        description: "Experimental. NVIDIA's streaming ASR model: 15 ready languages with punctuation, built for low-latency voice agents. Measured 2026-11-10 on the synthesized corpus: fast, but less accurate than Parakeet Ultra on all nine sets, so no speed or accuracy bar.",
         languages: Some(NEMOTRON35_READY_LANGUAGES),
         speed: 0.0,
         accuracy: 0.0,
         min_ram_gb: 2,
         base_url: Some("https://huggingface.co/handy-computer/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/53ce288f69326b415aeef030cfcb02a08a8096dd"),
+        purposes: &[
+            Purpose::inferred("Multilingual"),
+            Purpose::inferred("Experimental"),
+        ],
+        ..WHISPER
+    },
+    SpeechModel {
+        id: "nemotron-3.5-coreml-multilingual",
+        name: "Nemotron 3.5 ASR Streaming 0.6B (Neural Engine, Experimental)",
+        file: "Nemotron-3.5-ASR-Streaming-Multilingual-0.6b-CoreML",
+        engine: Engine::ParakeetCoreml,
+        size_mb: 664,
+        sha256: None,
+        description: "Experimental. Core ML port of NVIDIA's streaming ASR model (full-vocab multilingual, 560 ms chunk) running on the Neural Engine. Measured 2026-11-10 on the synthesized corpus: on par with the GGUF build, less accurate than Parakeet Ultra on all nine sets, so no speed or accuracy bar.",
+        languages: Some(NEMOTRON35_READY_LANGUAGES),
+        speed: 0.0,
+        accuracy: 0.0,
+        min_ram_gb: 4,
         purposes: &[
             Purpose::inferred("Multilingual"),
             Purpose::inferred("Experimental"),

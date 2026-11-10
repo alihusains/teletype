@@ -8985,6 +8985,11 @@ pub(crate) fn neural_provider_for(
     let entry = teletype_speech::catalog::find(model_id)?;
     match entry.engine {
         Engine::ParakeetCoreml if teletype_fluid::bridge_built() => {
+            // The Nemotron row shares the Core ML engine but has its own
+            // bridge session (its own models, its own C ABI entry points).
+            if model_id == "nemotron-3.5-coreml-multilingual" {
+                return Some(Box::new(teletype_fluid::FluidNemotron::new()));
+            }
             let version = match model_id {
                 "parakeet-v2-coreml" => teletype_fluid::FluidVersion::V2,
                 "parakeet-v3-coreml" => teletype_fluid::FluidVersion::V3,
