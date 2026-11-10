@@ -365,7 +365,7 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
   // Which polish controls this model honours (none / override / full). Drives
   // the scoping of the rules, prompt, and custom-instruction controls below.
   const polishCustomization = polishCustomizationFor(cleanupOnlyModelId);
-  const selectedIsPolish = !!selected && (selected.id === "builtin-polish" || selected.autoApply);
+  const selectedIsPolish = !!selected && selected.id === "builtin-polish";
   const selectedBlocked = cleanupOnly && !!selected && !selectedIsPolish;
 
   const refresh = () => {
@@ -511,6 +511,19 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
       refresh();
     }
   };
+
+  // Cleanup-only models can only run the Polish preset. If a non-Polish
+  // preset is flagged as the auto-apply (e.g. the user set Professional
+  // before switching to a cleanup model), correct it back to Polish so
+  // dictation actually polishes instead of returning the input unchanged.
+  useEffect(() => {
+    if (!cleanupOnly) return;
+    const autoApplyId = transforms.find((t) => t.autoApply)?.id;
+    if (autoApplyId && autoApplyId !== "builtin-polish") {
+      void setAutoApplyTo("builtin-polish");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleanupOnly, transforms]);
 
   const deleteTransform = async (id: string) => {
     if (!(await confirmDialog("Delete this transform?", { title: "Delete transform" }))) return;
@@ -702,6 +715,12 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
     ? transforms.find((t) => t.autoApply && t.enabled)
     : undefined;
   const enabledTransforms = transforms.filter((t) => t.enabled);
+  // Cleanup-only models can only run the Polish preset, so the auto-apply
+  // picker offers just that one option (every other preset would return the
+  // input unchanged on those models).
+  const autoApplyOptions = cleanupOnly
+    ? enabledTransforms.filter((t) => t.id === "builtin-polish")
+    : enabledTransforms;
 const modelCapabilityNote =
   polishCustomization === "none"
     ? ` ${runtime?.llm.label || "This model"} can only clean up transcripts and can't be customized.`
@@ -745,7 +764,7 @@ const statusLine =
           )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(170px, 100%), 1fr))", gap: 10, marginTop: 12 }}>
             {transforms.map((t) => {
-              const presetBlocked = cleanupOnly && !(t.id === "builtin-polish" || t.autoApply);
+              const presetBlocked = cleanupOnly && t.id !== "builtin-polish";
               return (
               <div
                 key={t.id}
@@ -792,7 +811,7 @@ const statusLine =
                 <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
                   {t.description}
                 </div>
-                {cleanupOnly && !(t.id === "builtin-polish" || t.autoApply) && (
+                {cleanupOnly && t.id !== "builtin-polish" && (
                   <div style={{ fontSize: 10, color: "var(--warning)", marginTop: 3 }}>Needs a general model</div>
                 )}
                 {!t.builtIn && (
@@ -1132,13 +1151,13 @@ const statusLine =
           {autoApplyEnabled && (
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Which polish runs</div>
-              {enabledTransforms.length === 0 ? (
+              {autoApplyOptions.length === 0 ? (
                 <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>
                   No polish is turned on, so there is nothing that can run automatically.
                 </div>
               ) : (
                 <div role="radiogroup" aria-label="Which polish runs" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {enabledTransforms.map((t) => {
+                  {autoApplyOptions.map((t) => {
                     const active = t.id === autoApplyTransformId;
                     return (
                       <button
