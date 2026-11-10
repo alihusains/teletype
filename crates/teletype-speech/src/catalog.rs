@@ -781,7 +781,11 @@ pub const CATALOG: &[SpeechModel] = &[
         file: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
         engine: Engine::SherpaParakeet,
         size_mb: 465,
-        sha256: Some("5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf"),
+        // Re-pinned 2026-11-10: the sherpa-onnx asr-models release asset was
+        // re-uploaded upstream after 5098409, so the old digest failed the
+        // post-download check and every Windows first-run download was
+        // discarded.
+        sha256: Some("1495e91b59d7fc53ddca91f3431758ec99f8fa253fdb0e1e851be0f72b14b0f9"),
         description: "Default on Windows. Runs on CPU, English and 24 European languages.",
         languages: Some(PARAKEET_V3_LANGUAGES),
         speed: 8.5,
@@ -800,7 +804,8 @@ pub const CATALOG: &[SpeechModel] = &[
         file: "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
         engine: Engine::SherpaParakeet,
         size_mb: 461,
-        sha256: Some("157c157bc51155e03e37d2466522a3a737dd9c72bb25f36eb18912964161e1ad"),
+        // Re-pinned 2026-11-10 alongside the v3 row (same re-upload).
+        sha256: Some("6fc4426b54aa549a0019b8a75b8dea59164e71790a37ac56a045ad57f915f714"),
         english_only: true,
         languages: Some(&["en"]),
         description: "English-only sherpa-onnx build for Windows.",
