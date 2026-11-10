@@ -368,13 +368,16 @@ describe('polish diff card', () => {
     expect(pillMessage(s.pill)).toBe('')
   })
 
-  it('ignores a difference that is only whitespace', () => {
+  it('shows the card for a whitespace-only difference, but drops a blank raw', () => {
+    // A whitespace-only difference is still a landed take: the card shows
+    // "0 changes" so the user can see the take landed.
     const s = pillReducer(state(), {
       type: 'polish-diff',
       payload: { ...payload, polished: `${payload.raw}  ` },
     })
-    expect(s.pill).toEqual({ phase: 'idle' })
+    expect(s.pill.phase).toBe('result')
 
+    // A blank raw is still dropped (nothing to show).
     const blank = pillReducer(state(), {
       type: 'polish-diff',
       payload: { raw: '   ', polished: 'text', ms: 10 },

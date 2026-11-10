@@ -738,40 +738,53 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - name: Install UI deps
         run: cd ui; npm ci
-      - name: Build llama-server (CPU, static)
-        # Windows has no Metal; build llama-server with the CPU backend and
-        # static linking so the NSIS bundle carries a single self-contained
-        # executable. The app calls it over 127.0.0.1 HTTP, so no TLS is needed.
+      - name: Download llama-server (Vulkan, prebuilt)
+        # Windows has no Metal; the CPU-only build was the old path. The
+        # Vulkan prebuilt from llama.cpp's official releases gives GPU
+        # acceleration on any Vulkan-capable GPU (NVIDIA, AMD, Intel Arc,
+        # or integrated). The prebuilt is a dynamic build: llama-server.exe
+        # is a small stub that loads llama-server-impl.dll and the ggml
+        # backend DLLs, so the whole directory ships alongside the exe.
+        #
+        # The b12200 pin matches the macOS/Intel build
+        # (scripts/build-llama-server.sh COMMIT). Bump both together when
+        # the llama.cpp pin moves.
+        #
+        # The app calls the server over 127.0.0.1 HTTP, so no TLS is needed.
         run: |
-          git clone --filter=blob:none https://github.com/ggml-org/llama.cpp llama.cpp
-          cd llama.cpp
-          git checkout --detach f95b0d95394d5e311ba8228689972843178c5e28
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_APP=OFF
-          cmake --build build --config Release --target llama-server
-          # llama.cpp's server target lands in build\bin\Release (not build\Release).
-          # cwd is <repo>/llama.cpp, so ..\ is the repo root.
-          #
-          # The destination must be the path tauri.conf.json actually maps
-          # ("binaries/llama-server", no extension). Copying to
-          # `llama-server.exe` put the real binary *next to* the mapped path,
-          # so the bundle shipped the 74-byte placeholder committed there and
-          # every Windows user who selected a local polish model got
-          # "llama-server binary not found. Run scripts/build-llama-server.sh".
-          New-Item -ItemType Directory -Path '..\crates\teletype-desktop\binaries' -Force | Out-Null
-          $dest = '..\crates\teletype-desktop\binaries\llama-server.exe'
-          Copy-Item build/bin/Release/llama-server.exe $dest
-          # The resource map has no extension, so mirror the built binary onto
-          # it as well. Keeping both means either mapping resolves.
-          Copy-Item $dest '..\crates\teletype-desktop\binaries\llama-server'
+          $zip = 'llama-b12200-bin-win-vulkan-x64.zip'
+          $url = "https://github.com/ggml-org/llama.cpp/releases/download/b12200/$zip"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath 'llama-server-vulkan' -Force
+          Remove-Item $zip
+          $binDir = '..\crates\teletype-desktop\binaries'
+          $llamaDir = Join-Path $binDir 'llama-server-win'
+          New-Item -ItemType Directory -Path $llamaDir -Force | Out-Null
+          # Copy every file from the prebuilt into binaries/llama-server-win/.
+          # The exe goes to both binaries/llama-server (the resource-map path
+          # cargo tauri build checks) and binaries/llama-server-win/llama-server.exe
+          # (the runtime path find_llama_server_bin looks for, next to the DLLs).
+          Copy-Item "llama-server-vulkan\*" $llamaDir -Recurse -Force
+          Copy-Item "$llamaDir\llama-server.exe" (Join-Path $binDir 'llama-server') -Force
           # The destination is no longer a committed placeholder (it is a build
           # artifact, see .gitignore and scripts/check-no-built-binaries.sh), so
           # this is checking the copy we just made rather than catching a
           # stale one. Keep it anyway: a short file here is a truncated or
           # wrong-architecture build, and shipping that is worse than failing.
-          if ((Get-Item '..\crates\teletype-desktop\binaries\llama-server').Length -lt 1000000) {
+          if ((Get-Item (Join-Path $binDir 'llama-server')).Length -lt 1000000) {
             Write-Error "llama-server copy is under 1 MB; refusing to ship it"
             exit 1
           }
+          # The runtime exe (inside the directory) is a 10 KB stub that loads
+          # its DLLs; the resource-map copy is the full ~10 MB static-ish exe.
+          # Both must exist for the bundle to work.
+          $runtimeExe = Join-Path $llamaDir 'llama-server.exe'
+          if (-not (Test-Path $runtimeExe)) {
+            Write-Error "llama-server.exe missing from $llamaDir"
+            exit 1
+          }
+          Write-Host "llama-server Vulkan prebuilt installed to $llamaDir"
+          Get-ChildItem $llamaDir | ForEach-Object { Write-Host ("  {0}  {1} bytes" -f $_.Name, $_.Length) }
       - name: Build Tauri app (NSIS)
         # Produces the .exe, the .nsis.zip updater payload, and its signature.
         # An empty-but-present TAURI_SIGNING_PRIVATE_KEY is treated as absent

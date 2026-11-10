@@ -136,7 +136,9 @@ fn dictate(
         polish_max_change_percent: 40,
         screen_terms: &[],
         word_checker: &fx.word_checker,
-    };
+        date_format: "",
+            polish_prompt_override: None,
+};
     p.run(
         UnifiedInput {
             source: InputSource::Voice,

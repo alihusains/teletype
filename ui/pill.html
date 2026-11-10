@@ -37,6 +37,13 @@
         0%, 100% { opacity: 0.3; }
         50% { opacity: 0.65; }
       }
+      /* Agentic cue for the polish/transform stage: a sparkle that pulses
+         (scale + opacity only, so it never scales past the window box).
+         Holds still under reduced motion via the global rule below. */
+      @keyframes sparkle-pulse {
+        0%, 100% { transform: scale(0.82); opacity: 0.55; }
+        50% { transform: scale(1.12); opacity: 1; }
+      }
       @keyframes well-fade-top {
         from { opacity: 0; }
         to { opacity: 1; }

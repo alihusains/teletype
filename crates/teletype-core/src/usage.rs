@@ -135,7 +135,7 @@ pub fn count_autotext(
     }
 
     // Spoken snippets: count placeholders protect_snippets would produce.
-    let protected = protect::protect_snippets(text, store, app);
+    let protected = protect::protect_snippets(text, store, app, "");
     // protect_snippets stores values but not which entry; re-derive counts by
     // scanning for each snippet phrase directly.
     for entry in store.snippets_for(app) {

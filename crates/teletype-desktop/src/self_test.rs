@@ -341,6 +341,7 @@ fn run_text_pipeline(text: &str) -> Result<String, String> {
         autotext: &autotext,
         transforms: &transforms,
         profile: &profile,
+        polish_prompt_override: None,
         inference: None,
         decision: None,
         force_command: false,
@@ -366,7 +367,8 @@ fn run_text_pipeline(text: &str) -> Result<String, String> {
         list_style: settings.list_style.resolve(),
         polish_max_change_percent: settings.polish_max_change_percent,
         screen_terms: &[],
-    };
+        date_format: "",
+};
     let result = pipeline.run(
         teletype_core::pipeline::UnifiedInput {
             source: teletype_core::pipeline::InputSource::Voice,

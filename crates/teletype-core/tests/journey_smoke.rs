@@ -262,7 +262,9 @@ impl Fixture {
             polish_max_change_percent: 40,
             screen_terms: &[],
             word_checker: &self.word_checker,
-        };
+            date_format: "",
+            polish_prompt_override: None,
+};
         p.run(
             UnifiedInput {
                 source: InputSource::Voice,
@@ -309,7 +311,9 @@ impl Fixture {
             polish_max_change_percent: 40,
             screen_terms: &[],
             word_checker: &self.word_checker,
-        };
+            date_format: "",
+            polish_prompt_override: None,
+};
         p.run(
             UnifiedInput {
                 source: InputSource::Typed,
@@ -546,7 +550,9 @@ fn journey_03c_an_explicitly_requested_transform_actually_runs() {
         polish_max_change_percent: 40,
         screen_terms: &[],
         word_checker: &fx.word_checker,
-    };
+        date_format: "",
+            polish_prompt_override: None,
+};
     let r = p.run(
         UnifiedInput {
             source: InputSource::Voice,
@@ -665,7 +671,7 @@ fn journey_04g_placeholder_date_expands_at_use_time_not_save_time() {
     let protected = {
         let mut at = AutoTextStore::default();
         at.insert(snippet("/d", "on {{date}}")).expect("insert");
-        teletype_core::autotext::protect::protect("/d", &at, &ApplicationContext::unknown())
+        teletype_core::autotext::protect::protect("/d", &at, &ApplicationContext::unknown(), "")
     };
     let expanded_value = protected
         .values
@@ -2039,7 +2045,9 @@ fn perf_pipeline_non_llm_steps_scale_linearly() {
         polish_max_change_percent: 40,
         screen_terms: &[],
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
-    };
+        date_format: "",
+            polish_prompt_override: None,
+};
 
     // A realistic ~20-word utterance, and a 4×-longer one (~80 words).
     // Each segment is ~20 words so both inputs land on the same
@@ -2175,7 +2183,9 @@ fn perf_concurrent_store_access_does_not_block_pipeline() {
         polish_max_change_percent: 40,
         screen_terms: &[],
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
-    };
+        date_format: "",
+            polish_prompt_override: None,
+};
 
     let input = UnifiedInput {
         source: InputSource::Voice,

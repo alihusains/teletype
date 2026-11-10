@@ -39,8 +39,14 @@ pub(crate) fn combined_snippets<'a>(
 /// Expands every applicable trigger in `text` to its value.
 ///
 /// Matching rules are the same as protection: whole tokens only (start or
-/// whitespace before, whitespace or end after).
-pub fn expand(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> String {
+/// whitespace before, whitespace or end after). `date_format` is the user's
+/// AutoText date format for `{{date}}` ("" = the default ISO shape).
+pub fn expand(
+    text: &str,
+    store: &AutoTextStore,
+    app: &ApplicationContext,
+    date_format: &str,
+) -> String {
     let mut applicable: Vec<&AutoTextEntry> =
         store.entries.iter().filter(|e| e.applies_to(app)).collect();
     applicable.sort_by_key(|e| std::cmp::Reverse(e.trigger.len()));
@@ -80,9 +86,11 @@ pub fn expand(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> St
                     .is_none_or(|n| !n.is_alphanumeric() && n != '_');
                 if after_ok {
                     out.push_str(&rest[..pos]);
-                    out.push_str(&placeholders::expand_placeholders_for(
+                    out.push_str(&placeholders::expand_placeholders_with(
                         &entry.replacement,
-                        app,
+                        Some(app),
+                        date_format,
+                        &crate::autotext::placeholders::read_clipboard_public,
                     ));
                     rest = after_match;
                     continue;
@@ -101,8 +109,13 @@ pub fn expand(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> St
 /// This is the voice counterpart of [`expand`]: it matches the configured
 /// phrase (e.g. "my email") case-insensitively on whole words and replaces it
 /// with the replacement. Multiple snippets in one sentence all expand.
-pub fn expand_snippets(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> String {
-    expand_snippets_with(text, store, app, &[])
+pub fn expand_snippets(
+    text: &str,
+    store: &AutoTextStore,
+    app: &ApplicationContext,
+    date_format: &str,
+) -> String {
+    expand_snippets_with(text, store, app, &[], date_format)
 }
 
 /// Like [`expand_snippets`] but also applies the built-in System entries
@@ -112,6 +125,7 @@ pub fn expand_snippets_with(
     store: &AutoTextStore,
     app: &ApplicationContext,
     system: &[AutoTextEntry],
+    date_format: &str,
 ) -> String {
     let snippets = combined_snippets(store, app, system);
     if snippets.is_empty() {
@@ -194,9 +208,11 @@ pub fn expand_snippets_with(
                     after
                 };
                 out.push_str(before_out);
-                out.push_str(&placeholders::expand_placeholders_for(
+                out.push_str(&placeholders::expand_placeholders_with(
                     &entry.replacement,
-                    app,
+                    Some(app),
+                    date_format,
+                    &crate::autotext::placeholders::read_clipboard_public,
                 ));
                 rest = after_rest;
             }
@@ -223,7 +239,7 @@ mod tests {
             .insert(AutoTextEntry::new("/name", "Ali Husain"))
             .unwrap();
         let app = ApplicationContext::unknown();
-        let out = expand("hi /name, send to /email", &store, &app);
+        let out = expand("hi /name, send to /email", &store, &app, "");
         assert_eq!(out, "hi Ali Husain, send to user@example.com");
     }
 
@@ -238,10 +254,10 @@ mod tests {
             application_name: "Gmail".into(),
             ..Default::default()
         };
-        assert_eq!(expand("/sig", &store, &app), "Sent from Gmail");
+        assert_eq!(expand("/sig", &store, &app, ""), "Sent from Gmail");
         // Unknown context: empty, never the literal token.
         assert_eq!(
-            expand("/sig", &store, &ApplicationContext::unknown()),
+            expand("/sig", &store, &ApplicationContext::unknown(), ""),
             "Sent from "
         );
     }
@@ -258,7 +274,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            expand_snippets("thanks, my signature", &store, &app),
+            expand_snippets("thanks, my signature", &store, &app, ""),
             "thanks, Sent from Gmail"
         );
     }
@@ -273,7 +289,7 @@ mod tests {
         store.insert(e).unwrap();
         let app = ApplicationContext::unknown();
         assert_eq!(
-            expand_snippets("żółć ok, dziękuję", &store, &app),
+            expand_snippets("żółć ok, dziękuję", &store, &app, ""),
             "Pozdrawiam, dziękuję"
         );
     }
@@ -285,14 +301,14 @@ mod tests {
             .insert(AutoTextEntry::new("/email", "user@example.com"))
             .unwrap();
         let app = ApplicationContext::unknown();
-        assert_eq!(expand("keep /unknown", &store, &app), "keep /unknown");
+        assert_eq!(expand("keep /unknown", &store, &app, ""), "keep /unknown");
     }
 
     #[test]
     fn no_entries_is_identity() {
         let store = AutoTextStore::default();
         let app = ApplicationContext::unknown();
-        assert_eq!(expand("/email hello", &store, &app), "/email hello");
+        assert_eq!(expand("/email hello", &store, &app, ""), "/email hello");
     }
 
     fn snippet_store() -> AutoTextStore {
@@ -310,7 +326,7 @@ mod tests {
     fn expands_snippet_phrase() {
         let store = snippet_store();
         let app = ApplicationContext::unknown();
-        let out = expand_snippets("my email please", &store, &app);
+        let out = expand_snippets("my email please", &store, &app, "");
         assert_eq!(out, "abcd@gmail.com please");
     }
 
@@ -318,7 +334,7 @@ mod tests {
     fn expands_snippet_case_insensitive_and_mid_sentence() {
         let store = snippet_store();
         let app = ApplicationContext::unknown();
-        let out = expand_snippets("Send it to MY EMAIL and my LinkedIn thanks", &store, &app);
+        let out = expand_snippets("Send it to MY EMAIL and my LinkedIn thanks", &store, &app, "");
         assert_eq!(
             out,
             "Send it to abcd@gmail.com and https://www.linkedin.com/in/john-doe/ thanks"
@@ -329,7 +345,7 @@ mod tests {
     fn multiple_snippets_in_one_sentence() {
         let store = snippet_store();
         let app = ApplicationContext::unknown();
-        let out = expand_snippets("my email, my linkedin", &store, &app);
+        let out = expand_snippets("my email, my linkedin", &store, &app, "");
         assert_eq!(out, "abcd@gmail.com, https://www.linkedin.com/in/john-doe/");
     }
 
@@ -338,10 +354,10 @@ mod tests {
         let store = snippet_store();
         let app = ApplicationContext::unknown();
         // "my emailish" should not expand "my email" (emailish != email).
-        assert_eq!(expand_snippets("my emailish", &store, &app), "my emailish");
+        assert_eq!(expand_snippets("my emailish", &store, &app, ""), "my emailish");
         // A complete phrase followed by another word still matches.
         assert_eq!(
-            expand_snippets("my email address", &store, &app),
+            expand_snippets("my email address", &store, &app, ""),
             "abcd@gmail.com address"
         );
     }
@@ -352,7 +368,7 @@ mod tests {
         store.insert(AutoTextEntry::new("/only", "typed")).unwrap(); // no snippet
         let app = ApplicationContext::unknown();
         assert_eq!(
-            expand_snippets("my only words", &store, &app),
+            expand_snippets("my only words", &store, &app, ""),
             "my only words"
         );
     }
@@ -374,12 +390,12 @@ mod tests {
         // Was "hello comma world". A word sandwiched between two unrelated
         // words is the bug shape, not a request, so this now asks plainly.
         assert_eq!(
-            expand_snippets_with("hello comma world", &empty(), &app(), sys()),
+            expand_snippets_with("hello comma world", &empty(), &app(), sys(), ""),
             "hello comma world"
         );
-        assert_eq!(expand_snippets_with("comma", &empty(), &app(), sys()), ",");
+        assert_eq!(expand_snippets_with("comma", &empty(), &app(), sys(), ""), ",");
         assert_eq!(
-            expand_snippets_with("hello insert a comma here", &empty(), &app(), sys()),
+            expand_snippets_with("hello insert a comma here", &empty(), &app(), sys(), ""),
             "hello insert a, here"
         );
     }
@@ -387,7 +403,7 @@ mod tests {
     #[test]
     fn system_punctuation_question() {
         assert_eq!(
-            expand_snippets_with("are you coming question mark", &empty(), &app(), sys()),
+            expand_snippets_with("are you coming question mark", &empty(), &app(), sys(), ""),
             "are you coming?"
         );
     }
@@ -395,7 +411,7 @@ mod tests {
     #[test]
     fn system_punctuation_exclamation() {
         assert_eq!(
-            expand_snippets_with("this is great exclamation mark", &empty(), &app(), sys()),
+            expand_snippets_with("this is great exclamation mark", &empty(), &app(), sys(), ""),
             "this is great!"
         );
     }
@@ -405,11 +421,11 @@ mod tests {
         // "hello new line world" used to expect a newline. "start a new line
         // for the address" is prose, so "new line" is now context-checked.
         assert_eq!(
-            expand_snippets_with("start a new line for the address", &empty(), &app(), sys()),
+            expand_snippets_with("start a new line for the address", &empty(), &app(), sys(), ""),
             "start a new line for the address"
         );
         assert_eq!(
-            expand_snippets_with("insert a new line here", &empty(), &app(), sys()),
+            expand_snippets_with("insert a new line here", &empty(), &app(), sys(), ""),
             "insert a\nhere"
         );
     }
@@ -417,7 +433,7 @@ mod tests {
     #[test]
     fn system_new_paragraph() {
         assert_eq!(
-            expand_snippets_with("one new paragraph two", &empty(), &app(), sys()),
+            expand_snippets_with("one new paragraph two", &empty(), &app(), sys(), ""),
             "one\n\ntwo"
         );
     }
@@ -426,13 +442,13 @@ mod tests {
     fn system_colon_and_semicolon() {
         // "hello colon world" used to expect a colon. See
         // `system_punctuation_comma`: the fixture was the bug's shape.
-        assert_eq!(expand_snippets_with("colon", &empty(), &app(), sys()), ":");
+        assert_eq!(expand_snippets_with("colon", &empty(), &app(), sys(), ""), ":");
         assert_eq!(
-            expand_snippets_with("semicolon", &empty(), &app(), sys()),
+            expand_snippets_with("semicolon", &empty(), &app(), sys(), ""),
             ";"
         );
         assert_eq!(
-            expand_snippets_with("hello semicolon world", &empty(), &app(), sys()),
+            expand_snippets_with("hello semicolon world", &empty(), &app(), sys(), ""),
             "hello semicolon world"
         );
     }
@@ -442,7 +458,7 @@ mod tests {
         let a = app();
         // Opening/closing marks attach to their content: "(hi)" not "( hi )".
         assert_eq!(
-            expand_snippets_with("open parenthesis hi close parenthesis", &empty(), &a, sys()),
+            expand_snippets_with("open parenthesis hi close parenthesis", &empty(), &a, sys(), ""),
             "(hi)"
         );
         assert_eq!(
@@ -450,18 +466,17 @@ mod tests {
                 "open square bracket x close square bracket",
                 &empty(),
                 &a,
-                sys()
-            ),
+                sys(), ""),
             "[x]"
         );
         // "exclamation point" must match as one trigger, not "exclamation" alone.
         assert_eq!(
-            expand_snippets_with("wow exclamation point", &empty(), &a, sys()),
+            expand_snippets_with("wow exclamation point", &empty(), &a, sys(), ""),
             "wow!"
         );
         // "full stop" is one trigger.
         assert_eq!(
-            expand_snippets_with("end full stop", &empty(), &a, sys()),
+            expand_snippets_with("end full stop", &empty(), &a, sys(), ""),
             "end."
         );
     }
@@ -471,7 +486,7 @@ mod tests {
         let a = app();
         // "at sign" is Normal spacing (you don't glue an email by saying it).
         assert_eq!(
-            expand_snippets_with("email at sign example dot com", &empty(), &a, sys()),
+            expand_snippets_with("email at sign example dot com", &empty(), &a, sys(), ""),
             "email @ example dot com"
         );
         // Was "two plus two equals four", expecting a "+". "plus" between two
@@ -479,20 +494,20 @@ mod tests {
         // the word. `equals` is not an ordinary word and is unaffected, so this
         // is the only change.
         assert_eq!(
-            expand_snippets_with("two plus two equals four", &empty(), &a, sys()),
+            expand_snippets_with("two plus two equals four", &empty(), &a, sys(), ""),
             "two plus two = four"
         );
         // A cue makes it a request, and neither half is left behind.
         assert_eq!(
-            expand_snippets_with("two plus sign two equals four", &empty(), &a, sys()),
+            expand_snippets_with("two plus sign two equals four", &empty(), &a, sys(), ""),
             "two plus sign two = four"
         );
         assert_eq!(
-            expand_snippets_with("type two plus sign two equals four", &empty(), &a, sys()),
+            expand_snippets_with("type two plus sign two equals four", &empty(), &a, sys(), ""),
             "type two + two = four"
         );
         assert_eq!(
-            expand_snippets_with("a and and b or or c", &empty(), &a, sys()),
+            expand_snippets_with("a and and b or or c", &empty(), &a, sys(), ""),
             "a && b || c"
         );
     }
@@ -501,7 +516,7 @@ mod tests {
     fn system_no_space_before_terminal_punct() {
         // "hello question mark" -> "hello?" (no space before ?).
         assert_eq!(
-            expand_snippets_with("hello question mark", &empty(), &app(), sys()),
+            expand_snippets_with("hello question mark", &empty(), &app(), sys(), ""),
             "hello?"
         );
         // Multiple in a row.
@@ -510,8 +525,7 @@ mod tests {
                 "are you sure question mark are you sure exclamation mark",
                 &empty(),
                 &app(),
-                sys()
-            ),
+                sys(), ""),
             "are you sure? are you sure!"
         );
     }
@@ -528,11 +542,11 @@ mod tests {
         store.insert(e).unwrap();
         let a = app();
         assert_eq!(
-            expand_snippets_with("hello comma world", &store, &a, sys()),
+            expand_snippets_with("hello comma world", &store, &a, sys(), ""),
             "hello CUSTOM world"
         );
         assert_eq!(
-            expand_snippets_with("a comma b", &store, &a, sys()),
+            expand_snippets_with("a comma b", &store, &a, sys(), ""),
             "a CUSTOM b"
         );
     }
@@ -543,7 +557,7 @@ mod tests {
         let store = snippet_store(); // has "my email"
         let a = app();
         assert_eq!(
-            expand_snippets_with("my email comma my linkedin", &store, &a, sys()),
+            expand_snippets_with("my email comma my linkedin", &store, &a, sys(), ""),
             "abcd@gmail.com, https://www.linkedin.com/in/john-doe/"
         );
     }

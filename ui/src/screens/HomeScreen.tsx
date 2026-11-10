@@ -9,6 +9,7 @@ import { useResource } from "../lib/writeGuard";
 import { ReadinessPanel, useRuntimeStatus } from "../lib/runtimeStatus";
 
 const PRIVACY_DISMISSED_KEY = "teletype.privacyRowDismissed";
+const HERO_WAVE = [10, 18, 27, 14, 32, 21, 12, 26, 31, 17, 9, 23, 29, 15, 25, 11, 19, 28, 16, 8, 22, 30, 13, 24];
 
 function loadPrivacyDismissed(): boolean {
   try {
@@ -266,7 +267,7 @@ export default function HomeScreen({
                 margin: "14px 0 15px",
               }}
             >
-              {[10, 18, 27, 14, 32, 21, 12, 26, 31, 17, 9, 23, 29, 15, 25, 11, 19, 28, 16, 8, 22, 30, 13, 24].map(
+              {HERO_WAVE.map(
                 (h, i) => (
                   <span
                     key={i}
@@ -483,6 +484,8 @@ function HistoryRow({
   const [copied, setCopied] = useState(false);
   return (
     <div
+      role="button"
+      tabIndex={0}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{

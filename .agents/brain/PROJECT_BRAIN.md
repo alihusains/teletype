@@ -1919,6 +1919,121 @@ re-verification. The two downloaded files hash-match the pins exactly.
 to include `Platform::Windows`. To measure this engine in the bake-off, the
 harness would need a `teletype-inference` dependency or a separate driver.
 
+### Decision D042
+
+**Title:** Windows llama-server is a Vulkan prebuilt, not a CPU-only build
+
+**Date:** 2026-11-10
+
+**Status:** accepted, implemented, pending first Windows release
+
+**Decision:**
+1. The Windows release job no longer builds llama-server from source with the
+   CPU backend. It downloads the official
+   `llama-b12200-bin-win-vulkan-x64.zip` from llama.cpp's GitHub releases
+   (pinned to b12200, the same commit the macOS/Intel build uses via
+   `scripts/build-llama-server.sh`).
+2. The prebuilt is a dynamic build: `llama-server.exe` is a ~10 KB stub that
+   loads `llama-server-impl.dll` → `ggml.dll` → `ggml-vulkan.dll` (40 MB) plus
+   14 `ggml-cpu-*.dll` arch variants and `libomp.dll`. The whole directory
+   ships to `binaries/llama-server-win/` and is bundled via
+   `tauri.conf.json` resource `binaries/llama-server-win/`.
+3. `find_llama_server_bin` checks
+   `<exe_dir>/llama-server-win/llama-server.exe` first on Windows, so the
+   runtime exe is found next to its DLLs. The extensionless
+   `binaries/llama-server` (the resource-map path `cargo tauri build` checks)
+   is a copy of the same exe.
+4. `scripts/build-llama-server.sh` creates `binaries/llama-server-win/`
+   (empty on macOS) so the tauri resource validator passes at build time.
+
+**Context:** the old Windows job built llama-server CPU-only
+(`-DBUILD_SHARED_LIBS=OFF`, no GPU backend), so every polish model on Windows
+ran at CPU speed: the 2B took a minute per polish, the same "too slow" problem
+ADR-020 solved for the catalog by withholding multi-billion rows from CPU
+hosts. llama.cpp has shipped official Windows Vulkan prebuilts since well
+before b12200, and the pinned commit's README lists Vulkan as a supported
+backend. The prebuilt is the lower-risk path versus building with
+`-DGGML_VULKAN=ON` (no Vulkan SDK needed in CI, and it is the exact binary
+llama.cpp tests).
+
+**Why:** GPU acceleration on Windows is the single highest-leverage
+performance change for the polish pipeline. Every existing catalog model
+(s1-mini, qwen3.5-2b, speakoflow-mini, qwen3-0.6b, etc.) benefits without a
+new model or a new provider. The tradeoff is ~100 MB of DLLs in the NSIS
+bundle instead of one ~30 MB static exe, and the first Windows release is the
+live test (the path cannot be smoke-tested on macOS).
+
+**Evidence:** the b12200 prebuilt zip was downloaded and inspected:
+`llama-server.exe` is PE32+ x86-64, its dependency chain is
+`llama-server-impl.dll` → `ggml.dll` → `ggml-vulkan.dll` + `vulkan-1.dll`.
+`cargo test --workspace` green (57 binaries), `tsc --noEmit` clean,
+`vitest` 545/545.
+
+**How to apply:** when the llama.cpp pin moves, bump both the macOS/Intel
+build (`scripts/build-llama-server.sh` `COMMIT`) and the Windows download
+(`.github/workflows/release.yml` `b12200` tag) together. If the NSIS bundle
+does not carry the DLLs to the install dir, the symptom is "llama-server
+exited early" on Windows; the fix is a resource-path adjustment in
+`tauri.conf.json`.
+
+### Decision D043
+
+**Title:** Qwen3.5 0.8B is the CPU-tier all-rounder polish model
+
+**Date:** 2026-11-10
+
+**Status:** accepted, implemented, verified (test suite green; live polish
+quality not yet bakeoff-scored)
+
+**Decision:**
+1. `qwen3.5-0.8b` (unsloth/Qwen3.5-0.8B-GGUF, Q4_K_M, 532,517,120 bytes,
+   sha256 `bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517`,
+   Apache-2.0) is added to the polish catalog at `sort_order: 12`,
+   `runs_on_cpu: true`, specialty "Polish + Prompt Engineer (lightweight)"
+   (`measured: false` — the 0.8B has not been bakeoff-scored; only the 2B was).
+2. It takes the same Polish control-line path as the 2B:
+   `model_style` → ControlLine / `polishes_from_card: true` /
+   `cleanup_only: false`; `is_qwen_polish` in `engine.rs` includes the id;
+   `enable_thinking: false` is pinned in `default_chat_template_kwargs`;
+   `polishCustomizationFor` returns `"override"` in the UI.
+3. The CPU first-run shortlist becomes
+   `[s1-mini, speakoflow-mini, qwen3.5-0.8b]` (was two rows); the GPU
+   shortlist stays `[s1-mini, qwen3.5-2b]`.
+
+**Context:** the user asked for a sub-1B Qwen3.5 model for "all kinds of AI
+polish" and, of the two 0.8B candidates on HuggingFace (the standard instruct
+model and the weight-space-programming math variant), picked the standard
+`Qwen/Qwen3.5-0.8B`. The WSP variant was rejected: it is a surgical edit of
+131,072 weights in layers 15/19 `down_proj` tuned to fix math-looping
+(reduces "hit token limit" from 93% to 33% on GSM8K/MATH), which is the
+opposite of what a 200 ms polish budget needs. The 0.8B's non-thinking
+IFEval is 52.1 (vs 61.2 for the 2B), so it is a step down on instruction
+following, but it is the smallest model that runs the full Polish control-line
+protocol and stays fast on a CPU-only host.
+
+**Why:** CPU-only Windows hosts (and Intel Macs) previously had only two
+shortlisted polish rows, both cleanup-only (s1-mini, speakoflow-mini). The
+2B is `runs_on_cpu: false` because it takes a minute per polish on CPU. The
+0.8B at 508 MB (Q4_K_M) is the smallest all-rounder that fills that gap: it
+runs the Polish control-line and Prompt Engineer on a CPU-only build without
+the 2B's cost.
+
+**Evidence:** `cargo test --workspace` green (57 binaries, including the
+updated `polish_shortlist_leads_with_a_recommended_model_and_matches_the_hosts`,
+`runs_on_cpu_withholds_exactly_the_multi_billion_parameter_rows`,
+`sort_orders_are_unique`, and `model_list_shortlists_polish_rows_for_the_hosts_engine_build`);
+`tsc --noEmit` clean; `vitest` 545/545. The sha256 was computed by
+downloading the full 532,517,120-byte file. Live polish quality is not yet
+bakeoff-scored; the `measured: false` flag and the "(lightweight)" tag keep
+the UI honest about that.
+
+**How to apply:** to promote the 0.8B to a measured row, run it through the
+`evals/` polish bakeoff and flip `measured: true` in the catalog entry. The
+`unmeasured_rows_rank_below_measured_rows` test pins that an unmeasured row
+must rank below the measured block (max sort_order 9), so the 0.8B's
+`sort_order: 12` is the lowest valid value once 10 (neudecide-q4) and 11
+(lfm3-omni) are taken.
+
 ### Gotcha G014
 
 **Never `cp` a built binary over the path an app executes. Rename into place.**
@@ -2401,6 +2516,39 @@ pasteboard only when a template actually contains `{{clipboard}}`.
 **Source / evidence:** `learnings/2026-10-29-concurrent-nspasteboard-aborts-process.md`
 (L086); 4 crashes in 6 core test runs before, 10/10 clean after;
 `pasteboard_lock_has_one_holder_at_a_time`.
+
+### Gotcha G032
+
+**Title:** `DESIGN.md` is stale — it documents the pre-"Letters" design system, not what ships
+
+**What happens:**
+An agent that reads `DESIGN.md` (root) will design, audit, or "fix" the UI
+against a system that no longer exists: system fonts, 12px card radii, violet
+`#702fd2` accent, flat shadows, `bg: #f5f6f8`. The shipped UI (since the
+2026-10-29 tab-by-tab redesign, commit `8e392c1`) is the "Letters" world:
+bundled **Open Runde** (display) + **Inter** (body) web fonts, 18px radii,
+obsidian-filled primary actions, sky-gradient hero on Home, blue-tinted
+shadows, white `#ffffff` bg. The doc's frontmatter token values disagree with
+`ui/index.html` tokens in most fields. Verified 2026-11-09 by rendering the
+Vite dev server in Chromium (browser-preview shim) and comparing against the
+doc: the drift is total, not partial.
+
+**Why:**
+`DESIGN.md` was written 2026-10-26 (`dbc2272`); the redesign landed 2026-10-29
+(`8e392c1`) and the doc was never updated.
+
+**How to avoid it:**
+Treat `ui/index.html` (the `:root`/`[data-theme="dark"]` token blocks + the
+`.tt-*` classes) as the design-system source of truth, not `DESIGN.md`.
+Before any design work or audit that cites `DESIGN.md`, re-verify its claims
+against the shipped CSS. (The 2026-11-09 `/impeccable audit` also found
+related open items: lost `:focus-visible` ring on `.tt-btn-primary`,
+`role="button"` history rows with nested buttons and no activation handler,
+light-theme contrast failures — see the audit report for details.)
+
+**Source / evidence:** `git log` dates (`dbc2272` 2026-10-26 vs `8e392c1`
+2026-10-29); rendered screenshots of all 13 nav screens + dark mode captured
+2026-11-09; `ui/index.html` token block vs `DESIGN.md` frontmatter.
 
 ---
 

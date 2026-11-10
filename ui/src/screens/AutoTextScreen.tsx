@@ -12,6 +12,7 @@ import { useResource, useWrites } from "../lib/writeGuard";
 interface Settings {
   typingAutotextEnabled: boolean;
   autotextTiming: string;
+  dateFormat: string;
 }
 
 interface AutoTextEntry {
@@ -33,6 +34,23 @@ interface ImportCounts {
 }
 
 const ACCENT = "var(--accent)";
+
+// Named date formats offered by the backend dropdown.
+// Each id maps to a template in `date_format_template` (Rust).
+// The labels show a sample rendered against a fixed date (2026-11-08).
+const DATE_FORMATS: { id: string; label: string }[] = [
+  { id: "iso", label: "2026-11-08 (ISO)" },
+  { id: "us", label: "11/08/2026 (US)" },
+  { id: "us-short", label: "11/08/26 (US short)" },
+  { id: "eu", label: "08/11/2026 (EU)" },
+  { id: "eu-short", label: "08/11/26 (EU short)" },
+  { id: "long", label: "8 Nov 2026 (Long)" },
+  { id: "long-us", label: "November 8, 2026 (Long US)" },
+  { id: "dmy-dash", label: "08-11-2026 (DMY dash)" },
+  { id: "ymd-slash", label: "2026/11/08 (YMD slash)" },
+  { id: "mdy-dash", label: "11-08-2026 (MDY dash)" },
+  { id: "dmy-dash-short", label: "08-11-26 (DMY short)" },
+];
 
 const VARIABLES = [
   { token: "{{date}}", hint: "Today's date, like 2026-10-25" },
@@ -273,6 +291,9 @@ export default function AutoTextScreen() {
   const settings = useResource<Settings>(() => invoke<Settings>("get_settings"));
   const typingEnabled = settings.data?.typingAutotextEnabled ?? true;
   const autotextTiming = settings.data?.autotextTiming ?? "delimiter";
+  const dateFormat = settings.data?.dateFormat ?? "";
+  const isCustomFormat = !DATE_FORMATS.some((f) => f.id === dateFormat);
+  const [customFormat, setCustomFormat] = useState("");
 
   // A-2: hold-and-restore. The switch flips optimistically and comes back to
   // its previous position when the save rejects; a rejected get_settings is a
@@ -295,6 +316,16 @@ export default function AutoTextScreen() {
       await invoke("save_settings", { settings: { ...s, autotextTiming: value } });
     });
     if (!res.ok) settings.patch((s) => ({ ...(s ?? ({} as Settings)), autotextTiming: prev }));
+  };
+
+  const saveDateFormat = async (value: string) => {
+    const prev = dateFormat;
+    settings.patch((s) => ({ ...(s ?? ({} as Settings)), dateFormat: value }));
+    const res = await writes.run("dateFormat", async () => {
+      const s = await invoke<Settings>("get_settings");
+      await invoke("save_settings", { settings: { ...s, dateFormat: value } });
+    });
+    if (!res.ok) settings.patch((s) => ({ ...(s ?? ({} as Settings)), dateFormat: prev }));
   };
 
   const entries = list.data ?? [];
@@ -555,6 +586,55 @@ export default function AutoTextScreen() {
                 message={writes.error("autotextTiming") as string}
                 onRetry={() => void saveAutotextTiming(autotextTiming)}
                 onDismiss={() => writes.clear("autotextTiming")}
+              />
+            )}
+            <Row
+              label="Date format"
+              hint="How {{date}} renders in your snippets. Pick a named format or write your own template."
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+                <select
+                  aria-label="Date format"
+                  value={isCustomFormat ? "custom" : (dateFormat || "iso")}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "custom") {
+                      setCustomFormat(dateFormat || "YYYY-MM-DD");
+                    } else {
+                      saveDateFormat(v);
+                    }
+                  }}
+                  style={{ background: "var(--surface-2)", borderRadius: 6, padding: "4px 8px", fontSize: 13, maxWidth: 260 }}
+                >
+                  {DATE_FORMATS.map((f) => (
+                    <option key={f.id} value={f.id}>{f.label}</option>
+                  ))}
+                  <option value="custom">Custom…</option>
+                </select>
+                {isCustomFormat && (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      aria-label="Custom date template"
+                      value={customFormat}
+                      onChange={(e) => setCustomFormat(e.target.value)}
+                      onBlur={() => {
+                        const v = customFormat.trim();
+                        if (v && v !== dateFormat) saveDateFormat(v);
+                      }}
+                      placeholder="YYYY-MM-DD"
+                      style={{ background: "var(--surface-2)", borderRadius: 6, padding: "4px 8px", fontSize: 13, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", maxWidth: 200 }}
+                    />
+                    <button onClick={() => saveDateFormat(customFormat.trim())} style={{ fontSize: 12, padding: "4px 10px" }}>Save format</button>
+                  </div>
+                )}
+              </div>
+            </Row>
+            {writes.error("dateFormat") && (
+              <WriteFailed
+                label="Date format"
+                message={writes.error("dateFormat") as string}
+                onRetry={() => void saveDateFormat(dateFormat)}
+                onDismiss={() => writes.clear("dateFormat")}
               />
             )}
           </>

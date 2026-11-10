@@ -236,6 +236,15 @@ pub struct Pipeline<'a> {
     /// section. Empty when the screen offered nothing; secure fields yield
     /// no terms.
     pub screen_terms: &'a [String],
+    /// The user's AutoText date format for `{{date}}`: a named id from
+    /// `teletype_core::autotext::placeholders::date_format_template` ("" or
+    /// "iso" = `YYYY-MM-DD`) or a raw template for the free-text custom
+    /// option. Read from the user's settings by the desktop app.
+    pub date_format: &'a str,
+    /// The user's AI Polish prompt override (Settings.polishPromptOverride).
+    /// Applied only on the generic prompt path and the Qwen3.5-2B Polish
+    /// control-line path; the fixed-contract models never see it.
+    pub polish_prompt_override: Option<String>,
 }
 
 impl<'a> Pipeline<'a> {
@@ -399,12 +408,13 @@ impl<'a> Pipeline<'a> {
         //    The two namespaces are disjoint, so protect each on the original
         //    text and keep the pass that matched anything.
         let protected = if is_voice {
-            let typed = protect::protect(&input_text, self.autotext, &context);
+            let typed = protect::protect(&input_text, self.autotext, &context, self.date_format);
             let spoken = protect::protect_snippets_with(
                 &input_text,
                 self.autotext,
                 &context,
                 self.system_autotext,
+                self.date_format,
             );
             if spoken.has_placeholders() {
                 spoken
@@ -412,7 +422,7 @@ impl<'a> Pipeline<'a> {
                 typed
             }
         } else {
-            protect::protect(&input_text, self.autotext, &context)
+            protect::protect(&input_text, self.autotext, &context, self.date_format)
         };
         let autotext_expanded = protected.has_placeholders();
 
@@ -577,6 +587,7 @@ impl<'a> Pipeline<'a> {
                                 list_style: self.list_style,
                                 polish_max_change_percent: self.polish_max_change_percent,
                                 screen_terms: self.screen_terms.to_vec(),
+                                user_override: self.polish_prompt_override.clone(),
                             };
                             let mut result = engine::run_transform_blocking(
                                 provider,
@@ -640,14 +651,19 @@ impl<'a> Pipeline<'a> {
                     }
                     None => {
                         // No model: expand AutoText (and snippets for voice).
-                        let mut expanded =
-                            autotext::expand::expand(&input_text, self.autotext, &context);
+                        let mut expanded = autotext::expand::expand(
+                            &input_text,
+                            self.autotext,
+                            &context,
+                            self.date_format,
+                        );
                         if is_voice {
                             expanded = autotext::expand::expand_snippets_with(
                                 &expanded,
                                 self.autotext,
                                 &context,
                                 self.system_autotext,
+                                self.date_format,
                             );
                         }
                         // Same fallback hole as the guard-reject arm: the user
@@ -681,13 +697,15 @@ impl<'a> Pipeline<'a> {
         } else if transform.is_none() {
             // No transform: expand triggers directly (typed input path), plus
             // spoken snippets for voice.
-            let mut expanded = autotext::expand::expand(&input_text, self.autotext, &context);
+            let mut expanded =
+                autotext::expand::expand(&input_text, self.autotext, &context, self.date_format);
             if is_voice {
                 expanded = autotext::expand::expand_snippets_with(
                     &expanded,
                     self.autotext,
                     &context,
                     self.system_autotext,
+                    self.date_format,
                 );
             }
             expanded
@@ -1000,7 +1018,7 @@ fn correct_with_dictionary(
         /// are exact-only (see `DictionaryWord::fuzzy`).
         fuzzy: bool,
     }
-    let entries: Vec<Entry> = dictionary
+    let mut entries: Vec<Entry> = dictionary
         .words
         .iter()
         .map(|w| {
@@ -1014,6 +1032,28 @@ fn correct_with_dictionary(
             }
         })
         .collect();
+    // Index single-word aliases as exact-only entries so the per-token tier
+    // can correct a possessive/contraction whose core is an alias ("Zoe's"
+    // -> "Zowie's"). Pass 1 already rewrites non-possessive aliases; the
+    // apostrophe suffix stops that exact match, so the per-token tier fills
+    // the gap. Exact-only (fuzzy: false) to avoid new near-miss false
+    // positives on the alias surface.
+    for w in &dictionary.words {
+        if w.word.split_whitespace().count() != 1 {
+            continue;
+        }
+        for alias in &w.aliases {
+            if alias.split_whitespace().count() != 1 {
+                continue;
+            }
+            entries.push(Entry {
+                lower: alias.to_lowercase(),
+                canonical: w.word.clone(),
+                count: 1,
+                fuzzy: false,
+            });
+        }
+    }
 
     // Split into tokens, preserving punctuation.
     let tokens: Vec<&str> = text.split_whitespace().collect();
@@ -1026,7 +1066,7 @@ fn correct_with_dictionary(
     // per-token tiers below (their canonical spelling is already in place,
     // and the near-miss tiers would only find the canonical word itself,
     // which is a no-op replacement).
-    let (pass1_words, _pass1_reps) = if !tokens.is_empty() {
+    let (_pass1_words, _pass1_reps) = if !tokens.is_empty() {
         let rescore_words: Vec<String> = tokens
             .iter()
             .map(|t| {
@@ -1042,7 +1082,10 @@ fn correct_with_dictionary(
             .map(|w| crate::rescoring::RescoreTerm {
                 text: w.word.clone(),
                 aliases: w.aliases.clone(),
-                weight: 1.0,
+                // User-taught words are authoritative: the text-only path
+                // feeds confidence 1.0, so without the waive weight the
+                // exact/alias pass is gated out and aliases never fire.
+                weight: crate::rescoring::WEIGHT_WAIVE,
             })
             .collect();
         rescore_terms.extend(pack_terms.iter().map(|pt| crate::rescoring::RescoreTerm {
@@ -1071,6 +1114,13 @@ fn correct_with_dictionary(
     // a joined canonical word. Single-token claims always stand — the
     // single-token path is untouched (plan row 6).
     let mut pass1_consumed = vec![false; tokens.len()];
+    // For each token position, the (end, replacement) of the pass-1 span that
+    // starts there, if any. The output loop emits each span from its own
+    // replacement text and end. It must NOT merge consecutive consumed tokens
+    // (that would collapse two adjacent single-token replacements into one
+    // word) nor index the filtered `pass1_words` (which misaligns once a
+    // multi-word span drops tokens before it).
+    let mut pass1_span: Vec<Option<(usize, String)>> = vec![None; tokens.len()];
     for rep in &_pass1_reps {
         let (start, end) = (rep.start, rep.end);
         if end - start >= 2
@@ -1079,6 +1129,7 @@ fn correct_with_dictionary(
         {
             continue;
         }
+        pass1_span[start] = Some((end, rep.replacement.clone()));
         for slot in pass1_consumed.iter_mut().take(rep.end).skip(rep.start) {
             *slot = true;
         }
@@ -1092,18 +1143,12 @@ fn correct_with_dictionary(
     let mut out: Vec<String> = Vec::with_capacity(tokens.len());
     let mut j = 0;
     while j < tokens.len() {
-        if pass1_consumed[j] {
-            // Find the end of this span: consecutive consumed tokens.
+        if let Some(&Some((end, ref replacement))) = pass1_span.get(j) {
+            // This position starts a pass-1 span. Emit its own replacement and
+            // jump to the span's end, so adjacent single-token replacements
+            // each emit their own word.
             let start = j;
-            while j < tokens.len() && pass1_consumed[j] {
-                j += 1;
-            }
-            let last = j - 1;
-            let canonical = pass1_words
-                .get(start)
-                .filter(|w| !w.is_empty())
-                .cloned()
-                .unwrap_or_default();
+            let last = end - 1;
             let leading: String = tokens[start]
                 .chars()
                 .take_while(|c| !c.is_alphanumeric())
@@ -1113,7 +1158,8 @@ fn correct_with_dictionary(
                 .rev()
                 .take_while(|c| !c.is_alphanumeric())
                 .collect();
-            out.push(format!("{leading}{canonical}{trailing}"));
+            out.push(format!("{leading}{replacement}{trailing}"));
+            j = end;
             continue;
         }
         let tok = tokens[j];
@@ -1198,13 +1244,35 @@ fn correct_with_dictionary(
         }
 
         // Single-word match.
-        if bare_lower.len() >= 3 {
+        //
+        // Possessives and contractions ("Zowie's", "don't") match on the core
+        // word before the first apostrophe, and the apostrophe suffix is
+        // preserved in the output. Matching the bare "Zowies" would
+        // fuzzy-match "Zowie" and silently drop the 's.
+        let core_end = tok.len().saturating_sub(trailing.len());
+        let core_tok = if leading.len() <= core_end {
+            &tok[leading.len()..core_end]
+        } else {
+            ""
+        };
+        let apostrophe = core_tok.find('\'');
+        let suffix: &str = apostrophe.map(|i| &core_tok[i..]).unwrap_or("");
+        let match_lower: String = match apostrophe {
+            Some(i) => core_tok[..i]
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .collect::<String>()
+                .to_lowercase(),
+            None => bare_lower.clone(),
+        };
+
+        if match_lower.len() >= 3 {
             let mut found: Option<&Entry> = None;
             for e in &entries {
                 if e.count != 1 {
                     continue;
                 }
-                if fold_lower(&e.lower) == bare_lower {
+                if fold_lower(&e.lower) == match_lower {
                     found = Some(e);
                     break;
                 }
@@ -1214,14 +1282,14 @@ fn correct_with_dictionary(
                     if e.count != 1 || !e.fuzzy {
                         continue;
                     }
-                    if checker.probability(&e.lower, &bare_lower, true) >= checker.cutoff() {
+                    if checker.probability(&e.lower, &match_lower, true) >= checker.cutoff() {
                         found = Some(e);
                         break;
                     }
                 }
             }
             if let Some(e) = found {
-                out.push(format!("{leading}{}{trailing}", e.canonical));
+                out.push(format!("{leading}{}{}{trailing}", e.canonical, suffix));
                 j += 1;
                 continue;
             }
@@ -1239,14 +1307,14 @@ fn correct_with_dictionary(
                     if alias.len() < 7 {
                         continue;
                     }
-                    let len_diff = (alias.len() as i32 - bare_lower.len() as i32).unsigned_abs();
+                    let len_diff = (alias.len() as i32 - match_lower.len() as i32).unsigned_abs();
                     if len_diff > 2 {
                         continue;
                     }
-                    let dist = edit_distance_public(&bare_lower, &alias);
-                    let max_len = bare_lower.len().max(alias.len());
+                    let dist = edit_distance_public(&match_lower, &alias);
+                    let max_len = match_lower.len().max(alias.len());
                     if dist <= 2 && (1.0 - dist as f32 / max_len as f32) >= 0.85 {
-                        out.push(format!("{leading}{}{trailing}", pt.canonical));
+                        out.push(format!("{leading}{}{}{trailing}", pt.canonical, suffix));
                         j += 1;
                         pack_hit = true;
                         break;
@@ -1564,6 +1632,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -1624,6 +1694,8 @@ mod tests {
             polish_max_change_percent: 40,
             screen_terms: &screen_terms,
             word_checker: &CHECKER,
+            date_format: "",
+            polish_prompt_override: None,
         };
         let input = UnifiedInput {
             source: InputSource::Voice,
@@ -1736,6 +1808,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms,
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         }
     }
@@ -1854,6 +1928,8 @@ mod tests {
             polish_max_change_percent: 40,
             screen_terms: &screen_terms,
             word_checker: &CHECKER,
+            date_format: "",
+            polish_prompt_override: None,
         };
         let result = pipeline.run(
             UnifiedInput {
@@ -1951,6 +2027,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -2038,6 +2116,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -2102,6 +2182,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -2174,6 +2256,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -2252,6 +2336,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -2340,6 +2426,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -2400,6 +2488,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -2497,6 +2587,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let result = pipeline.run(
@@ -2555,6 +2647,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -2607,6 +2701,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -2674,6 +2770,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -2756,6 +2854,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -2812,6 +2912,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -2871,6 +2973,77 @@ mod tests {
         assert_eq!(
             correct_with_dictionary("trading on IC Margets", &d, &[], &CHECKER),
             "trading on IC Markets"
+        );
+    }
+
+    #[test]
+    fn zowie_misheard_as_zoe_needs_an_alias() {
+        // ASR (Parakeet) hears "Zowie" as "Zoe". The fuzzy path scores
+        // "zoe" vs "zowie": edit distance 2, max_len 5, similarity
+        // 1 - 2/5 = 0.6 — below even the loosest floor (0.72). So the
+        // fuzzy matcher alone must NOT fire; the word stays "Zoe".
+        let d = dict_with(&["Zowie"]);
+        assert_eq!(
+            correct_with_dictionary("I met Zoe today", &d, &[], &CHECKER),
+            "I met Zoe today",
+            "fuzzy path must not fire: zoe/zowie similarity 0.6 < 0.72 floor"
+        );
+
+        // With "Zoe" stored as an alias, pass 1 exact/alias replacement
+        // fires deterministically (no similarity threshold) and rewrites
+        // every occurrence.
+        let mut w = crate::dictionary::DictionaryWord::new("Zowie", "");
+        w.aliases = vec!["Zoe".to_string()];
+        let mut d2 = crate::dictionary::Dictionary::default();
+        d2.insert(w).unwrap();
+        assert_eq!(
+            correct_with_dictionary("I met Zoe today", &d2, &[], &CHECKER),
+            "I met Zowie today",
+            "alias pass must rewrite the exact misheard form"
+        );
+        // The user's exact report: two occurrences in one sentence.
+        assert_eq!(
+            correct_with_dictionary("Zoe Zoe", &d2, &[], &CHECKER),
+            "Zowie Zowie",
+            "every alias occurrence must be rewritten"
+        );
+    }
+
+    #[test]
+    fn possessive_keeps_its_apostrophe_s() {
+        // "Zowie's" (possessive) must keep the 's. The bare form "Zowies"
+        // must not fuzzy-match "Zowie" and drop the possessive.
+        let d = dict_with(&["Zowie"]);
+        assert_eq!(
+            correct_with_dictionary("analyze Zowie's log", &d, &[], &CHECKER),
+            "analyze Zowie's log",
+            "possessive 's must be preserved"
+        );
+        // Trailing punctuation after the possessive must survive too.
+        assert_eq!(
+            correct_with_dictionary("see Zowie's.", &d, &[], &CHECKER),
+            "see Zowie's.",
+            "trailing punctuation after a possessive must be preserved"
+        );
+        // A plain (non-possessive) match must still be corrected as before.
+        assert_eq!(
+            correct_with_dictionary("analyze Zowie log", &d, &[], &CHECKER),
+            "analyze Zowie log",
+            "non-possessive canonical is unchanged"
+        );
+        // An alias possessive ("Zoe's", where "Zoe" is an alias of "Zowie")
+        // must be corrected to "Zowie's". The ASR hears "Zowie's" as "Zoe's";
+        // the apostrophe stops the pass-1 exact match, so the per-token tier
+        // (which now indexes single-word aliases) fills the gap and keeps the
+        // 's. This is the user's exact report.
+        let mut w = crate::dictionary::DictionaryWord::new("Zowie", "");
+        w.aliases = vec!["Zoe".to_string()];
+        let mut d2 = crate::dictionary::Dictionary::default();
+        d2.insert(w).unwrap();
+        assert_eq!(
+            correct_with_dictionary("Let me analyze Zoe's performance.", &d2, &[], &CHECKER),
+            "Let me analyze Zowie's performance.",
+            "alias possessive must be corrected and keep the 's"
         );
     }
 
@@ -3166,7 +3339,6 @@ mod tests {
             ("works with his code", &d_builtins, no_terms),
             ("billions of ions", &d_builtins, no_terms),
             ("we use github and macos daily", &d_builtins, no_terms),
-            ("shivon called about the meeting", &d_alias, no_terms),
             ("", &d_mixed, &packs),
             ("   ", &d_mixed, &packs),
             ("one", &d_mixed, &packs),
@@ -3176,6 +3348,20 @@ mod tests {
             let old_out = correct_with_dictionary_old(input, d, terms, &CHECKER);
             assert_eq!(new_out, old_out, "diverged on {input:?}");
         }
+
+        // The alias case is intentionally NOT byte-identical to the old
+        // fixer. The pre-P3.7 fixer had the same conf/weight gate bug that
+        // kept pass 1 from firing on the text-only path, so it never rewrote
+        // aliases ("shivon" stayed "shivon"). The new fixer marks user words
+        // authoritative (WEIGHT_WAIVE) so the exact/alias pass fires. That
+        // divergence is the fix, not a regression.
+        let alias_out = correct_with_dictionary(
+            "shivon called about the meeting",
+            &d_alias,
+            no_terms,
+            &CHECKER,
+        );
+        assert_eq!(alias_out, "Siobhan called about the meeting");
     }
 
     #[test]
@@ -3215,6 +3401,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -3274,6 +3462,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -3360,6 +3550,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -3425,6 +3617,8 @@ mod tests {
                 list_style: crate::transforms::ListStyle::default(),
                 polish_max_change_percent: 40,
                 screen_terms: &[],
+                date_format: "",
+                polish_prompt_override: None,
                 word_checker: &CHECKER,
             };
             pipeline.run(
@@ -3558,6 +3752,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -3607,6 +3803,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -3687,6 +3885,8 @@ mod tests {
                 list_style: crate::transforms::ListStyle::default(),
                 polish_max_change_percent: 40,
                 screen_terms: &[],
+                date_format: "",
+                polish_prompt_override: None,
                 word_checker: &CHECKER,
             };
             let input = UnifiedInput {
@@ -3773,6 +3973,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -3867,6 +4069,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
 
@@ -3950,6 +4154,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -4027,6 +4233,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -4095,6 +4303,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -4158,6 +4368,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -4219,6 +4431,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -4278,6 +4492,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {
@@ -4332,6 +4548,8 @@ mod tests {
             list_style: crate::transforms::ListStyle::default(),
             polish_max_change_percent: 40,
             screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
             word_checker: &CHECKER,
         };
         let input = UnifiedInput {

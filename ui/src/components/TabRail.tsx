@@ -12,17 +12,79 @@ export interface TabRailItem {
 /// any rail/detail page): one card, one row per tab, each row a 32px icon
 /// tile + name + short tagline. The selected row gets the accent fill and a
 /// border, the way the reference app's dictionary rail does.
+///
+/// When `narrow` is true the rail becomes a horizontal scrollable chip row
+/// that sits above the pane, so the Dictionary page does not collide on a
+/// narrow window.
 export function TabRail({
   items,
   selected,
   onSelect,
+  narrow = false,
 }: {
   items: TabRailItem[];
   selected: string;
   onSelect: (id: string) => void;
+  narrow?: boolean;
 }) {
+  if (narrow) {
+    return (
+      <nav
+        role="tablist"
+        aria-label="Sections"
+        style={{
+          display: "flex",
+          gap: 6,
+          padding: 8,
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius)",
+          boxShadow: "var(--shadow-1)",
+          overflowX: "auto",
+          flex: "0 0 auto",
+        }}
+      >
+        {items.map((t) => {
+          const isSel = t.id === selected;
+          return (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={isSel}
+              onClick={() => onSelect(t.id)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 12px",
+                border: "none",
+                borderRadius: "var(--radius-pill)",
+                background: isSel ? "var(--accent-soft)" : "transparent",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                flex: "0 0 auto",
+              }}
+            >
+              <Icon name={t.icon} size={13} color={isSel ? "var(--accent)" : "var(--text-secondary)"} />
+              <span
+                style={{
+                  fontSize: 13,
+                  fontWeight: isSel ? 600 : 500,
+                  color: isSel ? "var(--accent)" : "var(--text)",
+                }}
+              >
+                {t.label}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
+    );
+  }
+
   return (
     <nav
+      role="tablist"
       aria-label="Sections"
       style={{
         display: "flex",
@@ -42,8 +104,9 @@ export function TabRail({
         return (
           <button
             key={t.id}
+            role="tab"
+            aria-selected={isSel}
             onClick={() => onSelect(t.id)}
-            aria-current={isSel ? "page" : undefined}
             style={{
               display: "flex",
               alignItems: "center",
@@ -113,6 +176,7 @@ export function TabRail({
 export function TabPane({ children }: { children: ReactNode }) {
   return (
     <div
+      role="tabpanel"
       style={{
         flex: 1,
         minWidth: 0,

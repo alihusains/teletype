@@ -432,15 +432,11 @@
     "emoji": "❌"
   },
   {
-    "trigger": "muscle",
-    "emoji": "💪"
-  },
-  {
     "trigger": "muscle emoji",
     "emoji": "💪"
   },
   {
-    "trigger": "party",
+    "trigger": "party emoji",
     "emoji": "🎉"
   },
   {
@@ -452,16 +448,8 @@
     "emoji": "🎊"
   },
   {
-    "trigger": "eye",
-    "emoji": "👁️"
-  },
-  {
     "trigger": "eye emoji",
     "emoji": "👁️"
-  },
-  {
-    "trigger": "eyes",
-    "emoji": "👀"
   },
   {
     "trigger": "eyes emoji",

@@ -752,6 +752,19 @@ pub struct Settings {
     /// is the first, locked item in the UI and is not stored here.
     #[serde(default)]
     pub polish_custom_instructions: Vec<PolishInstruction>,
+    /// The user's AI Polish prompt override (T7/T3): shown and edited in the
+    /// AI Polish prompt section of the Transforms screen. Applied only on the
+    /// generic prompt path and the Qwen3.5-2B Polish control-line path; the
+    /// fixed-contract models (S1-mini, SpeakoFlow Mini) never see it. `None`
+    /// means "use the model's default prompt".
+    #[serde(default)]
+    pub polish_prompt_override: Option<String>,
+    /// The user's AutoText date format for `{{date}}`: a named id from
+    /// `teletype_core::autotext::placeholders::date_format_template` ("" or
+    /// "iso" = `YYYY-MM-DD`) or a raw template for the free-text custom
+    /// option.
+    #[serde(default)]
+    pub date_format: String,
     /// Quick Add (item 8): global keybinding that adds the currently
     /// selected word in any app to the dictionary. Empty = disabled.
     #[serde(default)]
@@ -905,6 +918,8 @@ pub struct SettingsPatch {
     pub polish_rules: Option<std::collections::BTreeMap<String, bool>>,
     pub list_style: Option<ListStyleSetting>,
     pub polish_custom_instructions: Option<Vec<PolishInstruction>>,
+    pub polish_prompt_override: Option<Option<String>>,
+    pub date_format: Option<String>,
     pub quick_add_hotkey: Option<String>,
     pub show_language_coach: Option<bool>,
 }
@@ -979,6 +994,8 @@ impl SettingsPatch {
         apply!(polish_rules);
         apply!(list_style);
         apply!(polish_custom_instructions);
+        apply!(polish_prompt_override);
+        apply!(date_format);
         apply!(quick_add_hotkey);
         apply!(show_language_coach);
         changed
@@ -1371,6 +1388,8 @@ impl Default for Settings {
             polish_rules: default_polish_rules(),
             list_style: default_list_style(),
             polish_custom_instructions: Vec::new(),
+            polish_prompt_override: None,
+            date_format: String::new(),
             quick_add_hotkey: String::new(),
             show_language_coach: default_true(),
             command_hotkey: default_command_hotkey(),

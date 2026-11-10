@@ -117,6 +117,6 @@ describe("Command Mode screen", () => {
 
   it("says the hotkey is not set when the setting is empty", async () => {
     renderScreen({ hotkey: "" });
-    expect(await screen.findByText("Hotkey: not set")).toBeTruthy();
+    expect(await screen.findByText("Hotkey: not set (wake phrase still works)")).toBeTruthy();
   });
 });

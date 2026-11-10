@@ -4,9 +4,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { Toggle } from "../settings/primitives";
 import HotkeyRecorder, { displayHotkey } from "../components/HotkeyRecorder";
-import { Segmented } from "../settings/primitives";
+import { Segmented, Slider } from "../settings/primitives";
 import { confirmDialog, messageDialog } from "../lib/dialogs";
 import { errorMessage } from "../lib/errors";
+import PolishPlayground from "../components/PolishPlayground";
 import { runWrite } from "../lib/writeGuard";
 import { WriteFailed } from "../components/StateRows";
 import { useRuntimeStatus } from "../lib/runtimeStatus";
@@ -216,6 +217,22 @@ function composeInstruction(t: Transform, instructions: PolishInstruction[]): st
   return parts.join("\n\n");
 }
 
+// Which polish controls the loaded model actually honours. Drives the scoping
+// of the rules / prompt / custom-instruction controls so a fixed-contract
+// model does not present dead controls.
+//   "none"     — S1-mini, SpeakoFlow Mini: card-faithful cleanup; ignores
+//                every user control (rules, override, custom instructions).
+//   "override" — Qwen3.5-2B: honours only the prompt override (appended to
+//                its fixed editor prompt); ignores the rules + instructions.
+//   "full"     — any other model (LFM3, remote/ollama): generic instruction
+//                path; rules, override, and custom instructions all apply.
+type PolishCustomization = "none" | "override" | "full";
+function polishCustomizationFor(modelId: string): PolishCustomization {
+  if (modelId === "s1-mini" || modelId === "speakoflow-mini") return "none";
+  if (modelId === "qwen3.5-2b" || modelId === "qwen3.5-0.8b") return "override";
+  return "full";
+}
+
 // ── Local band primitives ───────────────────────────────────────────────────
 // ui/src/settings/primitives.tsx covers controls (Toggle, Segmented, Row) but
 // has no collapsible band, and it is owned by another agent right now, so the
@@ -327,6 +344,11 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
   // How lists should be formatted in polished output (item 3). Persisted in
   // Settings.listStyle so it reaches every transform run.
   const [listStyle, setListStyle] = useState<ListStyle>("bullets");
+  // The change ceiling: how much of a take Polish may replace, as a % of
+  // words (100 disables it). It is the primary aggressiveness dial, so it
+  // lives in the AI Polish section next to the rules it caps, not only in
+  // Settings. 100 = "let Polish rewrite freely".
+  const [changeCeiling, setChangeCeiling] = useState(40);
   // True while the "Which polish runs" picker is writing per-transform
   // autoApply flags. Blocks a second click from racing the first into a state
   // where two transforms are flagged.
@@ -340,6 +362,9 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
   // that before the user presses Show me instead of faking a polish.
   const cleanupOnlyModelId = runtime?.llm.modelId ?? "";
   const cleanupOnly = cleanupOnlyModelId === "s1-mini" || cleanupOnlyModelId === "speakoflow-mini";
+  // Which polish controls this model honours (none / override / full). Drives
+  // the scoping of the rules, prompt, and custom-instruction controls below.
+  const polishCustomization = polishCustomizationFor(cleanupOnlyModelId);
   const selectedIsPolish = !!selected && (selected.id === "builtin-polish" || selected.autoApply);
   const selectedBlocked = cleanupOnly && !!selected && !selectedIsPolish;
 
@@ -349,6 +374,7 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
       autoApplyTransform: boolean;
       polishRules?: Record<string, boolean>;
       listStyle?: string;
+      polishMaxChangePercent?: number;
       polishCustomInstructions?: PolishInstruction[];
     }>("get_settings")
       .then((s) => {
@@ -358,6 +384,9 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
         }
         if (s.listStyle === "numbered" || s.listStyle === "bullets") {
           setListStyle(s.listStyle);
+        }
+        if (typeof s.polishMaxChangePercent === "number") {
+          setChangeCeiling(s.polishMaxChangePercent);
         }
         if (Array.isArray(s.polishCustomInstructions)) {
           setCustomInstructions(s.polishCustomInstructions);
@@ -627,6 +656,16 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
     }).catch(() => {});
   };
 
+  // Persist the change ceiling to Settings. The backend reads it on every
+  // transform run and rejects a rewrite that replaces more of the take than
+  // this percentage of words.
+  const saveChangeCeiling = (v: number) => {
+    setChangeCeiling(v);
+    invoke<Record<string, unknown>>("get_settings").then((s) => {
+      invoke("save_settings", { settings: { ...s, polishMaxChangePercent: v } }).catch(console.error);
+    }).catch(() => {});
+  };
+
   // Create a preset from the "Create your own" modal (item 4). The shortcut
   // is registered as a global transform shortcut by the backend at save time,
   // so the user can press it anywhere to polish the current selection.
@@ -663,11 +702,18 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
     ? transforms.find((t) => t.autoApply && t.enabled)
     : undefined;
   const enabledTransforms = transforms.filter((t) => t.enabled);
-  const statusLine = effectiveAutoTransform
+const modelCapabilityNote =
+  polishCustomization === "none"
+    ? ` ${runtime?.llm.label || "This model"} can only clean up transcripts and can't be customized.`
+    : polishCustomization === "override"
+    ? ` ${runtime?.llm.label || "This model"} follows a fixed prompt; only the prompt override can steer it.`
+    : "";
+const statusLine =
+  (effectiveAutoTransform
     ? `Every dictation is polished with ${effectiveAutoTransform.name}.`
     : selected?.shortcut
-      ? `Polish runs when you press ${displayHotkey(selected.shortcut)}.`
-      : `Polish runs when you pick a shortcut below.`;
+    ? `Polish runs when you press ${displayHotkey(selected.shortcut)}.`
+    : `Polish runs when you pick a shortcut below.`) + modelCapabilityNote;
 
   return (
     <div>
@@ -692,15 +738,24 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
         <section style={{ minWidth: 0 }}>
           <h3 style={BAND_TITLE}>Choose a polish</h3>
           <p style={BAND_SUBTITLE}>Polish rewrites your text to sound clearer, in your voice.</p>
+          {cleanupOnly && (
+            <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12.5, color: "var(--text-secondary)" }}>
+              {runtime?.llm.label || "This model"} can only run the Polish preset. The others are grayed out until you switch to a general model (Qwen3.5-2B or LFM3) in Models.
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(170px, 100%), 1fr))", gap: 10, marginTop: 12 }}>
-            {transforms.map((t) => (
+            {transforms.map((t) => {
+              const presetBlocked = cleanupOnly && !(t.id === "builtin-polish" || t.autoApply);
+              return (
               <div
                 key={t.id}
                 role="button"
-                tabIndex={0}
+                tabIndex={presetBlocked ? -1 : 0}
                 aria-pressed={selected?.id === t.id}
-                onClick={() => selectPreset(t)}
+                aria-disabled={presetBlocked || undefined}
+                onClick={() => { if (!presetBlocked) selectPreset(t); }}
                 onKeyDown={(e) => {
+                  if (presetBlocked) return;
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     selectPreset(t);
@@ -711,10 +766,11 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
                   borderRadius: 12,
                   border: selected?.id === t.id ? "2px solid var(--accent)" : "1px solid var(--border)",
                   background: "var(--surface)",
-                  cursor: "pointer",
+                  cursor: presetBlocked ? "not-allowed" : "pointer",
                   position: "relative",
                   minWidth: 0,
                   textAlign: "left",
+                  opacity: presetBlocked ? 0.5 : 1,
                 }}
               >
                 {t.shortcut && (
@@ -749,7 +805,8 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
                   </button>
                 )}
               </div>
-            ))}
+              );
+            })}
             {/* The dashed card is the only entry point to the create modal. */}
             <button
               type="button"
@@ -782,8 +839,8 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
 
         {/* ── Band 2: the proof, full width instead of a 340px rail ── */}
         <section style={{ minWidth: 0 }}>
-          <h3 style={BAND_TITLE}>Try it on your own words</h3>
-          <p style={BAND_SUBTITLE}>Type what you actually said, then see what this polish does to it.</p>
+          <h3 style={BAND_TITLE}>Try {selected?.name ?? "it"} on your own words</h3>
+          <p style={BAND_SUBTITLE}>Runs the {selected?.name ?? "selected"} preset you picked above, with your rules and custom instructions applied.</p>
           {selectedBlocked && (
             <div
               role="status"
@@ -939,18 +996,36 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
           )}
         </section>
 
+        {/* ── Band 2.5: the model's prompt, editable where the model allows ── */}
+        <section style={{ minWidth: 0 }}>
+          <h3 style={BAND_TITLE}>Polish prompt</h3>
+          <p style={BAND_SUBTITLE}>
+            The prompt this model follows for the Polish preset. Its test always runs Polish (not the preset you picked above), so you can see and tune exactly what the model is told.
+          </p>
+          <div style={{ marginTop: 12 }}>
+            <PolishPlayground modelId={cleanupOnlyModelId} />
+          </div>
+        </section>
+
         {/* ── Band 3: everyday tuning ── */}
         <section style={{ minWidth: 0 }}>
           <h3 style={BAND_TITLE}>What Polish fixes</h3>
           <p style={BAND_SUBTITLE}>Select rules for Polish</p>
-          <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden", marginTop: 12 }}>
+          {polishCustomization !== "full" && (
+            <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12.5, color: "var(--text-secondary)" }}>
+              {polishCustomization === "override"
+                ? "Your current model (Qwen3.5-2B) follows a fixed editor prompt, so these rules don't apply. Only the prompt override above can steer it."
+                : "Your current model uses a fixed cleanup prompt, so these rules don't apply. Pick Qwen3.5-2B or LFM3 to customize how Polish works."}
+            </div>
+          )}
+          <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden", marginTop: 12, opacity: polishCustomization !== "full" ? 0.55 : 1 }}>
             {POLISH_RULES.map((r, i) => (
               <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "12px 16px", borderTop: i > 0 ? "1px solid var(--border-subtle, var(--border))" : "none" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>{r.label}</div>
                   <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>{r.hint}</div>
                 </div>
-                <Toggle label={r.label} checked={!!rules[r.id]} onChange={() => toggleRule(r.id)} />
+                <Toggle label={r.label} checked={!!rules[r.id]} onChange={() => toggleRule(r.id)} disabled={polishCustomization !== "full"} />
               </div>
             ))}
           </div>
@@ -994,6 +1069,33 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
               </div>
             </div>
             <Segmented label="List format" value={listStyle} options={LIST_STYLE_OPTIONS} onChange={saveListStyle} />
+          </div>
+
+          {/* Change ceiling: how much of a take Polish may replace (a % of
+              words). The primary aggressiveness dial, shown here next to the
+              rules it caps. 100 disables it (rewrite freely). */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginTop: 18 }}>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>
+                {changeCeiling >= 100 ? "Let Polish rewrite freely" : `Let Polish change up to ${changeCeiling}% of the words`}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 1 }}>
+                If a rewrite replaces more of your words than this, Teletype keeps what you actually said.
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Slider
+                label="Polish change limit"
+                value={changeCeiling}
+                min={10}
+                max={100}
+                step={5}
+                onChange={saveChangeCeiling}
+              />
+              <span style={{ fontSize: 13, color: "var(--text-secondary)", minWidth: 32, textAlign: "right" }}>
+                {changeCeiling >= 100 ? "Off" : `${changeCeiling}%`}
+              </span>
+            </div>
           </div>
         </section>
 
@@ -1193,7 +1295,14 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
                   Custom instructions
                   <span style={{ fontWeight: 500, color: "var(--text-secondary)" }}> for {selected.name}</span>
                 </div>
-                <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden" }}>
+                {polishCustomization !== "full" && (
+                  <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12.5, color: "var(--text-secondary)" }}>
+                    {polishCustomization === "override"
+                      ? "Your current model (Qwen3.5-2B) follows a fixed editor prompt, so these instructions don't apply. Only the prompt override above can steer it."
+                      : "Your current model uses a fixed cleanup prompt, so these instructions don't apply. Pick Qwen3.5-2B or LFM3 to customize how Polish works."}
+                  </div>
+                )}
+                <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden", opacity: polishCustomization !== "full" ? 0.55 : 1 }}>
                   {/* Base prompt: the first, locked item (no trash/toggle). */}
                   <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-subtle, var(--border))", fontSize: 13, lineHeight: 1.5, color: "var(--text)", whiteSpace: "pre-wrap" }}>
                     {basePromptFor(selected)}
@@ -1209,6 +1318,7 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
                       </div>
                       <button
                         onClick={() => persistInstructions(customInstructions.filter((x) => x.id !== ins.id))}
+                        disabled={polishCustomization !== "full"}
                         style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary, var(--text-secondary))", display: "inline-flex" }}
                         title="Remove instruction"
                       >
@@ -1217,6 +1327,7 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
                       <Toggle
                         label={ins.text}
                         checked={ins.enabled}
+                        disabled={polishCustomization !== "full"}
                         onChange={() =>
                           persistInstructions(customInstructions.map((x) => (x.id === ins.id ? { ...x, enabled: !x.enabled } : x)))
                         }
@@ -1229,6 +1340,7 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
                       rows={2}
                       placeholder="Add an instruction on top of this prompt"
                       value={draftInstruction}
+                      disabled={polishCustomization !== "full"}
                       onChange={(e) => setDraftInstruction(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -1258,7 +1370,7 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
                       <button
                         className="primary"
                         onClick={addInstruction}
-                        disabled={!draftInstruction.trim()}
+                        disabled={!draftInstruction.trim() || polishCustomization !== "full"}
                         style={{ fontSize: 13 }}
                       >
                         Add

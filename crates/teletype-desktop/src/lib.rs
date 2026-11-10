@@ -1342,6 +1342,8 @@ pub fn run() {
             commands::reset_transforms,
             commands::test_transform,
             commands::transform_selection,
+            commands::get_polish_prompt_info,
+            commands::test_polish_prompt,
             // Personalization
             commands::get_profile,
             commands::add_preference,

@@ -55,6 +55,7 @@ export interface Settings {
   selectedLlmModel: string;
   typingAutotextEnabled: boolean;
   autotextTiming: string;
+  dateFormat?: string;
   removeFillerWords: boolean;
   fillerWords: string[];
   fillerStrength: string;
@@ -68,6 +69,7 @@ export interface Settings {
   warmEnginePolicy: string;
   matchStrictness: string;
   dictionaryEnabled: boolean;
+  polishPromptOverride?: string | null;
   /// "default" | "classic" | "levelRail" | "well" | "dotGrid" | "glow". The
   /// backend sends an id it does not know back as "default".
   pillStyle: string;

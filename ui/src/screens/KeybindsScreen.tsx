@@ -99,7 +99,7 @@ function KeybindRow({
               display: "inline-block",
               marginTop: 4,
               padding: "1px 8px",
-              borderRadius: "var(--radius-pill, 999px)",
+              borderRadius: "var(--radius-pill)",
               fontSize: "var(--text-xs)",
               fontWeight: 600,
               color: "var(--danger)",
@@ -245,7 +245,7 @@ export default function KeybindsScreen() {
 
   if (!settings)
     return (
-      <div style={{ width: "100%", maxWidth: 860 }}>
+      <div style={{ width: "100%" }}>
         <div
           style={{
             height: 24,
@@ -335,7 +335,7 @@ export default function KeybindsScreen() {
   ) : null;
 
   return (
-    <div style={{ width: "100%", maxWidth: 860 }}>
+    <div style={{ width: "100%" }}>
       <div style={{ marginBottom: 24 }}>
         <h2 className="tt-screen-title">Keybinds</h2>
         <p

@@ -285,7 +285,11 @@ pub fn content_change_share(input: &str, output: &str) -> f64 {
     1.0 - matched as f64 / larger as f64
 }
 
-fn words(s: &str) -> Vec<String> {
+/// The word cores of `s`, lowercased, punctuation stripped per word.
+///
+/// Shared by the change accounting (which counts every word) and the off-topic
+/// fingerprint (which additionally keeps only words of 3+ characters).
+pub(crate) fn words(s: &str) -> Vec<String> {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(|w| w.to_lowercase())

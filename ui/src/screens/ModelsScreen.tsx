@@ -743,7 +743,7 @@ export default function ModelsScreen() {
   };
 
   return (
-    <div style={{ width: "100%", maxWidth: 860 }}>
+    <div style={{ width: "100%" }}>
       <div style={{ marginBottom: 16 }}>
         <h2 className="tt-screen-title">AI Models</h2>
         <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4 }}>

@@ -403,7 +403,11 @@ export default function StylesScreen() {
                     </span>
                     {layer.winner && <span style={inUsePill}>In use</span>}
                   </div>
-                  <div style={{ ...noteText, marginTop: 2 }}>{layer.note}</div>
+                  {/* The rank number and the In use pill already say which rung
+                      decides; only the losing rungs need the one-line reason. */}
+                  {!layer.winner && layer.note !== "" && (
+                    <div style={{ ...noteText, marginTop: 2 }}>{layer.note}</div>
+                  )}
                 </div>
               </div>
             ))}
@@ -422,17 +426,17 @@ export default function StylesScreen() {
                 <span style={phraseChip}>nothing about style, it only cleans up the wording</span>
               )}
             </div>
-            {/* Name the model the cascade was resolved for, and whether it can
-                read the answer. Without this line the band is a promise the
-                current model cannot keep. */}
+            {/* Name what the selected model is actually told. The cascade above
+                is the user's pick; this line is the model's reality. Without it
+                the band is a promise the current model cannot keep. */}
             <div style={{ ...noteText, marginTop: 8 }}>
               {capability === null
                 ? null
                 : capability.channel === "controlLine"
-                  ? `${modelName} does not read this list. Its writing style comes from the Tone, Structure and Context settings below.`
+                  ? `${modelName} never sees these phrases. On Polish it is told only the Tone, Structure and Context settings below.`
                   : stylesApply
                     ? `Read by ${modelName}.`
-                    : `${modelName} writes from its own training and does not read these phrases, so they change nothing yet.`}
+                    : `${modelName} does not read these phrases. Polish is fixed in the model, so they change nothing for it.`}
             </div>
           </div>
         </section>
@@ -477,17 +481,10 @@ export default function StylesScreen() {
         </div>
 
         {!compareMeaningful ? (
-          <div
-            style={{
-              border: "1px dashed var(--border)",
-              borderRadius: "var(--radius)",
-              padding: "10px 12px",
-              ...noteText,
-            }}
-          >
+          <div style={{ ...noteText }}>
             {capability?.channel === "controlLine"
-              ? `Polish on ${modelName} takes its writing style from the Tone, Structure and Context controls at the bottom of this page, not from the list below, so both panes would come back the same.`
-              : `${modelName} writes in one fixed style that lives in the model itself, so both panes would come back the same. Choose a model that takes instructions (Qwen3.5 2B, Fast or Quality) to compare styles.`}
+              ? `Compare is off: ${modelName}'s Polish reads the Tone, Structure and Context settings below, not the style list, so both panes would come back the same.`
+              : `Compare is off: ${modelName} writes in one fixed style, so both panes would come back the same. Choose a model that takes instructions (Qwen3.5 2B, Fast or Quality) to compare.`}
           </div>
         ) : (
           <>
@@ -616,22 +613,12 @@ export default function StylesScreen() {
         )}
       </section>
 
-      {/* Band C - the styles themselves. */}
+      {/* Band C - the styles themselves. What applies to this model is said
+          once, in Band A; here the list just says what is not in effect. */}
       {!stylesApply && (
-        <div
-          style={{
-            background: "var(--surface)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius)",
-            padding: "10px 14px",
-            fontSize: 12,
-            color: "var(--text-secondary)",
-            lineHeight: 1.5,
-          }}
-        >
-          {capability?.channel === "controlLine"
-            ? `${modelName} writes Polish from the Tone, Structure and Context controls at the bottom of this page. The styles below are not applied to it.`
-            : `${modelName} writes in one fixed style that lives in the model itself, so the styles below are not applied. A model that takes instructions (Qwen3.5 2B, Fast or Quality) uses them.`}
+        <div style={noteText}>
+          Not in effect for {modelName} (see above). They still apply on any model that
+          takes instructions.
         </div>
       )}
 
@@ -673,9 +660,7 @@ export default function StylesScreen() {
                 style={{ minWidth: 96 }}
                 disabled={!stylesApply}
                 title={
-                  stylesApply
-                    ? undefined
-                    : `${modelName} does not read style phrases, so this style cannot be applied`
+                  stylesApply ? undefined : `Not in effect for ${modelName}`
                 }
               >
                 {active ? "Active" : "Activate"}

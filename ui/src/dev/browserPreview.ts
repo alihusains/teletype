@@ -929,6 +929,24 @@ const DEMO_RESPONSES: Record<string, unknown> = {
       attribution: "Qwen3.5 by Alibaba (Apache-2.0)",
     },
     {
+      id: "qwen3.5-0.8b",
+      name: "Qwen3.5 0.8B",
+      sizeMb: 508,
+      description:
+        "The lightweight all-rounder: the same Polish control-line as Qwen3.5 2B in a smaller package, for CPU-only and low-RAM hosts where the 2B is too slow.",
+      specialty: { tag: "Polish + Prompt Engineer (lightweight)", measured: false },
+      downloaded: false,
+      selected: false,
+      recommended: false,
+      polishCapable: true,
+      verdict: "Recommended",
+      verdictNote: "Fast all-rounder for CPU-only hosts: same Polish control-line as the 2B, smaller",
+      licenseName: "Apache-2.0",
+      licenseUrl: "https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/LICENSE",
+      requiresLicenseAccept: false,
+      attribution: "Qwen3.5 by Alibaba (Apache-2.0)",
+    },
+    {
       id: "qwen2.5-3b",
       name: "Qwen2.5 3B",
       sizeMb: 1900,
@@ -1045,6 +1063,7 @@ const DEMO_RESPONSES: Record<string, unknown> = {
 const STYLE_CHANNELS: Record<string, "fixedBehaviour" | "controlLine" | "stylePhrases"> = {
   "s1-mini": "controlLine",
   "qwen3.5-2b": "controlLine",
+  "qwen3.5-0.8b": "controlLine",
   "speakoflow-mini": "fixedBehaviour",
 };
 
@@ -1056,8 +1075,8 @@ function styleCapability(modelId: string) {
     modelName: rows.find((r) => r.id === modelId)?.name ?? (modelId || "No model selected"),
     channel,
     // A cleanup-only fine-tune runs nothing but Polish, so phrases never reach
-    // its prompt; the 2B takes them outside Polish.
-    stylesApply: channel === "stylePhrases" || modelId === "qwen3.5-2b",
+    // its prompt; the 2B and 0.8B take them outside Polish.
+    stylesApply: channel === "stylePhrases" || modelId === "qwen3.5-2b" || modelId === "qwen3.5-0.8b",
     readsControlLine: channel === "controlLine",
     compareMeaningful: channel === "stylePhrases",
   };
@@ -1263,7 +1282,7 @@ export function installBrowserPreview(): void {
         const withHost = rows.map((r) => ({ ...r, runsOnHost: !cpuHost || r.sizeMb <= 900 }));
         if (!cmdArgs?.shortlist) return clone(withHost);
         const ids = cpuHost
-          ? ["s1-mini", "speakoflow-mini"]
+          ? ["s1-mini", "speakoflow-mini", "qwen3.5-0.8b"]
           : ["s1-mini", "qwen3.5-2b"];
         const picked = String(settings.selectedLlmModel ?? "");
         const byId = (id: string) => withHost.find((r) => r.id === id);

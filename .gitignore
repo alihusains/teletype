@@ -52,6 +52,9 @@ findings.md
 # Kept locally, not published. (The project brain under .agents/brain/ is the
 # exception since 2026-10-23, see the note below it.)
 tasks/pi-tasks/
+# Raw pi agent session logs (multi-MB jsonl transcripts). The human-readable
+# summaries in tasks/pi-reports/ are committed instead.
+tasks/pi-logs/
 # Ignore everything under .agents/ EXCEPT the deterministic Agent-OS checkpoint
 # state + task-classification rules, which we track. Use '.agents/*' (not
 # '.agents/') so the '!' negations below can re-include files: git cannot
@@ -122,6 +125,12 @@ evals/models/
 # Corpus archives (a CommonVoice 50-item download is 544 MB; corpora live in
 # ~/.cache/teletype-eval, not in the repo)
 *.tar.gz
+
+# Brag launch-video build output (regenerated on demand by the brag skill)
+brag-output-*/
+
+# Qoder IDE local config
+.qoder/
 
 # Private human corpus: the owner's real dictations (audio, transcripts, run
 # reports). Never committed. A directory rule placed AFTER the *.txt exception

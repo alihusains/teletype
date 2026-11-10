@@ -225,6 +225,7 @@ pub async fn test_transform(
         list_style: state.settings().list_style.resolve(),
         polish_max_change_percent: state.settings().polish_max_change_percent,
         screen_terms: Vec::new(),
+        user_override: state.settings().polish_prompt_override.clone(),
     };
     drop(profile);
     let result = teletype_core::transforms::engine::run_transform_blocking(
@@ -337,6 +338,7 @@ pub async fn transform_selection_with_text(
             list_style: settings.list_style.resolve(),
             polish_max_change_percent: settings.polish_max_change_percent,
             screen_terms: Vec::new(),
+            user_override: settings.polish_prompt_override.clone(),
         };
         let result = teletype_core::transforms::engine::run_transform_blocking(
             provider,

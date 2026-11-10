@@ -192,24 +192,25 @@ export function AudioPlayer({ id }: { id: string }) {
         disabled={load.status !== "ready"}
         onClick={() => void toggle()}
         style={{
-          width: 36,
-          height: 36,
+          width: 34,
+          height: 34,
           flex: "none",
           borderRadius: "50%",
-          border: "none",
-          background: "var(--text)",
+          border: "1px solid var(--border)",
+          background: "var(--accent-soft)",
           display: "grid",
           placeItems: "center",
           cursor: load.status === "ready" ? "pointer" : "default",
           opacity: load.status === "ready" ? 1 : 0.4,
+          transition: "background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
         }}
       >
         <Icon
           name={isPlaying ? "pause" : "play"}
-          size={15}
-          color="var(--surface)"
-          fill="var(--surface)"
-          style={isPlaying ? undefined : { marginLeft: 2 }}
+          size={14}
+          color="var(--accent)"
+          fill="var(--accent)"
+          style={isPlaying ? undefined : { marginLeft: 1.5 }}
         />
       </button>
       {load.status === "error" ? (

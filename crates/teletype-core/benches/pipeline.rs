@@ -146,7 +146,8 @@ fn run_pipeline_once(
         polish_max_change_percent: 40,
         screen_terms: &[],
         word_checker: &CHECKER,
-    };
+        date_format: "",
+};
     let input = UnifiedInput {
         source: InputSource::Voice,
         text: input_text.to_string(),

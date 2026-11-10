@@ -32,7 +32,12 @@ impl ProtectedText {
 /// Triggers are matched as whole tokens: the character before the `/` must be
 /// start-of-text or whitespace, and the character after the trigger must be
 /// whitespace or end-of-text. This avoids eating `/` inside URLs or words.
-pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> ProtectedText {
+pub fn protect(
+    text: &str,
+    store: &AutoTextStore,
+    app: &ApplicationContext,
+    date_format: &str,
+) -> ProtectedText {
     // Longest trigger first so `/my-email` wins over `/my`.
     let mut applicable: Vec<&AutoTextEntry> =
         store.entries.iter().filter(|e| e.applies_to(app)).collect();
@@ -74,7 +79,12 @@ pub fn protect(text: &str, store: &AutoTextStore, app: &ApplicationContext) -> P
                     let n = values.len();
                     values.insert(
                         n,
-                        placeholders::expand_placeholders_for(&entry.replacement, app),
+                        placeholders::expand_placeholders_with(
+                            &entry.replacement,
+                            Some(app),
+                            date_format,
+                            &placeholders::read_clipboard_public,
+                        ),
                     );
                     out.push_str(&format!("{{{{AUTOTEXT_{n}}}}}"));
                     rest = after_match;
@@ -99,8 +109,9 @@ pub fn protect_snippets(
     text: &str,
     store: &AutoTextStore,
     app: &ApplicationContext,
+    date_format: &str,
 ) -> ProtectedText {
-    protect_snippets_with(text, store, app, &[])
+    protect_snippets_with(text, store, app, &[], date_format)
 }
 
 /// Like [`protect_snippets`] but also protects the built-in System entries
@@ -110,6 +121,7 @@ pub fn protect_snippets_with(
     store: &AutoTextStore,
     app: &ApplicationContext,
     system: &[AutoTextEntry],
+    date_format: &str,
 ) -> ProtectedText {
     let snippets = super::expand::combined_snippets(store, app, system);
     if snippets.is_empty() {
@@ -189,7 +201,12 @@ pub fn protect_snippets_with(
                 let n = values.len();
                 values.insert(
                     n,
-                    placeholders::expand_placeholders_for(&entry.replacement, app),
+                    placeholders::expand_placeholders_with(
+                        &entry.replacement,
+                        Some(app),
+                        date_format,
+                        &placeholders::read_clipboard_public,
+                    ),
                 );
                 out.push_str(&format!("{{{{AUTOTEXT_{n}}}}}"));
                 rest = after_rest;
@@ -254,7 +271,7 @@ mod tests {
     fn replaces_whole_token_triggers() {
         let store = store("user@example.com");
         let app = ApplicationContext::unknown();
-        let p = protect("send this to /email and cc /email2", &store, &app);
+        let p = protect("send this to /email and cc /email2", &store, &app, "");
         assert_eq!(p.text, "send this to {{AUTOTEXT_0}} and cc /email2");
         assert_eq!(p.values.get(&0), Some(&"user@example.com".to_string()));
     }
@@ -263,7 +280,7 @@ mod tests {
     fn does_not_eat_slashes_in_urls_or_words() {
         let store = store("user@example.com");
         let app = ApplicationContext::unknown();
-        let p = protect("see https://example.com/email or /emailish", &store, &app);
+        let p = protect("see https://example.com/email or /emailish", &store, &app, "");
         assert_eq!(p.text, "see https://example.com/email or /emailish");
         assert!(p.values.is_empty());
     }
@@ -279,7 +296,7 @@ mod tests {
             application_name: "Gmail".into(),
             ..Default::default()
         };
-        let p = protect("/sig", &store, &app);
+        let p = protect("/sig", &store, &app, "");
         // The protected value is the expanded one, so the model never sees
         // the raw token and cannot "improve" the app name.
         assert_eq!(p.values.get(&0), Some(&"Sent from Gmail".to_string()));
@@ -290,7 +307,7 @@ mod tests {
     fn multiple_occurrences_get_distinct_placeholders() {
         let store = store("user@example.com");
         let app = ApplicationContext::unknown();
-        let p = protect("/email and /email", &store, &app);
+        let p = protect("/email and /email", &store, &app, "");
         assert_eq!(p.text, "{{AUTOTEXT_0}} and {{AUTOTEXT_1}}");
         assert_eq!(p.values.len(), 2);
     }
@@ -299,7 +316,7 @@ mod tests {
     fn restore_puts_exact_values_back() {
         let store = store("user@example.com");
         let app = ApplicationContext::unknown();
-        let p = protect("send it to /email", &store, &app);
+        let p = protect("send it to /email", &store, &app, "");
         // Simulate the model returning the text with the placeholder intact.
         let restored = restore(&p.text, &p);
         assert_eq!(restored, "send it to user@example.com");
@@ -309,7 +326,7 @@ mod tests {
     fn restore_survives_mangled_placeholder() {
         let store = store("user@example.com");
         let app = ApplicationContext::unknown();
-        let p = protect("send it to /email", &store, &app);
+        let p = protect("send it to /email", &store, &app, "");
         // Model dropped the placeholder entirely — no crash, text preserved.
         let restored = restore("send it to ", &p);
         assert_eq!(restored, "send it to ");
@@ -322,7 +339,7 @@ mod tests {
         e.snippet = "my email".into();
         store.insert(e).unwrap();
         let app = ApplicationContext::unknown();
-        let p = protect_snippets("send to my email please", &store, &app);
+        let p = protect_snippets("send to my email please", &store, &app, "");
         assert_eq!(p.text, "send to {{AUTOTEXT_0}} please");
         assert_eq!(p.values.get(&0), Some(&"abcd@gmail.com".to_string()));
     }
@@ -336,7 +353,7 @@ mod tests {
         e.snippet = "żółć ok".into();
         store.insert(e).unwrap();
         let app = ApplicationContext::unknown();
-        let p = protect_snippets("żółć ok, dziękuję", &store, &app);
+        let p = protect_snippets("żółć ok, dziękuję", &store, &app, "");
         assert_eq!(p.text, "{{AUTOTEXT_0}}, dziękuję");
         assert_eq!(p.values.get(&0), Some(&"Pozdrawiam".to_string()));
     }
@@ -348,7 +365,7 @@ mod tests {
         e.snippet = "my email".into();
         store.insert(e).unwrap();
         let app = ApplicationContext::unknown();
-        let p = protect_snippets("my email", &store, &app);
+        let p = protect_snippets("my email", &store, &app, "");
         assert_eq!(restore(&p.text, &p), "abcd@gmail.com");
     }
 
@@ -369,7 +386,7 @@ mod tests {
             application_name: "Slack".into(),
             ..Default::default()
         };
-        assert!(protect("bye /sig", &store, &gmail).has_placeholders());
-        assert!(!protect("bye /sig", &store, &other).has_placeholders());
+        assert!(protect("bye /sig", &store, &gmail, "").has_placeholders());
+        assert!(!protect("bye /sig", &store, &other, "").has_placeholders());
     }
 }

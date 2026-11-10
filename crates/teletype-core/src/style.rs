@@ -304,6 +304,11 @@ pub fn model_style(model_id: &str) -> ModelStyle {
             polishes_from_card: true,
             cleanup_only: false,
         },
+        "qwen3.5-0.8b" => ModelStyle {
+            channel: ControlLine,
+            polishes_from_card: true,
+            cleanup_only: false,
+        },
         "speakoflow-mini" => ModelStyle {
             channel: FixedBehaviour,
             polishes_from_card: true,
@@ -613,7 +618,7 @@ mod tests {
     /// from the screen's hard-coded list, so it offered styles it never reads.
     #[test]
     fn style_table_covers_every_card_model() {
-        for id in ["s1-mini", "qwen3.5-2b", "speakoflow-mini"] {
+        for id in ["s1-mini", "qwen3.5-2b", "qwen3.5-0.8b", "speakoflow-mini"] {
             let s = model_style(id);
             assert!(s.polishes_from_card, "{id} polishes from a card prompt");
             assert!(!s.compare_is_meaningful(), "{id} cannot compare styles");
@@ -630,6 +635,7 @@ mod tests {
         assert!(!model_style("s1-mini").styles_apply());
         assert!(!model_style("speakoflow-mini").styles_apply());
         assert!(model_style("qwen3.5-2b").styles_apply());
+        assert!(model_style("qwen3.5-0.8b").styles_apply());
         assert!(model_style("quality").styles_apply());
         assert!(model_style("gemma2-2b").styles_apply());
     }
@@ -638,6 +644,7 @@ mod tests {
     fn control_line_shows_for_the_models_that_read_it() {
         assert!(model_style("s1-mini").reads_control_line());
         assert!(model_style("qwen3.5-2b").reads_control_line());
+        assert!(model_style("qwen3.5-0.8b").reads_control_line());
         assert!(!model_style("speakoflow-mini").reads_control_line());
         assert!(!model_style("fast").reads_control_line());
     }

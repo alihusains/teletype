@@ -350,7 +350,10 @@ export function displayLevel(level: number): number {
 export function polishDiffShowable(payload: PolishDiffPayload): boolean {
   const raw = payload.raw.trim();
   const polished = payload.polished.trim();
-  return !!raw && !!polished && raw !== polished;
+  // Always showable when there is text, even if polish changed nothing: the
+  // card renders "0 changes" so the user can see the take landed and what
+  // polish did (or that it did nothing).
+  return !!raw && !!polished;
 }
 
 /** Pure reducer: every pill transition, unit-testable with no Tauri mock. */

@@ -17,6 +17,7 @@ import { isBusyPhase, pillMessage, usePillMachine, errorHasSettingsAction, type 
 import { SIZES } from "./lib/rainbow";
 import { glowView, isWorkingMessage, knownPillStyle } from "./lib/glowModel";
 import { GlowPill } from "./pillGlow";
+import { Icon } from "./components/Icon";
 import { RADIUS as GLOW_RADIUS } from "./lib/glowTokens";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
 import {
@@ -188,6 +189,29 @@ function RainbowHairline({ steady = false }: { steady?: boolean }) {
         pointerEvents: "none",
       }}
     />
+  );
+}
+
+/** A pulsing sparkle that marks the agentic (polish/transform) stage: the
+    model is actively rewriting the take. Scale + opacity only, so it never
+    scales past the window box; holds still under reduced motion (the pill.html
+    global rule also cuts it, but the explicit `steady` keeps JS and CSS in
+    step, matching RainbowHairline). */
+function AgenticSparkle({ steady = false }: { steady?: boolean }) {
+  return (
+    <span
+      aria-hidden
+      data-agentic-cue
+      style={{
+        display: "inline-flex",
+        flexShrink: 0,
+        transformOrigin: "center",
+        animation: steady ? undefined : "sparkle-pulse 1.1s ease-in-out infinite",
+        filter: "drop-shadow(0 0 4px rgba(196,181,253,0.5))",
+      }}
+    >
+      <Icon name="sparkles" size={15} color="#c4b5fd" strokeWidth={1.5} />
+    </span>
   );
 }
 
@@ -1433,16 +1457,19 @@ function DotGridProcessingPill({
   skipMessage,
   micFailure,
   error,
+  agentic = false,
 }: {
   message: string;
   skipMessage: string | null;
   micFailure: boolean;
   error: boolean;
+  agentic?: boolean;
 }) {
   const reducedMotion = useReducedMotion();
   return (
     <DotGridCapsule multiline>
       <DotGridMatrix state="thinking" levels={[]} reducedMotion={reducedMotion} />
+      {agentic && <AgenticSparkle steady={reducedMotion} />}
       <div style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
         <p
           role={error ? "alert" : "status"}
@@ -1684,6 +1711,7 @@ function LegacyProcessingBody({
   error,
   lines,
   working,
+  agentic = false,
 }: {
   message: string;
   skipMessage: string | null;
@@ -1692,6 +1720,8 @@ function LegacyProcessingBody({
   lines: 1 | 2;
   /** Still in progress ("Transcribing…"): show a looping cue. */
   working: boolean;
+  /** The agentic (polish/transform) stage: show the pulsing sparkle cue. */
+  agentic?: boolean;
 }) {
   const reduced = useReducedMotion();
   return (
@@ -1707,6 +1737,7 @@ function LegacyProcessingBody({
         animation: "fade-in 0.18s ease-out",
       }}
     >
+      {agentic && <AgenticSparkle steady={reduced} />}
       <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
         <p
           role={error ? "alert" : "status"}
@@ -2079,6 +2110,7 @@ export function Pill() {
               skipMessage={machine.skipMessage}
               micFailure={machine.micFailure}
               error={phase === "error"}
+              agentic={phase === "streaming"}
             />
           )}
           {!glow && !dotGrid && pillStyle === "classic" && <ClassicPill {...styleProps} />}
@@ -2133,6 +2165,7 @@ export function Pill() {
             error={phase === "error"}
             lines={busySize.lines}
             working={phase !== "error" && isWorkingMessage(phase, message)}
+            agentic={phase === "streaming"}
           />
         )}
         {phase === "recording" && (

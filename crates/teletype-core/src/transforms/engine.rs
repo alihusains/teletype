@@ -5,8 +5,8 @@
 //! input. AutoText restoration happens in the pipeline, not here.
 
 use super::prompt::{
-    build_prompt, build_qwen_polish_messages, build_s1_messages, build_speakoflow_messages,
-    s1_too_short, PromptContext, S1Structure,
+    build_prompt, build_s1_messages, build_speakoflow_messages,
+    qwen_polish_system_prompt_with_override, s1_too_short, PromptContext, S1Structure,
 };
 use super::validator::{self, Failure, ValidatedOutput};
 use super::TransformDefinition;
@@ -287,20 +287,21 @@ fn run_s1(
 /// rules-first system prompt. It is not a cleanup fine-tune: outside the
 /// Polish path it falls through to `build_prompt` and keeps instruction
 /// following for transforms and Prompt Engineer.
+///
+/// The 2B is a general instruction follower, so (unlike S1-mini and
+/// SpeakoFlow Mini) it MAY absorb the user's AI Polish prompt override:
+/// it is appended to the stock Polish prompt as an addendum, with the
+/// stock rules still leading. The S1-mini and SpeakoFlow paths never read
+/// `user_override` at all.
 fn run_qwen_polish(
     provider: &dyn crate::llm::InferenceProvider,
     protected_input: &str,
     ctx: &PromptContext,
     on_token: &mut Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, String> {
-    run_fixed_messages(
-        provider,
-        protected_input,
-        ctx,
-        on_token,
-        "Qwen3.5",
-        build_qwen_polish_messages(protected_input, &ctx.s1_control),
-    )
+    let system = qwen_polish_system_prompt_with_override(ctx.user_override.as_deref());
+    let user = format!("{}\n{}", ctx.s1_control.control_line(), protected_input);
+    run_fixed_messages(provider, protected_input, ctx, on_token, "Qwen3.5", (system, user))
 }
 
 /// SpeakoFlow Mini (`Speakoflow/speakoflow-mini`) was fine-tuned on a fixed
@@ -440,7 +441,8 @@ fn run_single_chunk(
     // Style screen and this engine cannot disagree about what a model honours.
     let style = crate::style::model_style(provider.model_id());
     let is_s1 = provider.model_id() == "s1-mini" && is_polish;
-    let is_qwen_polish = provider.model_id() == "qwen3.5-2b" && is_polish;
+    let is_qwen_polish =
+        (provider.model_id() == "qwen3.5-2b" || provider.model_id() == "qwen3.5-0.8b") && is_polish;
     // S1-mini and SpeakoFlow Mini are card-faithful cleanup models, and
     // Qwen3.5-2B takes their control line for Polish only. All three use a
     // lean prompt instead of `build_prompt`; every other transform on the 2B
@@ -532,7 +534,9 @@ fn run_single_chunk(
         } else if is_qwen_polish {
             (
                 run_qwen_polish(provider, protected_input, ctx, on_token),
-                super::prompt::QWEN_POLISH_SYSTEM_PROMPT.to_string(),
+                super::prompt::qwen_polish_system_prompt_with_override(
+                ctx.user_override.as_deref(),
+                ),
             )
         } else {
             (
@@ -1593,6 +1597,152 @@ mod tests {
             "Polish must not fall through to the generic prompt"
         );
         assert!(result.transformed, "the cleanup should be accepted");
+    }
+
+    /// The 2B is a general instruction follower, so its Polish path is the
+    /// one card-adjacent path allowed to absorb the user's prompt override:
+    /// the stock prompt stays the byte-prefix and the override is appended
+    /// as an addendum. S1-mini and SpeakoFlow Mini must never see it.
+    #[test]
+    fn qwen_polish_applies_the_user_override_as_an_addendum() {
+        use crate::transforms::prompt::{S1Context, S1Control, S1Structure, S1Styling};
+
+        let rec = QwenRecorder::default();
+        let input = "they was ready to go so i told them to start the meeting now";
+        let ctx = PromptContext {
+            s1_control: S1Control {
+                styling: S1Styling::Casual,
+                structure: S1Structure::Prose,
+                context: S1Context::Email,
+            },
+            user_override: Some("Always use British spelling.".into()),
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        let (system, user) = rec.stream.lock().unwrap().clone();
+        let system = system.expect("the control-line path must call generate_with_system_stream");
+        assert!(
+            system.starts_with(super::super::prompt::QWEN_POLISH_SYSTEM_PROMPT),
+            "the stock prompt must stay the prefix"
+        );
+        assert!(system.contains("USER POLISH PROMPT"));
+        assert!(system.contains("Always use British spelling."));
+        assert!(system.contains("the rules above always win"));
+        assert_eq!(
+            user.as_deref(),
+            Some(format!("[Styling: casual] [Structure: prose] [Context: email]\n{input}").as_str())
+        );
+        assert!(result.transformed);
+    }
+
+    /// S1-mini's system prompt is a fixed contract with its card: the
+    /// override must NOT reach the wire, whatever the profile holds.
+    #[test]
+    fn s1_never_sees_the_user_override() {
+        let rec = S1Recorder(std::sync::Mutex::new(None));
+        let input = "the invoice is ready please review it today";
+        let ctx = PromptContext {
+            user_override: Some("Always use British spelling.".into()),
+            ..Default::default()
+        };
+        let result = run_transform_blocking(
+            &rec,
+            &polish(),
+            input,
+            &ctx,
+            &mut None,
+        );
+        // The S1 path is card-faithful: the model gets the transcript back
+        // (plus a period from the recorder), so the validator rejects it as
+        // untransformed and the engine falls back to the input. The
+        // assertion that matters is on the wire, not on the outcome.
+        assert_eq!(result.text, input);
+        let prompt = rec
+            .0
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("S1 must be called");
+        // The S1 path uses generate_with_system_stream, which S1Recorder
+        // records as an empty system + the user message; assert the override
+        // is absent from everything the provider saw.
+        assert!(
+            !prompt.contains("Always use British spelling"),
+            "the override must not reach S1-mini: {prompt}"
+        );
+        assert!(!prompt.contains("USER POLISH PROMPT"));
+    }
+
+    /// SpeakoFlow Mini is the same story: its card prompt is fixed, and the
+    /// override must not leak into the system prompt or the user message.
+    #[test]
+    fn speakoflow_never_sees_the_user_override() {
+        let rec = SpeakoRecorder(std::sync::Mutex::new((None, None)));
+        let input = "they was ready to go so i told them to start the meeting now";
+        let ctx = PromptContext {
+            user_override: Some("Always use British spelling.".into()),
+            ..Default::default()
+        };
+        let result =
+            run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+        let (system, user) = rec.0.lock().unwrap().clone();
+        assert!(result.transformed);
+        assert_eq!(
+            system.as_deref(),
+            Some(super::super::prompt::SPEAKO_SYSTEM_PROMPT),
+            "SpeakoFlow's system prompt must be the card prompt, unchanged"
+        );
+        assert_eq!(user.as_deref(), Some(input));
+        assert!(!system.unwrap().contains("Always use British spelling"));
+        assert!(!user.unwrap().contains("Always use British spelling"));
+    }
+
+    /// A non-Polish transform on a generic model carries the override
+    /// through the generic build_prompt path (marked as user data).
+    #[test]
+    fn generic_path_applies_the_user_override() {
+        let pe = TransformStore::with_built_ins()
+            .get("builtin-prompt-engineer")
+            .unwrap()
+            .clone();
+        let rec = QwenRecorder::default();
+        let input = "make a prompt that summarizes my meeting notes into action items";
+        let ctx = PromptContext {
+            user_override: Some("Keep it under three sentences.".into()),
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &pe, input, &ctx, &mut None);
+        assert!(result.transformed);
+        let prompt = rec
+            .plain
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the generic path must call generate");
+        assert!(prompt.contains("USER POLISH PROMPT"));
+        assert!(prompt.contains("Keep it under three sentences."));
+        assert!(prompt.contains("the rules above always win"));
+    }
+
+    /// An empty override changes nothing on any path: the 2B Polish prompt
+    /// comes back byte-identical to the stock one.
+    #[test]
+    fn empty_override_changes_nothing_on_the_qwen_path() {
+        let rec = QwenRecorder::default();
+        let input = "they was ready to go so i told them to start the meeting now";
+        let ctx = PromptContext {
+            user_override: Some("   \n ".into()),
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+        let (system, _) = rec.stream.lock().unwrap().clone();
+        assert_eq!(
+            system.as_deref(),
+            Some(super::super::prompt::QWEN_POLISH_SYSTEM_PROMPT),
+            "a whitespace-only override must be the stock prompt"
+        );
+        assert!(result.transformed);
     }
 
     /// The prompt asks for prose, but a small model still returns bullets

@@ -1043,6 +1043,7 @@ pub async fn preview_style_profile(
         list_style: state.settings().list_style.resolve(),
         polish_max_change_percent: state.settings().polish_max_change_percent,
         screen_terms: Vec::new(),
+        user_override: state.settings().polish_prompt_override.clone(),
     };
     let result = teletype_core::transforms::engine::run_transform_blocking(
         provider,

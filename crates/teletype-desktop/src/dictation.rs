@@ -268,6 +268,7 @@ fn build_segment_polish_fn(state: &AppState) -> Option<SegmentPolishFn> {
             preferences: Vec::new(),
             preferred_terms: known,
             user_instruction: None,
+            user_override: None,
             language: profile.language.clone(),
             s1_control: profile.s1_control,
             list_style: settings.list_style.resolve(),
@@ -2346,19 +2347,22 @@ fn polish_diff(
     polished: &str,
     marks: &teletype_core::trace::TraceStageMarks,
 ) -> Option<PolishDiff> {
-    if raw.trim().is_empty() || polished.trim().is_empty() || raw.trim() == polished.trim() {
+    let raw = raw.trim();
+    let polished = polished.trim();
+    if raw.is_empty() || polished.is_empty() {
         return None;
     }
-    if marks.polish_skipped_reason.is_some() {
-        return None;
-    }
-    let (Some(start), Some(end)) = (marks.t_polish_start, marks.t_polish_end) else {
-        return None;
+    // Always emit (even when polish changed nothing or was skipped) so the
+    // card shows after every take; the UI renders "0 changes" when
+    // raw == polished. The duration is only known when polish actually ran.
+    let ms = match (marks.t_polish_start, marks.t_polish_end) {
+        (Some(start), Some(end)) if end >= start => end - start,
+        _ => 0,
     };
     Some(PolishDiff {
         raw: raw.to_string(),
         polished: polished.to_string(),
-        ms: end.saturating_sub(start),
+        ms,
     })
 }
 
@@ -6412,6 +6416,7 @@ impl Session {
                                 autotext: &autotext,
                                 transforms: &transforms,
                                 profile: &profile,
+                                polish_prompt_override: None,
                                 inference: inference.as_deref(),
                                 decision: decision.as_deref(),
                                 force_command: take_kind == TakeKind::Command,
@@ -6437,6 +6442,7 @@ impl Session {
                                 list_style: settings.list_style.resolve(),
                                 polish_max_change_percent: settings.polish_max_change_percent,
                                 screen_terms: &screen_terms,
+                                date_format: settings.date_format.as_str(),
                             };
                             // P0.2: polish start is the moment the text pipeline
                             // (which ends in the LLM pass) begins.
@@ -9844,6 +9850,7 @@ fn headless_pipeline_run(raw: &str) -> teletype_core::pipeline::PipelineResult {
         autotext: &autotext,
         transforms: &transforms,
         profile: &profile,
+        polish_prompt_override: None,
         inference: None,
         decision: None,
         force_command: false,
@@ -9884,6 +9891,7 @@ fn headless_pipeline_run(raw: &str) -> teletype_core::pipeline::PipelineResult {
         list_style: teletype_core::transforms::ListStyle::default(),
         polish_max_change_percent: 100,
         screen_terms: &[],
+        date_format: "",
     };
     let input = UnifiedInput {
         source: InputSource::Voice,
@@ -10878,11 +10886,18 @@ mod tests {
     /// filler removal or AutoText change the text too, but they leave no polish
     /// marks, so they must not be advertised as polish.
     #[test]
-    fn polish_diff_needs_polish_marks_and_a_real_change() {
+    fn polish_diff_always_emits_when_there_is_text() {
         use teletype_core::trace::TraceStageMarks;
         let mut marks = TraceStageMarks::default();
-        assert_eq!(polish_diff("hello there", "Hello, there.", &marks), None);
 
+        // No polish marks: still emits (the card shows "0 changes"), just no
+        // duration.
+        let diff = polish_diff("hello there", "Hello, there.", &marks).expect("card");
+        assert_eq!(diff.raw, "hello there");
+        assert_eq!(diff.polished, "Hello, there.");
+        assert_eq!(diff.ms, 0);
+
+        // With marks: the duration is reported.
         marks.t_polish_start = Some(1_000);
         marks.t_polish_end = Some(1_640);
         let diff = polish_diff("hello there", "Hello, there.", &marks).expect("card");
@@ -10890,11 +10905,18 @@ mod tests {
         assert_eq!(diff.polished, "Hello, there.");
         assert_eq!(diff.ms, 640);
 
-        assert_eq!(polish_diff("same words", "same words", &marks), None);
+        // Polish changed nothing: still emits, so the card shows "0 changes".
+        let same = polish_diff("same words", "same words", &marks).expect("card");
+        assert_eq!(same.raw, "same words");
+        assert_eq!(same.polished, "same words");
+
+        // Empty text: no card.
         assert_eq!(polish_diff("  ", "anything", &marks), None);
 
+        // Polish skipped: still emits (raw == polished -> "0 changes").
         marks.polish_skipped_reason = Some("no polish model".into());
-        assert_eq!(polish_diff("hello there", "Hello, there.", &marks), None);
+        let skipped = polish_diff("hello there", "Hello, there.", &marks).expect("card");
+        assert_eq!(skipped.polished, "Hello, there.");
     }
 
     fn test_payload(session: u64, text: &str) -> PipelinePayload {

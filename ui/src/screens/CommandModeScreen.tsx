@@ -238,18 +238,17 @@ export default function CommandModeScreen() {
     );
   }
 
+  const selectedDecider = deciderRows.find((r) => r.id === deciderModel);
+  const deciderUnavailable =
+    deciderRows.length > 0 && (!selectedDecider || !selectedDecider.available);
+  const noDeciderAvailable =
+    deciderRows.length > 0 && !deciderRows.some((r) => r.available);
+
   return (
     <div style={{ width: "100%", maxWidth: 860 }}>
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
-        <h1
-          style={{
-            margin: 0,
-            fontSize: 22,
-            fontWeight: 650,
-            letterSpacing: "var(--tracking-tight)",
-          }}
-        >
+        <h2 className="tt-screen-title">
           Command Mode
           <sup
             style={{
@@ -261,19 +260,167 @@ export default function CommandModeScreen() {
           >
             beta
           </sup>
-        </h1>
-        <p
-          style={{
-            margin: "6px 0 0",
-            color: "var(--text-secondary)",
-            fontSize: "var(--text-sm)",
-            lineHeight: 1.5,
-            maxWidth: "56ch",
-          }}
-        >
+        </h2>
+        <p className="tt-screen-sub">
           When enabled, spoken commands like "open Safari" or "set brightness to 50%" are
           executed directly instead of being typed into the active field.
         </p>
+      </div>
+
+      {/* How it works */}
+      <section style={{ marginBottom: 24 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: "var(--text-md)",
+            fontWeight: 650,
+            letterSpacing: "var(--tracking-tight)",
+            marginBottom: 12,
+          }}
+        >
+          <Icon name="zap" size={16} style={{ display: "inline", verticalAlign: "middle" }} />
+          How it works
+        </div>
+        <ol
+          style={{
+            margin: 0,
+            padding: "0 0 0 20px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            fontSize: "var(--text-sm)",
+            color: "var(--text-secondary)",
+            lineHeight: 1.5,
+          }}
+        >
+          <li>
+            Turn on <strong>Enable Command Mode</strong> below.
+          </li>
+          <li>
+            Pick a decider model that is installed and available (the picker marks
+            unusable models with the reason why).
+          </li>
+          <li>
+            {commandHotkey.trim()
+              ? `Press the command hotkey (${commandHotkey.trim()}) and say what to do, for example "open Safari". You can also start a normal dictation and begin it with the wake phrase "teletype" or "hey teletype"; the rest of the sentence runs as a command instead.`
+              : 'Start a normal dictation and begin it with the wake phrase "teletype" or "hey teletype"; the rest of the sentence runs as a command instead. Or set a command hotkey on the Keybinds screen to start a command take directly.'}
+          </li>
+          <li>
+            Teletype transcribes, classifies and runs the command. Each run appears in
+            the Live Pipeline below.
+          </li>
+        </ol>
+      </section>
+
+      {/* Toggle */}
+      <div className="tt-card" style={{ marginBottom: 24, overflow: "hidden" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 16,
+            padding: "14px 16px",
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 600, fontSize: "var(--text-md)" }}>Enable Command Mode</div>
+            <div
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--text-tertiary)",
+                marginTop: 4,
+                maxWidth: "56ch",
+              }}
+            >
+              Voice commands are classified and executed on-device.
+              Dictation is unaffected and always polished.
+            </div>
+            <div
+              style={{
+                fontSize: "var(--text-sm)",
+                color: "var(--text-tertiary)",
+                marginTop: 4,
+              }}
+            >
+              {commandHotkey.trim()
+                ? `Hotkey: ${commandHotkey.trim()}`
+                : "Hotkey: not set (wake phrase still works)"}
+            </div>
+            {deciderRows.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 10,
+                }}
+              >
+                <label
+                  htmlFor="decider-model"
+                  style={{
+                    fontSize: "var(--text-sm)",
+                    color: "var(--text-tertiary)",
+                  }}
+                >
+                  Decider
+                </label>
+                <select
+                  id="decider-model"
+                  value={deciderModel}
+                  onChange={(e) => pickDeciderModel(e.target.value)}
+                  style={{
+                    fontSize: "var(--text-sm)",
+                    padding: "4px 8px",
+                    borderRadius: "var(--radius-xs, 6px)",
+                    background: "var(--surface-2)",
+                    color: "var(--text-primary)",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  {deciderRows.map((row) => (
+                    <option key={row.id} value={row.id} disabled={!row.available}>
+                      {row.name}
+                      {row.available
+                        ? ""
+                        : row.reason
+                          ? ` (${row.reason})`
+                          : " (not installed)"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          <Toggle label="Enable Command Mode" checked={enabled} onChange={toggle} />
+        </div>
+        {deciderUnavailable && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              margin: "0 16px 12px",
+              padding: "10px 12px",
+              borderRadius: "var(--radius-xs, 6px)",
+              background: "var(--warning-soft)",
+              border: "1px solid var(--warning)",
+              fontSize: "var(--text-sm)",
+              color: "var(--text-secondary)",
+              lineHeight: 1.5,
+            }}
+          >
+            <Icon name="alert" size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>
+              <strong>Nothing can decide your commands yet.</strong>{" "}
+              {noDeciderAvailable
+                ? "No decider model is installed. Download one on the Models screen, then pick it here."
+                : `The selected decider is unavailable${selectedDecider?.reason ? ` (${selectedDecider.reason})` : ""}. Pick another decider, or download the missing model on the Models screen.`}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Tools */}
@@ -377,88 +524,6 @@ export default function CommandModeScreen() {
         </div>
       </section>
 
-      {/* Toggle */}
-      <div className="tt-card" style={{ marginBottom: 24, overflow: "hidden" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 16,
-            padding: "14px 16px",
-          }}
-        >
-          <div>
-            <div style={{ fontWeight: 600, fontSize: "var(--text-md)" }}>Enable Command Mode</div>
-            <div
-              style={{
-                fontSize: "var(--text-sm)",
-                color: "var(--text-tertiary)",
-                marginTop: 4,
-                maxWidth: "56ch",
-              }}
-            >
-              Voice commands are classified and executed on-device.
-              Dictation is unaffected and always polished.
-            </div>
-            <div
-              style={{
-                fontSize: "var(--text-sm)",
-                color: "var(--text-tertiary)",
-                marginTop: 4,
-              }}
-            >
-              Hotkey: {commandHotkey.trim() ? commandHotkey : "not set"}
-            </div>
-            {deciderRows.length > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginTop: 10,
-                }}
-              >
-                <label
-                  htmlFor="decider-model"
-                  style={{
-                    fontSize: "var(--text-sm)",
-                    color: "var(--text-tertiary)",
-                  }}
-                >
-                  Decider
-                </label>
-                <select
-                  id="decider-model"
-                  value={deciderModel}
-                  onChange={(e) => pickDeciderModel(e.target.value)}
-                  style={{
-                    fontSize: "var(--text-sm)",
-                    padding: "4px 8px",
-                    borderRadius: "var(--radius-xs, 6px)",
-                    background: "var(--surface-2)",
-                    color: "var(--text-primary)",
-                    border: "1px solid var(--border)",
-                  }}
-                >
-                  {deciderRows.map((row) => (
-                    <option key={row.id} value={row.id} disabled={!row.available}>
-                      {row.name}
-                      {row.available
-                        ? ""
-                        : row.reason
-                          ? ` (${row.reason})`
-                          : " (not installed)"}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-          <Toggle label="Enable Command Mode" checked={enabled} onChange={toggle} />
-        </div>
-      </div>
-
       {/* Pipeline Visualizer */}
       <section>
         <div
@@ -476,7 +541,7 @@ export default function CommandModeScreen() {
           Live Pipeline
         </div>
         <p style={{ fontSize: "var(--text-sm)", color: "var(--text-tertiary)", marginBottom: 12 }}>
-          Real-time view of each dictation: what you said, how it was classified, and what happened.
+          Real-time view of each command: what you said, how it was classified, and what happened.
         </p>
 
         {traces.length === 0 ? (
@@ -490,7 +555,12 @@ export default function CommandModeScreen() {
               borderRadius: "var(--radius)",
             }}
           >
-            No dictations yet. Speak something to see the pipeline in action.
+            <div style={{ marginBottom: 6 }}>No commands yet.</div>
+            <div style={{ fontSize: "var(--text-sm)", lineHeight: 1.6 }}>
+              {enabled
+                ? `Turn on the toggle above and press the command hotkey${commandHotkey.trim() ? ` (${commandHotkey.trim()})` : ""}, or start a dictation with the wake phrase "teletype", and say something like "open Safari". Each run appears here.`
+                : `Turn on the toggle above, then start a command with the wake phrase "teletype" or the command hotkey. Each run appears here.`}
+            </div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

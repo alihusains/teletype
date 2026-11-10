@@ -51,7 +51,7 @@ const HEALTH_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 /// against `--reasoning-budget 0`, which suppresses the block a different way
 /// and degrades output.
 fn default_chat_template_kwargs(model_id: &str) -> &'static str {
-    if model_id == "s1-mini" || model_id == "qwen3.5-2b" {
+    if model_id == "s1-mini" || model_id == "qwen3.5-2b" || model_id == "qwen3.5-0.8b" {
         r#"{"enable_thinking":false}"#
     } else {
         r#"{}"#
@@ -175,6 +175,16 @@ impl ServerProvider {
                 "1",
             ])
             .args(["--chat-template-kwargs", self.chat_template_kwargs])
+            // LFM3 Omni is a multimodal (any-to-any) GGUF: its model card
+            // pins llama.cpp support at b11960+ and the audio projector
+            // (mmproj) loads from the model directory. `--no-warmup` skips the
+            // server's default text warm-up prompt, which is wasted work for a
+            // model this app only ever polishes text with.
+            .args(if self.model_id == "lfm3-omni" {
+                &["--no-warmup"]
+            } else {
+                &[] as &[&str]
+            })
             .stdout(Stdio::null())
             .stderr(Stdio::from(log));
         #[cfg(windows)]
@@ -1160,7 +1170,13 @@ pub fn find_llama_server_bin() -> Result<PathBuf, String> {
 
     if let Ok(exe) = env::current_exe() {
         if let Some(dir) = exe.parent() {
+            // On Windows the llama-server is a Vulkan prebuilt: the runtime
+            // exe lives in `llama-server-win/` next to its ggml DLLs, and the
+            // extensionless `binaries/llama-server` is a stub without them.
+            // Check the Vulkan path first so the DLLs are found; a Windows
+            // host that has no Vulkan directory falls through to the stub.
             let candidates = [
+                dir.join("llama-server-win").join("llama-server.exe"),
                 dir.join("llama-server"),
                 dir.join("llama-server.exe"),
                 dir.join("..").join("Resources").join("llama-server"),

@@ -65,22 +65,25 @@ describe("post-insertion polish card", () => {
     await waitFor(() => expect(screen.queryByText("1 change")).toBeNull());
   });
 
-  it("stays hidden when polish changed nothing", async () => {
+  it("shows 0 changes when polish changed nothing", async () => {
     await mountPill();
     await emitTauriEvent("polish-diff", {
       raw: "same words",
       polished: "same words",
       ms: 200,
     });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(screen.queryByText("Configure Polish")).toBeNull();
+    // The card always shows after a take; with no changes it reads "0
+    // changes" so the user can see the take landed.
+    await waitFor(() => expect(screen.getByText("Configure Polish")).toBeTruthy());
+    expect(screen.getAllByText("0 changes").length).toBeGreaterThan(0);
   });
 
   it("hands a card it will not render back to Rust", async () => {
     // Rust already made the hidden pill clickable and is waiting for this
-    // card's size report; a dropped card must be dismissed by id.
+    // card's size report; a dropped card must be dismissed by id. An empty
+    // polished payload is the only case the reducer still drops.
     await mountPill();
-    await emitTauriEvent("polish-diff", { raw: "same words", polished: "same words﻿", ms: 200, card: 7 });
+    await emitTauriEvent("polish-diff", { raw: "same words", polished: "", ms: 200, card: 7 });
     await waitFor(() => {
       const call = mocks.invoke.mock.calls.find(([cmd]) => cmd === "dismiss_pill_result");
       expect(call?.[1]).toEqual({ card: 7 });

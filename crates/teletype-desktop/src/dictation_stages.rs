@@ -490,6 +490,7 @@ pub fn stage_transform(
         autotext: &snapshots.autotext,
         transforms: &snapshots.transforms,
         profile: &snapshots.profile,
+        polish_prompt_override: None,
         inference: engine_ref,
         decision: None,
         force_command: false,
@@ -515,6 +516,7 @@ pub fn stage_transform(
         list_style: snapshots.settings.list_style.resolve(),
         polish_max_change_percent: snapshots.settings.polish_max_change_percent,
         screen_terms: &[],
+        date_format: snapshots.settings.date_format.as_str(),
     };
     let unified = UnifiedInput {
         source: input.source,

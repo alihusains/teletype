@@ -289,17 +289,16 @@ pub const POLISH_SHORTLIST_MAX: usize = 3;
 /// and the smallest recommended row, so the first card a user ever sees is a
 /// model already known to behave.
 ///
-/// A CPU-only host gets two rows: the recommended list there has no third entry
-/// that is both measured good and small enough to carry, and padding it with a
-/// 1.7B model to hit three would recommend a model the function exists to
-/// avoid recommending.
+/// A CPU-only host gets three rows: the two measured cleanup models plus the
+/// Qwen3.5 0.8B, the smallest all-rounder that runs the Polish control-line
+/// without the 2B's minute-per-polish cost on a CPU-only build.
 ///
 /// Every id is re-checked against [`CatalogEntry::runs_on_host`] and
 /// [`CatalogEntry::polish_capable`] as the list is built, so the promise "no row
 /// reaches a host that cannot use it" holds even if a flag below is later
 /// flipped.
 pub fn polish_shortlist_ids(gpu_accelerated: bool) -> Vec<&'static str> {
-    const CPU: &[&str] = &["s1-mini", "speakoflow-mini"];
+    const CPU: &[&str] = &["s1-mini", "speakoflow-mini", "qwen3.5-0.8b"];
     const ACCELERATED: &[&str] = &["s1-mini", "qwen3.5-2b"];
 
     let ids = if gpu_accelerated { ACCELERATED } else { CPU };
@@ -358,6 +357,32 @@ pub const CATALOG: &[CatalogEntry] = &[
         verdict_note: "Best all-rounder: tightens, rewords and structures Polish, plus Prompt Engineer",
         runs_on_cpu: false,
         sort_order: 2,
+        shards: &[],
+    },
+    CatalogEntry {
+        id: "qwen3.5-0.8b",
+        name: "Qwen3.5 0.8B",
+        size_label: "0.8B",
+        url: "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
+        size_mb: 508,
+        description:
+            "The lightweight all-rounder: the same Polish control-line as Qwen3.5 2B in a smaller package, for CPU-only and low-RAM hosts where the 2B is too slow.",
+        specialty: &Specialty {
+            tag: "Polish + Prompt Engineer (lightweight)",
+            measured: false,
+        },
+        sha256: Some("bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517"),
+        backup_url: None,
+        attribution: Some("Qwen3.5 by Alibaba (Apache-2.0)"),
+        license_name: Some("Apache-2.0"),
+        license_url: Some("https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/LICENSE"),
+        requires_license_accept: false,
+        recommended: false,
+        polish_capable: true,
+        verdict: ModelVerdict::Recommended,
+        verdict_note: "Fast all-rounder for CPU-only hosts: same Polish control-line as the 2B, smaller",
+        runs_on_cpu: true,
+        sort_order: 12,
         shards: &[],
     },
     CatalogEntry {
@@ -516,6 +541,46 @@ pub const CATALOG: &[CatalogEntry] = &[
         shards: &[],
     },
     CatalogEntry {
+        id: "lfm3-omni",
+        name: "LFM3 Omni",
+        size_label: "2B",
+        url: "https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/resolve/main/LFM3-Audio-2B-Q4_K_M.gguf",
+        size_mb: 1050,
+        description: "Liquid AI's audio-native polish model: text and audio in, text out, in 18 languages.",
+        specialty: &Specialty {
+            tag: "Multilingual polish (text + audio)",
+            measured: false,
+        },
+        sha256: None,
+        backup_url: None,
+        attribution: Some("LFM3-Audio-2B by Liquid AI"),
+        license_name: Some("Llama 3.1 Community License"),
+        license_url: Some(
+            "https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/blob/main/LICENSE",
+        ),
+        requires_license_accept: false,
+        recommended: false,
+        polish_capable: true,
+        verdict: ModelVerdict::NotTested,
+        verdict_note: "Not tested by us yet",
+        runs_on_cpu: false,
+        sort_order: 11,
+        shards: &[
+            CatalogShard {
+                file_name: "LFM3-Audio-2B-Q4_K_M.gguf",
+                url: "https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/resolve/main/LFM3-Audio-2B-Q4_K_M.gguf",
+                size_bytes: 1_099_626_016,
+                sha256: "9a773289bd321ed879cd3a76545f6aca506e403851a45fb315420aee45625be2",
+            },
+            CatalogShard {
+                file_name: "mmproj-LFM3-Audio-2B-Q8_0.gguf",
+                url: "https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/resolve/main/mmproj-LFM3-Audio-2B-Q8_0.gguf",
+                size_bytes: 303_811_840,
+                sha256: "2b6648b1fd48af16aa0877b0592b144d15070783673e038a379fdbc51d40e365",
+            },
+        ],
+    },
+    CatalogEntry {
         id: "neudecide-q4",
         name: "NeuDecide Q4 (decider)",
         size_label: "55.5M",
@@ -594,10 +659,46 @@ mod tests {
 
     #[test]
     fn find_known_ids() {
-        for id in ["fast", "quality", "s1-mini", "qwen2.5-3b", "neudecide-q4"] {
+        for id in [
+            "fast",
+            "quality",
+            "s1-mini",
+            "qwen2.5-3b",
+            "lfm3-omni",
+            "neudecide-q4",
+        ] {
             assert!(find(id).is_some(), "missing {id}");
         }
         assert!(find("nope").is_none());
+    }
+
+    /// LFM3 is a selectable polish model: it must be present, polish-capable,
+    /// not recommended (unmeasured), and pinned via a two-shard install
+    /// (model GGUF + audio projector) with verified sizes and hashes.
+    #[test]
+    fn lfm3_omni_is_a_selectable_polish_model() {
+        let e = find("lfm3-omni").unwrap();
+        assert!(e.polish_capable, "LFM3 is a polish/LLM model, not a decider");
+        assert!(!e.recommended, "an unmeasured model cannot wear the badge");
+        assert!(
+            matches!(e.verdict, ModelVerdict::NotTested),
+            "no bakeoff run exists for LFM3 yet"
+        );
+        assert!(e.url.starts_with("https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/"));
+        assert_eq!(e.shards.len(), 2, "model GGUF + mmproj audio projector");
+        for s in e.shards {
+            assert_eq!(s.sha256.len(), 64, "sha256 of {} must be 64 hex chars", s.file_name);
+            assert!(s.url.starts_with("https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/"));
+            assert!(s.size_bytes > 0);
+        }
+        // The entrypoint is the model GGUF (first shard); the server loads the
+        // mmproj from the same directory, so both must install under models/<id>/.
+        let dir = std::path::Path::new("/models");
+        assert_eq!(
+            e.entrypoint(dir),
+            dir.join("lfm3-omni").join("LFM3-Audio-2B-Q4_K_M.gguf")
+        );
+        assert!(!e.is_downloaded(dir), "nothing is downloaded in a fresh dir");
     }
 
     #[test]
@@ -696,11 +797,14 @@ mod tests {
                 "fast",
                 "quality",
                 "qwen2.5-7b",
-                "gemma2-2b"
+                "gemma2-2b",
+                "lfm3-omni"
             ],
             "the rows a CPU host is not offered"
         );
-        // The kept set stays under the cutoff: 0.8B / 834 MB is the largest.
+        // The kept set stays under the cutoff: 834 MB (SpeakoFlow Mini) is the
+        // largest; the Qwen3.5 0.8B (508 MB) is the smallest all-rounder that
+        // still runs the Polish control-line on a CPU-only host.
         for e in CATALOG.iter().filter(|e| e.runs_on_cpu) {
             assert!(
                 e.size_mb <= 900,
@@ -737,7 +841,7 @@ mod tests {
         assert_eq!(polish_shortlist_ids(true), vec!["s1-mini", "qwen3.5-2b"]);
         assert_eq!(
             polish_shortlist_ids(false),
-            vec!["s1-mini", "speakoflow-mini"]
+            vec!["s1-mini", "speakoflow-mini", "qwen3.5-0.8b"]
         );
         // The head is the row every host gets first, and it wears the badge, so
         // the card a user cannot skip is a model that was measured.

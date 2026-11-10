@@ -183,6 +183,22 @@ mod tests {
     }
 
     #[test]
+    fn bare_common_nouns_require_the_suffix() {
+        // Ordinary vocabulary words must not convert on their own — the user
+        // dictating "third party" must keep the word "party", not get "🎉".
+        // The explicit "<word> emoji" form is still restored.
+        assert_eq!(restore("a third party service"), "a third party service");
+        assert_eq!(restore("keep an eye on it"), "keep an eye on it");
+        assert_eq!(restore("close your eyes"), "close your eyes");
+        assert_eq!(restore("show some muscle"), "show some muscle");
+        // The suffixed forms still fire.
+        assert_eq!(restore("a party emoji"), "a 🎉");
+        assert_eq!(restore("an eye emoji"), "an 👁️");
+        assert_eq!(restore("eyes emoji"), "👀");
+        assert_eq!(restore("muscle emoji"), "💪");
+    }
+
+    #[test]
     fn longest_trigger_wins() {
         // "broken heart emoji" (longer) must beat "heart emoji" (shorter).
         assert_eq!(

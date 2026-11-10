@@ -227,6 +227,7 @@ extern "C" fn on_key_down(kc: i64) {
 fn lookup_replacement(
     trigger: &str,
     app: &teletype_core::context::ApplicationContext,
+    date_format: &str,
 ) -> Option<String> {
     let store = STORE
         .lock()
@@ -239,7 +240,12 @@ fn lookup_replacement(
     }
     // Placeholder expansion ({{date}}/{{time}}/{{clipboard}}/{{app}}) happens
     // at expansion time, same as the voice pipeline.
-    Some(teletype_core::autotext::placeholders::expand_placeholders_for(&entry.replacement, app))
+    Some(teletype_core::autotext::placeholders::expand_placeholders_with(
+        &entry.replacement,
+        Some(app),
+        date_format,
+        &teletype_core::autotext::placeholders::read_clipboard_public,
+    ))
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -317,7 +323,9 @@ fn typing_loop(app: AppHandle) {
                 .platform
                 .active_application()
                 .unwrap_or_default();
-            if let Some(replacement) = lookup_replacement(&text, &app_ctx) {
+            if let Some(replacement) =
+                lookup_replacement(&text, &app_ctx, &app.state::<crate::AppState>().settings().date_format)
+            {
                 expand(&text, &replacement);
             }
         }
@@ -420,21 +428,24 @@ mod tests {
         assert_eq!(
             lookup_replacement(
                 "/email",
-                &teletype_core::context::ApplicationContext::unknown()
+                &teletype_core::context::ApplicationContext::unknown(),
+                ""
             ),
             Some("a@b.c".into())
         );
         assert_eq!(
             lookup_replacement(
                 "/EMAIL",
-                &teletype_core::context::ApplicationContext::unknown()
+                &teletype_core::context::ApplicationContext::unknown(),
+                ""
             ),
             Some("a@b.c".into())
         );
         assert_eq!(
             lookup_replacement(
                 "/unknown",
-                &teletype_core::context::ApplicationContext::unknown()
+                &teletype_core::context::ApplicationContext::unknown(),
+                ""
             ),
             None
         );
@@ -470,12 +481,12 @@ mod tests {
             )));
 
         let unknown = teletype_core::context::ApplicationContext::unknown();
-        assert_eq!(lookup_replacement("/off", &unknown), None);
-        assert_eq!(lookup_replacement("/g", &unknown), None);
+        assert_eq!(lookup_replacement("/off", &unknown, ""), None);
+        assert_eq!(lookup_replacement("/g", &unknown, ""), None);
         // An unknown frontmost app expands {{app}} to nothing rather than
         // leaving the literal token in the user's document.
         assert_eq!(
-            lookup_replacement("/sig", &unknown),
+            lookup_replacement("/sig", &unknown, ""),
             Some("Sent from ".into())
         );
 
@@ -484,9 +495,9 @@ mod tests {
             application_name: "Gmail".into(),
             ..Default::default()
         };
-        assert_eq!(lookup_replacement("/g", &gmail), Some("y".into()));
+        assert_eq!(lookup_replacement("/g", &gmail, ""), Some("y".into()));
         assert_eq!(
-            lookup_replacement("/sig", &gmail),
+            lookup_replacement("/sig", &gmail, ""),
             Some("Sent from Gmail".into())
         );
     }

@@ -379,7 +379,7 @@ describe("D-3/D-5 Dictionary: a failed pack read is LoadFailed, not empty", () =
     mockListenCapture();
     render(<DictionaryScreen />);
 
-    fireEvent.click(screen.getByRole("button", { name: /vocabulary packs/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /vocabulary packs/i }));
 
     await waitFor(() => {
       // LoadFailed renders with role="alert" and the raw backend reason.
@@ -393,7 +393,7 @@ describe("D-3/D-5 Dictionary: a failed pack read is LoadFailed, not empty", () =
     mockDictInvoke({ list_user_packs: () => Promise.resolve([]) });
     mockListenCapture();
     render(<DictionaryScreen />);
-    fireEvent.click(screen.getByRole("button", { name: /vocabulary packs/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /vocabulary packs/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/domain term packs, plus your own/i)).toBeTruthy();
@@ -432,7 +432,7 @@ describe("D-4 Dictionary: a failed delete_user_pack leaves the pack in the list"
     vi.mocked(confirm).mockResolvedValue(true);
 
     render(<DictionaryScreen />);
-    fireEvent.click(screen.getByRole("button", { name: /vocabulary packs/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /vocabulary packs/i }));
 
     await waitFor(() => {
       expect(screen.getByText("My Company")).toBeTruthy();

@@ -23,7 +23,11 @@ TRIPLE="${TELETYPE_TARGET_TRIPLE:-$(rustc -vV | sed -n 's/^host: //p')}"
 LLAMA_DIR="${LLAMA_DIR:-/tmp/llama.cpp-teletype-$TRIPLE}"
 BUILD_DIR="$LLAMA_DIR/build-teletype"
 OUT_DIR="$ROOT/crates/teletype-desktop/binaries"
-COMMIT="f95b0d95394d5e311ba8228689972843178c5e28"
+# b12200: the first pin that supports LFM3 (LFM3-Audio/Omni GGUF support
+# landed in llama.cpp with b11960, PR ggml-org/llama.cpp#31257). Bumped from
+# b11488 (f95b0d95) so the LFM3 Omni row can load as a polish model. The
+# llama-server reports "build b12200".
+COMMIT="c19043f67e52f1f1e00d797246e19643bb2f168e"
 
 # Deployment target floor. ggml-metal uses @available(macOS 15.0); building the
 # C++ below 15.0 makes clang emit a strong reference to
@@ -127,6 +131,14 @@ rm -rf "$BUILD_DIR/tools/ui"
 cmake --build "$BUILD_DIR" --target llama-server -j
 
 mkdir -p "$OUT_DIR"
+
+# tauri.conf.json maps `binaries/llama-server-win/` as a resource directory
+# (the Windows Vulkan build fills it with the llama-server.exe + ggml DLLs).
+# On macOS and Intel the directory is empty, but the path must exist at
+# `cargo tauri build` time or the resource validator fails. Creating it here
+# mirrors how `binaries/llama-server` itself is a build artifact, not a
+# tracked file.
+mkdir -p "$OUT_DIR/llama-server-win"
 
 # Install by writing a temporary file and renaming it into place. Never `cp`
 # over the destination directly.

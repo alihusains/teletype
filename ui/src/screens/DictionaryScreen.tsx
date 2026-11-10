@@ -106,6 +106,16 @@ export default function DictionaryScreen() {
   const [teachState, setTeachState] = useState<TeachMode>("idle");
   const [heard, setHeard] = useState("");
   const [teachError, setTeachError] = useState("");
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    // jsdom has no matchMedia; degrade to the non-narrow layout there.
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(max-width: 760px)");
+    setNarrow(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
 
   const writes = useWrites();
 
@@ -444,8 +454,17 @@ export default function DictionaryScreen() {
       )}
 
       {/* Rail + pane */}
-      <div style={{ display: "flex", gap: 16, alignItems: "stretch", height: 560 }}>
-        <TabRail items={TABS} selected={tab} onSelect={setTab} />
+      <div
+        style={{
+          display: "flex",
+          gap: 16,
+          alignItems: "stretch",
+          flexDirection: narrow ? "column" : "row",
+          minHeight: narrow ? "auto" : 480,
+          height: narrow ? "auto" : 560,
+        }}
+      >
+        <TabRail items={TABS} selected={tab} onSelect={setTab} narrow={narrow} />
         <TabPane>
           {tab === "words" && (
             <YourWordsTab
@@ -650,7 +669,7 @@ function YourWordsTab(props: {
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input
-            placeholder='e.g. "Jaser"'
+            placeholder='e.g. "Teletype"'
             value={p.teachWord}
             onChange={(e) => p.onTeachWord(e.target.value)}
             disabled={p.teachState === "listening"}

@@ -36,8 +36,10 @@ use rphonetic::DoubleMetaphone;
 const LOW_CONF: f32 = 0.85;
 /// Combined similarity threshold for replacement.
 const SIM_THRESHOLD: f64 = 0.82;
-/// Term weight at or above which the conf gate is waived.
-const WEIGHT_WAIVE: f32 = 2.0;
+/// Term weight at or above which the conf gate is waived. Authoritative
+/// terms (e.g. the user's taught dictionary words in the text-only dictation
+/// path, which feed confidence 1.0) use this so the exact/alias pass fires.
+pub const WEIGHT_WAIVE: f32 = 2.0;
 /// Maximum span length in words.
 const MAX_SPAN: usize = 4;
 /// Max DM code length difference for a candidate to be scored.

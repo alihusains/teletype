@@ -1076,6 +1076,106 @@ pub fn rehydrate_provider(app: &AppHandle) {
     }
 }
 
+/// What the AI Polish prompt UI may show and edit for the active polish
+/// model. `teletype_core::transforms::prompt::polish_prompt_info` owns the
+/// mapping; this only resolves the model id from settings.
+#[tauri::command]
+pub async fn get_polish_prompt_info(
+    state: State<'_, AppState>,
+) -> CommandResult<teletype_core::transforms::prompt::PolishPromptInfo> {
+    let settings = state.settings();
+    Ok(teletype_core::transforms::prompt::polish_prompt_info(
+        &settings.selected_llm_model,
+    ))
+}
+
+/// What the AI Polish playground needs: the model's output for the sample
+/// text, plus whether the model actually produced it. Mirrors
+/// `transforms::test_transform` (same lock, clone, packet and engine path)
+/// but runs the Polish preset with the user's prompt override so the
+/// playground shows exactly what a real dictation would get.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestPolishPromptResult {
+    pub text: String,
+    pub transformed: bool,
+    pub skip_message: Option<String>,
+}
+
+#[tauri::command]
+pub async fn test_polish_prompt(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    prompt: Option<String>,
+    input: String,
+) -> CommandResult<TestPolishPromptResult> {
+    // The whole lock/clone/run happens on a blocking thread: a local model
+    // load plus a generation can take up to ~20 s and must not wedge the
+    // tokio runtime (the same contract `transform_selection_with_text`
+    // follows).
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        // Lazily load the selected local model (no-op if one is loaded).
+        ensure_local_provider(&app);
+        let state = app.state::<AppState>();
+        let transforms = (*state.transforms.get()).clone();
+        let transform = transforms
+            .get("builtin-polish")
+            .ok_or_else(|| CommandError::user("No Polish preset is available"))?
+            .clone();
+        let engine = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| CommandError::user("No AI polish model is loaded"))?;
+        let provider = engine.as_ref();
+        let profile = (*state.profile.get()).clone();
+        let settings = state.settings();
+        let app_ctx = state.platform.active_application().unwrap_or_default();
+        let packet =
+            resolve_packet_with_learned_rules(&profile, &app_ctx, state.data_dir.join("learning"));
+        // The playground runs with the prompt the user is tuning: their
+        // override when they pass one, their saved override when they pass
+        // an empty string, and the model default when both are unset.
+        let override_text = prompt
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .or_else(|| settings.polish_prompt_override.clone());
+        let prompt_ctx = teletype_core::transforms::prompt::PromptContext {
+            app: Some(app_ctx),
+            preferences: packet.style,
+            preferred_terms: packet.terms,
+            user_instruction: None,
+            language: profile.language.clone(),
+            s1_control: profile.s1_control,
+            list_style: settings.list_style.resolve(),
+            polish_max_change_percent: settings.polish_max_change_percent,
+            screen_terms: Vec::new(),
+            user_override: override_text,
+        };
+        let result = teletype_core::transforms::engine::run_transform_blocking(
+            provider,
+            &transform,
+            &input,
+            &prompt_ctx,
+            &mut None,
+        );
+        let skip_message = result
+            .metrics
+            .skip_reason
+            .as_ref()
+            .and_then(teletype_core::state::skip_message);
+        Ok::<_, CommandError>(TestPolishPromptResult {
+            text: result.text,
+            transformed: result.transformed,
+            skip_message,
+        })
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("playground task failed: {e}")))?;
+    result
+}
+
 /// Lazily loads the selected local polish model on first use (local models
 /// are not preloaded at launch). Called
 /// from the dictation path just before a transform runs, so the first
@@ -2626,6 +2726,7 @@ pub async fn transcribe_file(
             autotext: &autotext,
             transforms: &transforms,
             profile: &profile,
+            date_format: "",
             inference: engine_ref,
             decision: None,
             force_command: false,
@@ -2650,6 +2751,7 @@ pub async fn transcribe_file(
             word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
             list_style: settings.list_style.resolve(),
             polish_max_change_percent: settings.polish_max_change_percent,
+            polish_prompt_override: settings.polish_prompt_override.clone(),
             screen_terms: &[],
         };
         let result = pipeline.run(
@@ -3135,7 +3237,7 @@ mod tests {
 
         // The host flag is what actually differs.
         let heavy = full_cpu.iter().filter(|m| !m.runs_on_host).count();
-        assert_eq!(heavy, 6, "the rows a CPU llama-server is not sold");
+        assert_eq!(heavy, 7, "the rows a CPU llama-server is not sold");
         assert!(
             full_gpu.iter().all(|m| m.runs_on_host),
             "an accelerated host can carry every row"
@@ -3146,9 +3248,9 @@ mod tests {
         assert_eq!(
             ids(&cpu_run),
             if ai_available {
-                vec!["s1-mini", "speakoflow-mini", "apple-intelligence"]
+                vec!["s1-mini", "speakoflow-mini", "qwen3.5-0.8b", "apple-intelligence"]
             } else {
-                vec!["s1-mini", "speakoflow-mini"]
+                vec!["s1-mini", "speakoflow-mini", "qwen3.5-0.8b"]
             }
         );
         assert_eq!(

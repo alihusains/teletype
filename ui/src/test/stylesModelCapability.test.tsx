@@ -102,7 +102,7 @@ describe("Style tab follows the model index", () => {
     expect(screen.getByText(/so both panes would come back the same/).textContent).toContain(
       "SpeakoFlow Mini writes in one fixed style"
     );
-    expect(screen.getByText(/the styles below are not applied/)).toBeTruthy();
+    expect(screen.getByText(/Not in effect for SpeakoFlow Mini/)).toBeTruthy();
     expect(buttonNamed("Active")?.disabled).toBe(true);
 
     // No control band and no Compare editor: both would be inert.
@@ -121,8 +121,8 @@ describe("Style tab follows the model index", () => {
     // S1-mini is cleanup-only, so the styles list still cannot be applied, but
     // it is the control line that replaces it, not the model's own training.
     expect(buttonNamed("Active")?.disabled).toBe(true);
-    expect(screen.getByText(/^S1-mini writes Polish from the Tone/)).toBeTruthy();
-    expect(screen.getByText(/does not read this list/).textContent).toContain("S1-mini");
+    expect(screen.getByText(/Not in effect for S1-mini/)).toBeTruthy();
+    expect(screen.getByText(/never sees these phrases/).textContent).toContain("S1-mini");
   });
 
   it("lets an instruction-following model use styles and compare them", async () => {

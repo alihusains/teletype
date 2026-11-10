@@ -596,6 +596,8 @@ export default function App() {
             the three states a user can act on: a model is needed, one is
             loading, or dictation is genuinely ready. */}
         <div
+          role="status"
+          aria-live="polite"
           style={{
             padding: narrow ? "8px 0" : "12px 14px 4px",
             marginTop: narrow ? 8 : 12,

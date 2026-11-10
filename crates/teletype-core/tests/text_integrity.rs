@@ -224,7 +224,7 @@ fn protected_system_autotext_leaves_ordinary_words_alone() {
         ),
     ] {
         assert_eq!(
-            expand::expand_snippets_with(input, &store, &app, sys),
+            expand::expand_snippets_with(input, &store, &app, sys, ""),
             want,
             "input: {input:?}"
         );
@@ -256,7 +256,7 @@ fn protected_symbol_requests_still_expand() {
         ("open paren close paren", "()"),
     ] {
         assert_eq!(
-            expand::expand_snippets_with(input, &store, &app, sys),
+            expand::expand_snippets_with(input, &store, &app, sys, ""),
             want,
             "input: {input:?}"
         );
@@ -278,7 +278,7 @@ fn protected_autotext_placeholder_is_not_inserted_for_prose() {
         "that is a plus for the team",
         "start a new line for the address",
     ] {
-        let out = protect::protect_snippets_with(input, &store, &app, sys);
+        let out = protect::protect_snippets_with(input, &store, &app, sys, "");
         assert!(
             !input.contains("AUTOTEXT"),
             "sanity: the fixture must not already contain a placeholder"
@@ -292,7 +292,7 @@ fn protected_autotext_placeholder_is_not_inserted_for_prose() {
     }
     // A real request still gets its placeholder, so the LLM still sees the
     // character as a token it must not touch.
-    let out = protect::protect_snippets_with("insert a comma here", &store, &app, sys);
+    let out = protect::protect_snippets_with("insert a comma here", &store, &app, sys, "");
     assert!(
         out.text.contains("AUTOTEXT"),
         "request lost its placeholder"
@@ -311,12 +311,12 @@ fn protected_custom_snippets_are_never_ambiguous() {
     let sys = teletype_core::autotext::system::entries();
     // The System "period" entry is suppressed here...
     assert_eq!(
-        expand::expand_snippets_with("the payment period ends in March", &store, &app, sys),
+        expand::expand_snippets_with("the payment period ends in March", &store, &app, sys, ""),
         "the payment period ends in March"
     );
     // ...but the custom "comma" fires even mid-sentence.
     assert_eq!(
-        expand::expand_snippets_with("a comma b", &store, &app, sys),
+        expand::expand_snippets_with("a comma b", &store, &app, sys, ""),
         "a CUSTOM b"
     );
 }

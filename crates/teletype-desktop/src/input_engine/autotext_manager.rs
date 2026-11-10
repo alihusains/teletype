@@ -123,9 +123,12 @@ fn maybe_expand(app: &tauri::AppHandle, candidate: &str, had_delimiter: bool) {
     if text_context::is_self_app(&app_ctx.application_id, &app_ctx.application_name) {
         return;
     }
-    let replacement = teletype_core::autotext::placeholders::expand_placeholders_for(
+    let date_format = state.settings().date_format.clone();
+    let replacement = teletype_core::autotext::placeholders::expand_placeholders_with(
         &matched.replacement,
-        &app_ctx,
+        Some(&app_ctx),
+        &date_format,
+        &teletype_core::autotext::placeholders::read_clipboard_public,
     );
     // Recorded on success below: the Insights/AutoText usage counters are
     // pipeline-only otherwise, so typed expansions would never count.

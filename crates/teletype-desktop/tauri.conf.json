@@ -54,7 +54,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "binaries/llama-server": "llama-server"
+      "binaries/llama-server": "llama-server",
+      "binaries/llama-server-win/": "llama-server-win/"
     },
     "windows": {
       "nsis": {
