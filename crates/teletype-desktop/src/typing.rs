@@ -240,12 +240,14 @@ fn lookup_replacement(
     }
     // Placeholder expansion ({{date}}/{{time}}/{{clipboard}}/{{app}}) happens
     // at expansion time, same as the voice pipeline.
-    Some(teletype_core::autotext::placeholders::expand_placeholders_with(
-        &entry.replacement,
-        Some(app),
-        date_format,
-        &teletype_core::autotext::placeholders::read_clipboard_public,
-    ))
+    Some(
+        teletype_core::autotext::placeholders::expand_placeholders_with(
+            &entry.replacement,
+            Some(app),
+            date_format,
+            &teletype_core::autotext::placeholders::read_clipboard_public,
+        ),
+    )
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -323,9 +325,11 @@ fn typing_loop(app: AppHandle) {
                 .platform
                 .active_application()
                 .unwrap_or_default();
-            if let Some(replacement) =
-                lookup_replacement(&text, &app_ctx, &app.state::<crate::AppState>().settings().date_format)
-            {
+            if let Some(replacement) = lookup_replacement(
+                &text,
+                &app_ctx,
+                &app.state::<crate::AppState>().settings().date_format,
+            ) {
                 expand(&text, &replacement);
             }
         }

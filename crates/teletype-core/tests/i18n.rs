@@ -137,8 +137,8 @@ fn dictate(
         screen_terms: &[],
         word_checker: &fx.word_checker,
         date_format: "",
-            polish_prompt_override: None,
-};
+        polish_prompt_override: None,
+    };
     p.run(
         UnifiedInput {
             source: InputSource::Voice,

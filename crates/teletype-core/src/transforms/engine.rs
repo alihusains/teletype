@@ -301,7 +301,14 @@ fn run_qwen_polish(
 ) -> Result<String, String> {
     let system = qwen_polish_system_prompt_with_override(ctx.user_override.as_deref());
     let user = format!("{}\n{}", ctx.s1_control.control_line(), protected_input);
-    run_fixed_messages(provider, protected_input, ctx, on_token, "Qwen3.5", (system, user))
+    run_fixed_messages(
+        provider,
+        protected_input,
+        ctx,
+        on_token,
+        "Qwen3.5",
+        (system, user),
+    )
 }
 
 /// SpeakoFlow Mini (`Speakoflow/speakoflow-mini`) was fine-tuned on a fixed
@@ -535,7 +542,7 @@ fn run_single_chunk(
             (
                 run_qwen_polish(provider, protected_input, ctx, on_token),
                 super::prompt::qwen_polish_system_prompt_with_override(
-                ctx.user_override.as_deref(),
+                    ctx.user_override.as_deref(),
                 ),
             )
         } else {
@@ -1631,7 +1638,9 @@ mod tests {
         assert!(system.contains("the rules above always win"));
         assert_eq!(
             user.as_deref(),
-            Some(format!("[Styling: casual] [Structure: prose] [Context: email]\n{input}").as_str())
+            Some(
+                format!("[Styling: casual] [Structure: prose] [Context: email]\n{input}").as_str()
+            )
         );
         assert!(result.transformed);
     }
@@ -1646,24 +1655,13 @@ mod tests {
             user_override: Some("Always use British spelling.".into()),
             ..Default::default()
         };
-        let result = run_transform_blocking(
-            &rec,
-            &polish(),
-            input,
-            &ctx,
-            &mut None,
-        );
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
         // The S1 path is card-faithful: the model gets the transcript back
         // (plus a period from the recorder), so the validator rejects it as
         // untransformed and the engine falls back to the input. The
         // assertion that matters is on the wire, not on the outcome.
         assert_eq!(result.text, input);
-        let prompt = rec
-            .0
-            .lock()
-            .unwrap()
-            .clone()
-            .expect("S1 must be called");
+        let prompt = rec.0.lock().unwrap().clone().expect("S1 must be called");
         // The S1 path uses generate_with_system_stream, which S1Recorder
         // records as an empty system + the user message; assert the override
         // is absent from everything the provider saw.
@@ -1684,8 +1682,7 @@ mod tests {
             user_override: Some("Always use British spelling.".into()),
             ..Default::default()
         };
-        let result =
-            run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
         let (system, user) = rec.0.lock().unwrap().clone();
         assert!(result.transformed);
         assert_eq!(

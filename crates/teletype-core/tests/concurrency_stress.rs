@@ -141,8 +141,8 @@ fn run_one(stores: &SharedStores, text: &str) -> PipelineResult {
         screen_terms: &[],
         word_checker: &stores.word_checker,
         date_format: "",
-            polish_prompt_override: None,
-};
+        polish_prompt_override: None,
+    };
     p.run(
         UnifiedInput {
             source: InputSource::Voice,

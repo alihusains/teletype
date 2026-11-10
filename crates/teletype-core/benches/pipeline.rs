@@ -147,7 +147,8 @@ fn run_pipeline_once(
         screen_terms: &[],
         word_checker: &CHECKER,
         date_format: "",
-};
+        polish_prompt_override: None,
+    };
     let input = UnifiedInput {
         source: InputSource::Voice,
         text: input_text.to_string(),

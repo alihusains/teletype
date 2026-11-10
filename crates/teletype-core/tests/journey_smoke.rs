@@ -264,7 +264,7 @@ impl Fixture {
             word_checker: &self.word_checker,
             date_format: "",
             polish_prompt_override: None,
-};
+        };
         p.run(
             UnifiedInput {
                 source: InputSource::Voice,
@@ -313,7 +313,7 @@ impl Fixture {
             word_checker: &self.word_checker,
             date_format: "",
             polish_prompt_override: None,
-};
+        };
         p.run(
             UnifiedInput {
                 source: InputSource::Typed,
@@ -551,8 +551,8 @@ fn journey_03c_an_explicitly_requested_transform_actually_runs() {
         screen_terms: &[],
         word_checker: &fx.word_checker,
         date_format: "",
-            polish_prompt_override: None,
-};
+        polish_prompt_override: None,
+    };
     let r = p.run(
         UnifiedInput {
             source: InputSource::Voice,
@@ -2046,8 +2046,8 @@ fn perf_pipeline_non_llm_steps_scale_linearly() {
         screen_terms: &[],
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
         date_format: "",
-            polish_prompt_override: None,
-};
+        polish_prompt_override: None,
+    };
 
     // A realistic ~20-word utterance, and a 4×-longer one (~80 words).
     // Each segment is ~20 words so both inputs land on the same
@@ -2184,8 +2184,8 @@ fn perf_concurrent_store_access_does_not_block_pipeline() {
         screen_terms: &[],
         word_checker: &teletype_core::dictionary::EDIT_DISTANCE_CHECKER,
         date_format: "",
-            polish_prompt_override: None,
-};
+        polish_prompt_override: None,
+    };
 
     let input = UnifiedInput {
         source: InputSource::Voice,

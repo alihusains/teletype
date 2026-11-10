@@ -368,7 +368,7 @@ fn run_text_pipeline(text: &str) -> Result<String, String> {
         polish_max_change_percent: settings.polish_max_change_percent,
         screen_terms: &[],
         date_format: "",
-};
+    };
     let result = pipeline.run(
         teletype_core::pipeline::UnifiedInput {
             source: teletype_core::pipeline::InputSource::Voice,

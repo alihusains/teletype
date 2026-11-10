@@ -147,41 +147,57 @@ pub fn date_format_template(id: &str) -> Option<&'static str> {
 pub fn render_date_template(template: &str, now: i64) -> String {
     let (y, m, d) = civil_from_days(now.div_euclid(86_400));
     let months_abbr = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
     let months_full = [
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
     ];
     let y_str = y.to_string();
     let m_str = m.to_string();
     let d_str = d.to_string();
-    let y2 = if y_str.len() >= 2 { &y_str[y_str.len()-2..] } else { &y_str };
-    let m2 = if m_str.len() < 2 { format!("0{m_str}") } else { m_str.clone() };
-    let d2 = if d_str.len() < 2 { format!("0{d_str}") } else { d_str.clone() };
+    let y2 = if y_str.len() >= 2 {
+        &y_str[y_str.len() - 2..]
+    } else {
+        &y_str
+    };
+    let m2 = if m_str.len() < 2 {
+        format!("0{m_str}")
+    } else {
+        m_str.clone()
+    };
+    let d2 = if d_str.len() < 2 {
+        format!("0{d_str}")
+    } else {
+        d_str.clone()
+    };
     let mut out = String::with_capacity(template.len() + 16);
     let mut rest = template;
-    loop {
-        match next_date_token(rest) {
-            Some((start, token)) => {
-                out.push_str(&rest[..start]);
-                match token {
-                    "YYYY" => out.push_str(&y_str),
-                    "YY" => out.push_str(y2),
-                    "Y" => out.push_str(&y_str),
-                    "MMMM" => out.push_str(months_full[(m - 1) as usize]),
-                    "MMM" => out.push_str(months_abbr[(m - 1) as usize]),
-                    "MM" => out.push_str(&m2),
-                    "DD" => out.push_str(&d2),
-                    "M" => out.push_str(&m_str),
-                    "D" => out.push_str(&d_str),
-                    _ => unreachable!("next_date_token only yields date tokens"),
-                }
-                rest = &rest[start + token.len()..];
-            }
-            None => break,
+    while let Some((start, token)) = next_date_token(rest) {
+        out.push_str(&rest[..start]);
+        match token {
+            "YYYY" => out.push_str(&y_str),
+            "YY" => out.push_str(y2),
+            "Y" => out.push_str(&y_str),
+            "MMMM" => out.push_str(months_full[(m - 1) as usize]),
+            "MMM" => out.push_str(months_abbr[(m - 1) as usize]),
+            "MM" => out.push_str(&m2),
+            "DD" => out.push_str(&d2),
+            "M" => out.push_str(&m_str),
+            "D" => out.push_str(&d_str),
+            _ => unreachable!("next_date_token only yields date tokens"),
         }
+        rest = &rest[start + token.len()..];
     }
     out.push_str(rest);
     out
@@ -198,11 +214,9 @@ fn next_date_token(s: &str) -> Option<(usize, &'static str)> {
         // Longest-first at this position; every char of the run must match
         // the first, so `MMY` falls through to a shorter (or no) match.
         for len in [4usize, 3, 2, 1] {
-            if s.len() >= i + len {
-                let run = &s[i..i + len];
-                let first = run.chars().next().unwrap();
-                if run.chars().all(|ch| ch == first) {
-                    let token = match (first, len) {
+            if let Some(run) = s.get(i..i + len) {
+                if run.chars().all(|ch| ch == c) {
+                    let token = match (c, len) {
                         ('Y', 4) => "YYYY",
                         ('Y', 2) => "YY",
                         ('Y', 1) => "Y",
@@ -221,7 +235,6 @@ fn next_date_token(s: &str) -> Option<(usize, &'static str)> {
     }
     None
 }
-
 
 /// Unix seconds of the local wall clock: UTC epoch + probed local offset.
 fn local_now_secs() -> i64 {
@@ -625,7 +638,10 @@ mod tests {
             "mdy-dash",
             "dmy-dash-short",
         ] {
-            assert!(date_format_template(id).is_some(), "id '{id}' must be named");
+            assert!(
+                date_format_template(id).is_some(),
+                "id '{id}' must be named"
+            );
         }
         // Anything else is a raw template, not an error.
         assert_eq!(date_format_template("nope"), None);
@@ -640,7 +656,10 @@ mod tests {
         assert_eq!(render_date_template("MM", secs), "11");
         assert_eq!(render_date_template("M/D/Y", secs), "11/8/2026");
         assert_eq!(render_date_template("D MMM YYYY", secs), "8 Nov 2026");
-        assert_eq!(render_date_template("MMMM D, YYYY", secs), "November 8, 2026");
+        assert_eq!(
+            render_date_template("MMMM D, YYYY", secs),
+            "November 8, 2026"
+        );
         // January: no zero-padding surprises for the bare tokens.
         let jan = days_from_civil(2026, 1, 5) * 86_400;
         assert_eq!(render_date_template("M/D/YY", jan), "1/5/26");
@@ -656,9 +675,6 @@ mod tests {
         assert_eq!(render_date_template("today", secs), "today");
         assert_eq!(render_date_template("", secs), "");
         // Mixed: known tokens render, unknown text survives around them.
-        assert_eq!(
-            render_date_template("d: DD m: MM", secs),
-            "d: 08 m: 11"
-        );
+        assert_eq!(render_date_template("d: DD m: MM", secs), "d: 08 m: 11");
     }
 }

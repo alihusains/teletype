@@ -334,7 +334,12 @@ mod tests {
     fn expands_snippet_case_insensitive_and_mid_sentence() {
         let store = snippet_store();
         let app = ApplicationContext::unknown();
-        let out = expand_snippets("Send it to MY EMAIL and my LinkedIn thanks", &store, &app, "");
+        let out = expand_snippets(
+            "Send it to MY EMAIL and my LinkedIn thanks",
+            &store,
+            &app,
+            "",
+        );
         assert_eq!(
             out,
             "Send it to abcd@gmail.com and https://www.linkedin.com/in/john-doe/ thanks"
@@ -354,7 +359,10 @@ mod tests {
         let store = snippet_store();
         let app = ApplicationContext::unknown();
         // "my emailish" should not expand "my email" (emailish != email).
-        assert_eq!(expand_snippets("my emailish", &store, &app, ""), "my emailish");
+        assert_eq!(
+            expand_snippets("my emailish", &store, &app, ""),
+            "my emailish"
+        );
         // A complete phrase followed by another word still matches.
         assert_eq!(
             expand_snippets("my email address", &store, &app, ""),
@@ -393,7 +401,10 @@ mod tests {
             expand_snippets_with("hello comma world", &empty(), &app(), sys(), ""),
             "hello comma world"
         );
-        assert_eq!(expand_snippets_with("comma", &empty(), &app(), sys(), ""), ",");
+        assert_eq!(
+            expand_snippets_with("comma", &empty(), &app(), sys(), ""),
+            ","
+        );
         assert_eq!(
             expand_snippets_with("hello insert a comma here", &empty(), &app(), sys(), ""),
             "hello insert a, here"
@@ -411,7 +422,13 @@ mod tests {
     #[test]
     fn system_punctuation_exclamation() {
         assert_eq!(
-            expand_snippets_with("this is great exclamation mark", &empty(), &app(), sys(), ""),
+            expand_snippets_with(
+                "this is great exclamation mark",
+                &empty(),
+                &app(),
+                sys(),
+                ""
+            ),
             "this is great!"
         );
     }
@@ -421,7 +438,13 @@ mod tests {
         // "hello new line world" used to expect a newline. "start a new line
         // for the address" is prose, so "new line" is now context-checked.
         assert_eq!(
-            expand_snippets_with("start a new line for the address", &empty(), &app(), sys(), ""),
+            expand_snippets_with(
+                "start a new line for the address",
+                &empty(),
+                &app(),
+                sys(),
+                ""
+            ),
             "start a new line for the address"
         );
         assert_eq!(
@@ -442,7 +465,10 @@ mod tests {
     fn system_colon_and_semicolon() {
         // "hello colon world" used to expect a colon. See
         // `system_punctuation_comma`: the fixture was the bug's shape.
-        assert_eq!(expand_snippets_with("colon", &empty(), &app(), sys(), ""), ":");
+        assert_eq!(
+            expand_snippets_with("colon", &empty(), &app(), sys(), ""),
+            ":"
+        );
         assert_eq!(
             expand_snippets_with("semicolon", &empty(), &app(), sys(), ""),
             ";"
@@ -458,7 +484,13 @@ mod tests {
         let a = app();
         // Opening/closing marks attach to their content: "(hi)" not "( hi )".
         assert_eq!(
-            expand_snippets_with("open parenthesis hi close parenthesis", &empty(), &a, sys(), ""),
+            expand_snippets_with(
+                "open parenthesis hi close parenthesis",
+                &empty(),
+                &a,
+                sys(),
+                ""
+            ),
             "(hi)"
         );
         assert_eq!(
@@ -466,7 +498,9 @@ mod tests {
                 "open square bracket x close square bracket",
                 &empty(),
                 &a,
-                sys(), ""),
+                sys(),
+                ""
+            ),
             "[x]"
         );
         // "exclamation point" must match as one trigger, not "exclamation" alone.
@@ -503,7 +537,13 @@ mod tests {
             "two plus sign two = four"
         );
         assert_eq!(
-            expand_snippets_with("type two plus sign two equals four", &empty(), &a, sys(), ""),
+            expand_snippets_with(
+                "type two plus sign two equals four",
+                &empty(),
+                &a,
+                sys(),
+                ""
+            ),
             "type two + two = four"
         );
         assert_eq!(
@@ -525,7 +565,9 @@ mod tests {
                 "are you sure question mark are you sure exclamation mark",
                 &empty(),
                 &app(),
-                sys(), ""),
+                sys(),
+                ""
+            ),
             "are you sure? are you sure!"
         );
     }

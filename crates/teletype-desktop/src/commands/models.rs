@@ -1105,7 +1105,6 @@ pub struct TestPolishPromptResult {
 #[tauri::command]
 pub async fn test_polish_prompt(
     app: AppHandle,
-    state: State<'_, AppState>,
     prompt: Option<String>,
     input: String,
 ) -> CommandResult<TestPolishPromptResult> {
@@ -3248,7 +3247,12 @@ mod tests {
         assert_eq!(
             ids(&cpu_run),
             if ai_available {
-                vec!["s1-mini", "speakoflow-mini", "qwen3.5-0.8b", "apple-intelligence"]
+                vec![
+                    "s1-mini",
+                    "speakoflow-mini",
+                    "qwen3.5-0.8b",
+                    "apple-intelligence",
+                ]
             } else {
                 vec!["s1-mini", "speakoflow-mini", "qwen3.5-0.8b"]
             }

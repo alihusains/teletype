@@ -678,17 +678,29 @@ mod tests {
     #[test]
     fn lfm3_omni_is_a_selectable_polish_model() {
         let e = find("lfm3-omni").unwrap();
-        assert!(e.polish_capable, "LFM3 is a polish/LLM model, not a decider");
+        assert!(
+            e.polish_capable,
+            "LFM3 is a polish/LLM model, not a decider"
+        );
         assert!(!e.recommended, "an unmeasured model cannot wear the badge");
         assert!(
             matches!(e.verdict, ModelVerdict::NotTested),
             "no bakeoff run exists for LFM3 yet"
         );
-        assert!(e.url.starts_with("https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/"));
+        assert!(e
+            .url
+            .starts_with("https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/"));
         assert_eq!(e.shards.len(), 2, "model GGUF + mmproj audio projector");
         for s in e.shards {
-            assert_eq!(s.sha256.len(), 64, "sha256 of {} must be 64 hex chars", s.file_name);
-            assert!(s.url.starts_with("https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/"));
+            assert_eq!(
+                s.sha256.len(),
+                64,
+                "sha256 of {} must be 64 hex chars",
+                s.file_name
+            );
+            assert!(s
+                .url
+                .starts_with("https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/"));
             assert!(s.size_bytes > 0);
         }
         // The entrypoint is the model GGUF (first shard); the server loads the
@@ -698,7 +710,10 @@ mod tests {
             e.entrypoint(dir),
             dir.join("lfm3-omni").join("LFM3-Audio-2B-Q4_K_M.gguf")
         );
-        assert!(!e.is_downloaded(dir), "nothing is downloaded in a fresh dir");
+        assert!(
+            !e.is_downloaded(dir),
+            "nothing is downloaded in a fresh dir"
+        );
     }
 
     #[test]

@@ -280,7 +280,12 @@ mod tests {
     fn does_not_eat_slashes_in_urls_or_words() {
         let store = store("user@example.com");
         let app = ApplicationContext::unknown();
-        let p = protect("see https://example.com/email or /emailish", &store, &app, "");
+        let p = protect(
+            "see https://example.com/email or /emailish",
+            &store,
+            &app,
+            "",
+        );
         assert_eq!(p.text, "see https://example.com/email or /emailish");
         assert!(p.values.is_empty());
     }
