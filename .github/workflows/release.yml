@@ -758,7 +758,9 @@ jobs:
         #
         # The b12200 pin matches the macOS/Intel build
         # (scripts/build-llama-server.sh COMMIT). Bump both together when
-        # the llama.cpp pin moves.
+        # the llama.cpp pin moves. scripts/check-artifact-pins.sh reads
+        # this line, so keep the commit in sync with the release tag.
+        # llama.cpp pin: c19043f67e52f1f1e00d797246e19643bb2f168e (release b12200)
         #
         # The app calls the server over 127.0.0.1 HTTP, so no TLS is needed.
         run: |

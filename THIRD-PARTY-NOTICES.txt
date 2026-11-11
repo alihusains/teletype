@@ -19,14 +19,16 @@ Conventions:
 BUNDLED BINARIES
 ===========================================================================
 
-=== llama.cpp (llama-server) — commit f95b0d95394d5e311ba8228689972843178c5e28 ===
+=== llama.cpp (llama-server) - commit c19043f67e52f1f1e00d797246e19643bb2f168e ===
 
 License: MIT
 
-Teletype ships a statically built `llama-server` binary (built from
-github.com/ggml-org/llama.cpp at the commit above, pinned in
-scripts/build-llama-server.sh and .github/workflows/release.yml) inside the
-app bundle. It is used over 127.0.0.1 HTTP for local LLM inference.
+Teletype ships a `llama-server` binary (github.com/ggml-org/llama.cpp at
+the commit above, pinned in scripts/build-llama-server.sh and
+.github/workflows/release.yml) inside the app bundle. macOS and Intel
+releases compile it from source; the Windows release ships the official
+b12200 Vulkan prebuilt, which is the same commit. It is used over
+127.0.0.1 HTTP for local LLM inference.
 
 Copyright (c) 2026-2027 ggml.ai
 

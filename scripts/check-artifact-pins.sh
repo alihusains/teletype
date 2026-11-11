@@ -4,10 +4,11 @@
 # The bundled llama-server binary is pinned to one llama.cpp commit in THREE
 # independent places, and nothing until now checked that they agree:
 #
-#   1. scripts/build-llama-server.sh   COMMIT="f95b0d...c5e28"
-#   2. .github/workflows/release.yml   git checkout --detach f95b0d...c5e28
-#      (Windows job — a second hardcoded copy that can silently drift)
-#   3. THIRD-PARTY-NOTICES.txt         "commit f95b0d...c5e28" header line
+#   1. scripts/build-llama-server.sh   COMMIT="<40-hex>"
+#   2. .github/workflows/release.yml   "# llama.cpp pin: <40-hex>" comment
+#      (Windows job downloads the official prebuilt for that release tag;
+#      the comment is the second hardcoded copy that can silently drift)
+#   3. THIRD-PARTY-NOTICES.txt         "commit <40-hex>" header line
 #
 # If any one moves alone, either the shipped binary disagrees with the
 # notices (a license-attribution bug) or macOS and Windows ship different
@@ -58,9 +59,9 @@ done
 # 1. build script: COMMIT="<40-hex>"
 script_pin="$(grep -oE 'COMMIT="[0-9a-f]{40}"' "$SCRIPT" | sed -E 's/^COMMIT="([0-9a-f]{40})"$/\1/' | head -n 1 || true)"
 
-# 2. release workflow: every "git checkout --detach <40-hex>" occurrence;
-#    more than one DISTINCT value in that file is itself drift.
-wf_pins="$(grep -oE 'git checkout --detach [0-9a-f]{40}' "$WORKFLOW" | sed -E 's/^git checkout --detach ([0-9a-f]{40})$/\1/' || true)"
+# 2. release workflow: every "# llama.cpp pin: <40-hex>" occurrence; more
+#    than one DISTINCT value in that file is itself drift.
+wf_pins="$(grep -oE 'llama\.cpp pin: [0-9a-f]{40}' "$WORKFLOW" | sed -E 's/^llama\.cpp pin: ([0-9a-f]{40})$/\1/' || true)"
 wf_pin=""
 wf_distinct="$(printf '%s\n' "$wf_pins" | sed '/^$/d' | sort -u || true)"
 if [[ -n "$wf_distinct" ]]; then
