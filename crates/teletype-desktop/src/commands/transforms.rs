@@ -4,6 +4,7 @@
 use super::*;
 use crate::AppState;
 use tauri::{AppHandle, Manager, State};
+use teletype_core::state::{PillState, UiState};
 use teletype_core::transforms::TransformDefinition;
 // ---- Transforms ----
 /// A shortcut that is only modifier keys ("Alt", "Cmd+Shift") can never be
@@ -290,6 +291,101 @@ pub async fn transform_selection(
     let selected = crate::text_selection::selected_text();
     transform_selection_with_text(app, state, transform_id, selected).await
 }
+/// A point in the selection-transform pill lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PillStage {
+    /// Before the model work: show the agentic "Transforming…" cue.
+    Start,
+    /// The write-back succeeded: hide the pill.
+    Success,
+    /// A failure after the pill was shown: flash the error note.
+    Failure,
+}
+
+/// True while a dictation take owns the pill (recording or mid-pipeline).
+/// A transform must not push pill state on top of a live take.
+fn take_in_flight(ui_state: &UiState) -> bool {
+    matches!(
+        ui_state,
+        UiState::Listening { .. }
+            | UiState::Transcribing
+            | UiState::Transforming
+            | UiState::Inserting
+    )
+}
+
+/// The pill state to push at `stage`, or `None` while a dictation take owns
+/// the pill (its states must win, so a transform exit never clobbers a live
+/// take). `failure` is the user-facing note for the Failure stage.
+fn pill_state_at(
+    stage: PillStage,
+    take_in_flight: bool,
+    failure: Option<&str>,
+) -> Option<PillState> {
+    if take_in_flight {
+        return None;
+    }
+    Some(match stage {
+        PillStage::Start => PillState::Processing {
+            message: "Transforming…".into(),
+        },
+        PillStage::Success => PillState::Idle,
+        PillStage::Failure => PillState::Processing {
+            message: failure.unwrap_or("The transform failed").to_string(),
+        },
+    })
+}
+
+/// Pushes the pill state for `stage` to the overlay, unless a dictation take
+/// owns the pill. Mirrors the dictation path's `show_with`: the user's pill
+/// position and always-show setting drive placement, and the pointer follows
+/// `overlay::interactive_for` (click-through cue, clickable error note).
+fn push_pill_at(
+    app: &AppHandle,
+    state: &AppState,
+    stage: PillStage,
+    failure: Option<&str>,
+) -> bool {
+    let take = state
+        .dictation_state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let Some(pill) = pill_state_at(stage, take_in_flight(&take), failure) else {
+        return false;
+    };
+    let interactive = crate::overlay::interactive_for(&pill, matches!(stage, PillStage::Failure));
+    let settings = state.settings();
+    let position = settings.pill_position.resolve();
+    crate::overlay::update(app, pill, position, settings.always_show_pill);
+    crate::overlay::set_interactive(app, interactive);
+    true
+}
+
+/// After a failure note is shown, hide the pill ~2 s later unless a dictation
+/// take has taken over the pill in the meantime (the take then owns the
+/// dismiss). A plain spawned timer, not a framework.
+fn schedule_pill_hide(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(2000));
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        let take = state
+            .dictation_state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if take_in_flight(&take) {
+            return;
+        }
+        let settings = state.settings();
+        let position = settings.pill_position.resolve();
+        crate::overlay::update(&app, PillState::Idle, position, settings.always_show_pill);
+        crate::overlay::set_interactive(&app, false);
+    });
+}
 /// Variant of `transform_selection` that accepts a pre-captured selection.
 /// Used by the global-shortcut callback, which reads the selection
 /// synchronously before the async task runs (so the keystroke hasn't yet
@@ -313,10 +409,15 @@ pub async fn transform_selection_with_text(
             .ok_or_else(|| "Transform not found".to_string())?
             .clone()
     };
+    // Show the agentic "Transforming…" pill before the (up to ~20 s) model
+    // work, mirroring the dictation path. Skipped while a dictation take owns
+    // the pill, so the hotkey never clobbers a live take.
+    push_pill_at(&app, &state, PillStage::Start, None);
+    let work_app = app.clone();
     let handle = tauri::async_runtime::spawn_blocking(move || {
         // Ensure a local model is loaded (no-op if one already is).
-        ensure_local_provider(&app);
-        let state = app.state::<AppState>();
+        ensure_local_provider(&work_app);
+        let state = work_app.state::<AppState>();
         let engine = state
             .inference
             .lock()
@@ -349,9 +450,25 @@ pub async fn transform_selection_with_text(
         );
         Ok::<String, String>(result.text)
     })
-    .await
-    .map_err(|e| e.to_string())?;
-    let polished = handle?;
+    .await;
+    let polished = match handle {
+        Ok(Ok(text)) => text,
+        Ok(Err(message)) => {
+            push_pill_at(&app, &state, PillStage::Failure, Some(&message));
+            schedule_pill_hide(&app);
+            return Err(CommandError::internal(message));
+        }
+        Err(join_error) => {
+            push_pill_at(
+                &app,
+                &state,
+                PillStage::Failure,
+                Some("The transform failed."),
+            );
+            schedule_pill_hide(&app);
+            return Err(CommandError::internal(join_error.to_string()));
+        }
+    };
     // Write the result back over the selection.
     //
     // Fast path: a direct Accessibility write (no clipboard round trip). This
@@ -371,14 +488,19 @@ pub async fn transform_selection_with_text(
             "transform: direct AX write refused; falling back to clipboard paste",
         );
         match paste_replace_over_selection(&polished) {
-            true => return Ok(polished),
+            true => {
+                push_pill_at(&app, &state, PillStage::Success, None);
+                return Ok(polished);
+            }
             false => {
-                return Err(CommandError::internal(
-                    "Couldn't replace the selection in that app.",
-                ));
+                let note = "Couldn't replace the selection in that app.";
+                push_pill_at(&app, &state, PillStage::Failure, Some(note));
+                schedule_pill_hide(&app);
+                return Err(CommandError::internal(note));
             }
         }
     }
+    push_pill_at(&app, &state, PillStage::Success, None);
     Ok(polished)
 }
 
@@ -509,6 +631,7 @@ mod tests {
     use teletype_core::context;
     use teletype_core::learning::store::{LearningStore, StyleRuleRow};
     use teletype_core::personalization::UserProfile;
+    use teletype_core::state::{PillState, UiState};
 
     /// T10d: a promoted chat style rule must change the resolved packet for
     /// a chat app, and a missing store must degrade to the plain packet.
@@ -548,5 +671,66 @@ mod tests {
             teletype_core::personalization::packet::resolve(&profile, &chat),
             "a missing store must behave exactly like plain resolve"
         );
+    }
+
+    /// The transform must never push pill state on top of a live dictation
+    /// take, but it owns the pill when the take is idle.
+    #[test]
+    fn take_in_flight_tracks_dictation_phases() {
+        assert!(!take_in_flight(&UiState::Idle));
+        assert!(!take_in_flight(&UiState::Message {
+            text: "Cancelled".into()
+        }));
+        assert!(take_in_flight(&UiState::Listening { started_at_ms: 0 }));
+        assert!(take_in_flight(&UiState::Transcribing));
+        assert!(take_in_flight(&UiState::Transforming));
+        assert!(take_in_flight(&UiState::Inserting));
+    }
+
+    /// Before the model work the pill shows the agentic "Transforming…" cue,
+    /// on success it goes Idle, and on failure it flashes the error note. A
+    /// take in flight suppresses every push.
+    #[test]
+    fn pill_states_cover_the_transform_lifecycle() {
+        // Start: the agentic cue, only when no take owns the pill.
+        match pill_state_at(PillStage::Start, false, None) {
+            Some(PillState::Processing { message }) => assert_eq!(message, "Transforming…"),
+            other => panic!("expected the Transforming cue, got {other:?}"),
+        }
+        assert!(pill_state_at(PillStage::Start, true, None).is_none());
+        // Success: the pill goes away.
+        match pill_state_at(PillStage::Success, false, None) {
+            Some(PillState::Idle) => {}
+            other => panic!("expected Idle on success, got {other:?}"),
+        }
+        assert!(pill_state_at(PillStage::Success, true, None).is_none());
+        // Failure: the user-facing note.
+        match pill_state_at(
+            PillStage::Failure,
+            false,
+            Some("Couldn't replace the selection in that app."),
+        ) {
+            Some(PillState::Processing { message }) => {
+                assert_eq!(message, "Couldn't replace the selection in that app.")
+            }
+            other => panic!("expected the failure note, got {other:?}"),
+        }
+        assert!(pill_state_at(PillStage::Failure, true, Some("boom")).is_none());
+        // A missing note degrades to a generic message, never an empty pill.
+        match pill_state_at(PillStage::Failure, false, None) {
+            Some(PillState::Processing { message }) => assert_eq!(message, "The transform failed"),
+            other => panic!("expected a generic failure note, got {other:?}"),
+        }
+    }
+
+    /// The deferred hide (after a failure note) only fires while the
+    /// transform still owns the pill; a take that started during the 2 s
+    /// note owns the dismiss instead.
+    #[test]
+    fn deferred_hide_respects_a_take_that_starts_late() {
+        // No take in flight after the note: the timer hides the pill.
+        assert!(!take_in_flight(&UiState::Idle));
+        // A take started during the note: the timer must not clobber it.
+        assert!(take_in_flight(&UiState::Listening { started_at_ms: 0 }));
     }
 }
