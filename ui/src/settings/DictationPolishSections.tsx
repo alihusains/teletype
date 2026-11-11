@@ -441,10 +441,10 @@ export function AIPolishSection(props: SectionProps) {
           onChange={(v) => onChange({ polishWholeTextAtEnd: v })}
         />
       </Row>
-      <Row label="Insert cleaned text as-is">
+      <Row label="Polish every dictation automatically">
         <Explainer text="When on, the polished text is inserted without waiting for you to confirm. When off, the dictation lands as dictated and the transform is not applied." />
         <Toggle
-          label="Insert cleaned text as-is"
+          label="Polish every dictation automatically"
           checked={settings.autoApplyTransform}
           onChange={(v) => onChange({ autoApplyTransform: v })}
         />

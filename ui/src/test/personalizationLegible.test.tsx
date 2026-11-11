@@ -18,7 +18,7 @@
  * backend would not store.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import PersonalizationScreen from "../screens/PersonalizationScreen";
 import { invokeCalls, resetTauriMocks } from "./tauriMock";
@@ -343,6 +343,34 @@ describe("Personalization master switch tells the truth", () => {
     expect((screen.getByLabelText("Speech language for notion") as HTMLSelectElement).value).toBe(
       "en"
     );
+  });
+
+  it("shows a retry row, not 'No overrides', when the per-app language read rejects", async () => {
+    statefulProfile([]);
+    const base = vi.mocked(invoke).getMockImplementation()!;
+    vi.mocked(invoke).mockImplementation((cmd: string, args?: unknown) => {
+      if (cmd === "get_app_language_overrides") {
+        return Promise.reject(new Error("overrides locked"));
+      }
+      return base(cmd, args as Record<string, unknown> | undefined) as Promise<unknown>;
+    });
+    render(<PersonalizationScreen />);
+
+    // The screen paints "Reading your rules…" until get_profile lands.
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "What it knows" })).toBeTruthy()
+    );
+    const section = screen
+      .getByRole("heading", { name: "Per-app speech language" })
+      .closest("section") as HTMLElement;
+    await waitFor(() =>
+      expect(
+        within(section).getByText("Your per-app language overrides could not be read.")
+      ).toBeTruthy()
+    );
+    expect(within(section).getByText("Try again")).toBeTruthy();
+    // A failed read is not an empty list.
+    expect(within(section).queryByText("No overrides.")).toBeNull();
   });
 
   it("fails loudly and offers a retry instead of an empty tab", async () => {

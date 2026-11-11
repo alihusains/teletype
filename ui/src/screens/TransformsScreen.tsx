@@ -527,13 +527,29 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
 
   const deleteTransform = async (id: string) => {
     if (!(await confirmDialog("Delete this transform?", { title: "Delete transform" }))) return;
-    await invoke("delete_transform", { id });
+    try {
+      await invoke("delete_transform", { id });
+    } catch (e) {
+      await messageDialog(`Could not delete this transform: ${errorMessage(e)}`, {
+        title: "Delete failed",
+        kind: "error",
+      });
+      return;
+    }
     if (selected?.id === id) setSelected(null);
     refresh();
   };
 
   const resetDefaults = async () => {
-    await invoke("reset_transforms");
+    try {
+      await invoke("reset_transforms");
+    } catch (e) {
+      await messageDialog(`Could not reset the presets: ${errorMessage(e)}`, {
+        title: "Reset failed",
+        kind: "error",
+      });
+      return;
+    }
     setRules({ ...DEFAULT_RULES });
     setCustomInstructions([]);
     setDraftInstruction("");
@@ -694,7 +710,17 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
       builtIn: false,
       autoApply: false,
     };
-    await invoke("create_transform", { transform: t }).catch(console.error);
+    try {
+      await invoke("create_transform", { transform: t });
+    } catch (e) {
+      // A rejected create must not close the modal: the user would lose the
+      // name and prompt they just wrote and assume the preset exists.
+      await messageDialog(`Could not create this preset: ${errorMessage(e)}`, {
+        title: "Preset not created",
+        kind: "error",
+      });
+      return;
+    }
     setModalOpen(false);
     setModalName("");
     setModalShortcut("");
@@ -759,7 +785,7 @@ const statusLine =
           <p style={BAND_SUBTITLE}>Polish rewrites your text to sound clearer, in your voice.</p>
           {cleanupOnly && (
             <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12.5, color: "var(--text-secondary)" }}>
-              {runtime?.llm.label || "This model"} can only run the Polish preset. The others are grayed out until you switch to a general model (Qwen3.5-2B or LFM3) in Models.
+              {runtime?.llm.label || "This model"} can only run the Polish preset. The others are grayed out until you switch to a general model (Qwen3.5 2B or LFM3 Omni) in Models.
             </div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(170px, 100%), 1fr))", gap: 10, marginTop: 12 }}>
@@ -794,7 +820,7 @@ const statusLine =
               >
                 {t.shortcut && (
                   <kbd style={{ position: "absolute", top: 10, right: 10, fontSize: 10, background: "var(--bg)", padding: "1px 6px", borderRadius: 4, border: "1px solid var(--border)", color: "var(--text-secondary)" }}>
-                    {t.shortcut}
+                    {displayHotkey(t.shortcut)}
                   </kbd>
                 )}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, marginTop: t.shortcut ? 18 : 0 }}>
@@ -851,7 +877,7 @@ const statusLine =
                 <Icon name="plus" size={14} color="var(--text-secondary)" />
               </span>
               <div style={{ fontSize: 13, fontWeight: 600 }}>Create your own</div>
-              <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Upload your own prompt</div>
+              <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>Write the prompt it follows</div>
             </button>
           </div>
         </section>
@@ -1033,8 +1059,8 @@ const statusLine =
           {polishCustomization !== "full" && (
             <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12.5, color: "var(--text-secondary)" }}>
               {polishCustomization === "override"
-                ? "Your current model (Qwen3.5-2B) follows a fixed editor prompt, so these rules don't apply. Only the prompt override above can steer it."
-                : "Your current model uses a fixed cleanup prompt, so these rules don't apply. Pick Qwen3.5-2B or LFM3 to customize how Polish works."}
+                ? "Your current model (Qwen3.5 2B) follows a fixed editor prompt, so these rules don't apply. Only the prompt override above can steer it."
+                : "Your current model uses a fixed cleanup prompt, so these rules don't apply. Pick Qwen3.5 2B or LFM3 Omni to customize how Polish works."}
             </div>
           )}
           <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden", marginTop: 12, opacity: polishCustomization !== "full" ? 0.55 : 1 }}>
@@ -1219,7 +1245,7 @@ const statusLine =
                           // Registration failed (e.g. bare modifiers): revert
                           // the display so the UI never shows a dead binding.
                           setShortcutDraft(selected.shortcut || "");
-                          void messageDialog(`Could not set shortcut: ${e}`, {
+                          void messageDialog(`Could not set shortcut: ${errorMessage(e)}`, {
                             title: "Shortcut not set",
                             kind: "error",
                           });
@@ -1234,7 +1260,15 @@ const statusLine =
                           transform: { ...selected, shortcut: "", updatedAt: Date.now() },
                         })
                           .then(() => refresh())
-                          .catch(console.error);
+                          .catch((e) => {
+                            // A rejected clear must put the binding back: the
+                            // display and the backend cannot disagree.
+                            setShortcutDraft(selected.shortcut || "");
+                            void messageDialog(`Could not clear the shortcut: ${errorMessage(e)}`, {
+                              title: "Shortcut not cleared",
+                              kind: "error",
+                            });
+                          });
                       }}
                       style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", fontSize: 12 }}
                     >
@@ -1317,8 +1351,8 @@ const statusLine =
                 {polishCustomization !== "full" && (
                   <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12.5, color: "var(--text-secondary)" }}>
                     {polishCustomization === "override"
-                      ? "Your current model (Qwen3.5-2B) follows a fixed editor prompt, so these instructions don't apply. Only the prompt override above can steer it."
-                      : "Your current model uses a fixed cleanup prompt, so these instructions don't apply. Pick Qwen3.5-2B or LFM3 to customize how Polish works."}
+                      ? "Your current model (Qwen3.5 2B) follows a fixed editor prompt, so these instructions don't apply. Only the prompt override above can steer it."
+                      : "Your current model uses a fixed cleanup prompt, so these instructions don't apply. Pick Qwen3.5 2B or LFM3 Omni to customize how Polish works."}
                   </div>
                 )}
                 <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden", opacity: polishCustomization !== "full" ? 0.55 : 1 }}>
@@ -1473,6 +1507,7 @@ const statusLine =
                 <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Name</label>
                 <input
                   autoFocus
+                  aria-label="Name"
                   value={modalName}
                   onChange={(e) => setModalName(e.target.value)}
                   placeholder="e.g. Executive Summary"
@@ -1508,6 +1543,7 @@ const statusLine =
                 </label>
                 <textarea
                   rows={4}
+                  aria-label="Customize prompt"
                   value={modalPrompt}
                   onChange={(e) => setModalPrompt(e.target.value)}
                   placeholder="e.g. Rewrite as a tight executive summary, max 3 sentences, no jargon."

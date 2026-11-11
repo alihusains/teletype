@@ -364,11 +364,23 @@ export default function ModelsScreen() {
         setOpenaiModel(s.openaiModel);
       })
       .catch(console.error);
-    invoke<boolean>("has_llm_secret", { providerId: hostFromUrl(openaiBaseUrl) })
-      .then(setHasKey)
-      .catch(console.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The keychain lookup follows the endpoint in the form: the "Key saved"
+  // chip and the Remove control must describe the key for the URL shown,
+  // not the one that was shown when the screen mounted.
+  useEffect(() => {
+    let alive = true;
+    invoke<boolean>("has_llm_secret", { providerId: hostFromUrl(openaiBaseUrl) })
+      .then((v) => {
+        if (alive) setHasKey(v);
+      })
+      .catch(console.error);
+    return () => {
+      alive = false;
+    };
+  }, [openaiBaseUrl]);
 
   // Both catalogs are stored in one batch. Resolved separately, whichever
   // `invoke` returned first painted a half-populated screen, and the two lists
@@ -536,8 +548,6 @@ export default function ModelsScreen() {
     setDeleteError(null);
     window.setTimeout(() => setConfirmingDelete((cur) => (cur === id ? null : cur)), 4000);
   };
-
-  const cancelDelete = () => setConfirmingDelete(null);
 
   const doDelete = async (id: string, speech: boolean) => {
     setConfirmingDelete(null);
@@ -724,7 +734,10 @@ export default function ModelsScreen() {
             {delErr}
             <button
               type="button"
-              onClick={cancelDelete}
+              onClick={() => {
+                setConfirmingDelete(null);
+                setDeleteError(null);
+              }}
               style={{
                 marginLeft: 8,
                 color: "var(--text-secondary)",
