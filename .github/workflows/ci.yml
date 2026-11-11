@@ -168,6 +168,9 @@ jobs:
         run: |
           mkdir -p crates/teletype-desktop/binaries
           touch crates/teletype-desktop/binaries/llama-server
+          # tauri.conf.json also bundles the Windows llama-server as a
+          # directory resource; tauri-build fails when it is missing.
+          mkdir -p crates/teletype-desktop/binaries/llama-server-win
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -331,6 +334,9 @@ jobs:
         run: |
           mkdir -p crates/teletype-desktop/binaries
           touch crates/teletype-desktop/binaries/llama-server
+          # tauri.conf.json also bundles the Windows llama-server as a
+          # directory resource; tauri-build fails when it is missing.
+          mkdir -p crates/teletype-desktop/binaries/llama-server-win
       - name: Rust tests (desktop)
         run: cargo test -p teletype-desktop
       - name: Rust tests (desktop, fault injection)
@@ -419,6 +425,9 @@ jobs:
         run: |
           mkdir -p crates/teletype-desktop/binaries
           touch crates/teletype-desktop/binaries/llama-server
+          # tauri.conf.json also bundles the Windows llama-server as a
+          # directory resource; tauri-build fails when it is missing.
+          mkdir -p crates/teletype-desktop/binaries/llama-server-win
       - name: Link the shipping binary (release profile)
         # `-p teletype-desktop --bin teletype` is the tauri app binary itself.
         # Building it runs the full `rustc` link against teletype-fluid, which
@@ -663,6 +672,9 @@ jobs:
           New-Item -ItemType Directory -Path crates/teletype-desktop/binaries -Force | Out-Null
           New-Item -ItemType File -Path crates/teletype-desktop/binaries/llama-server -Force | Out-Null
           New-Item -ItemType File -Path crates/teletype-desktop/binaries/llama-server.exe -Force | Out-Null
+          # tauri.conf.json also bundles the Windows llama-server as a
+          # directory resource; tauri-build fails when it is missing.
+          New-Item -ItemType Directory -Path crates/teletype-desktop/binaries/llama-server-win -Force | Out-Null
       - name: cargo check (windows msvc)
         run: cargo check --workspace
       - name: Windows tests DEGRADED to cargo check (tests not run)
@@ -716,6 +728,9 @@ jobs:
         run: |
           mkdir -p crates/teletype-desktop/binaries
           touch crates/teletype-desktop/binaries/llama-server
+          # tauri.conf.json also bundles the Windows llama-server as a
+          # directory resource; tauri-build fails when it is missing.
+          mkdir -p crates/teletype-desktop/binaries/llama-server-win
       - name: Install sccache
         run: brew install sccache 2>/dev/null || true
       - name: Point cargo at sccache
@@ -903,6 +918,9 @@ jobs:
         run: |
           mkdir -p crates/teletype-desktop/binaries
           touch crates/teletype-desktop/binaries/llama-server
+          # tauri.conf.json also bundles the Windows llama-server as a
+          # directory resource; tauri-build fails when it is missing.
+          mkdir -p crates/teletype-desktop/binaries/llama-server-win
       - name: Per-crate coverage floors
         run: bash scripts/coverage-gate.sh
 

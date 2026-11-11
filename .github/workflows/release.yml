@@ -291,6 +291,12 @@ jobs:
       - name: Build llama-server (Metal, static)
         run: |
           ./scripts/build-llama-server.sh
+      - name: Stub the Windows llama-server resource
+        # tauri.conf.json bundles binaries/llama-server-win as a directory
+        # resource; tauri-build fails when the path is missing. macOS
+        # bundles ship the empty directory; the Windows job replaces it
+        # with the real prebuilt binary.
+        run: mkdir -p crates/teletype-desktop/binaries/llama-server-win
       - name: Build Tauri app
         # Signs the app (when APPLE_CERTIFICATE is present), signs the updater
         # payload, and notarizes. `createUpdaterArtifacts: true` in
@@ -541,6 +547,10 @@ jobs:
         run: bash scripts/check-notices.sh
       - name: Build llama-server (x86_64)
         run: ./scripts/build-llama-server.sh
+      - name: Stub the Windows llama-server resource
+        # Same as the arm64 job: tauri-build checks every declared resource
+        # path; the Windows directory resource ships empty in macOS builds.
+        run: mkdir -p crates/teletype-desktop/binaries/llama-server-win
       - name: Build Tauri app (x86_64)
         # Same empty-secret handling as the arm64 job: an empty-but-present
         # APPLE_CERTIFICATE/TAURI_SIGNING_PRIVATE_KEY is treated as absent and

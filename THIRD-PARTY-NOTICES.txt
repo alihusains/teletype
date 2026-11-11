@@ -508,6 +508,11 @@ https://huggingface.co/neuphonic/neudecide/blob/main/README.md
 Mirrored verbatim at github.com/alihusains/teletype-models; Apache-2.0 permits
 redistribution, so the mirror is the primary download URL (upstream stays as backup).
 
+=== LFM3 Omni - catalog id: lfm3-omni ===
+License: Llama 3.1 Community License
+https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF/blob/main/LICENSE
+LFM3-Audio-2B by Liquid AI.
+
 ===========================================================================
 ADAPTED SOURCE CODE
 ===========================================================================
