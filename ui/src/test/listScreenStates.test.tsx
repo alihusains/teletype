@@ -16,7 +16,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirm, message } from "@tauri-apps/plugin-dialog";
+import { displayHotkey } from "../components/HotkeyRecorder";
 import AutoTextScreen from "../screens/AutoTextScreen";
 import TransformsScreen from "../screens/TransformsScreen";
 import StylesScreen from "../screens/StylesScreen";
@@ -292,6 +293,84 @@ describe("A-1 Styles: a rejected delete keeps the style row and shows the error"
     expect(screen.getByText(/did not save/)).toBeTruthy();
     // The row is back: a rejected delete is not a delete.
     expect(screen.getByText("Work voice")).toBeTruthy();
+  });
+});
+
+describe("A-1 Transforms: rejected preset writes name the failure instead of vanishing", () => {
+  const CUSTOM = {
+    id: "custom-1",
+    name: "Meeting notes",
+    description: "Tight meeting summaries",
+    instruction: "Summarise",
+    shortcut: "Command+Shift+M",
+    enabled: true,
+    builtIn: false,
+    autoApply: false,
+  };
+
+  function renderTransforms(reject: Record<string, string> = {}) {
+    mockListenCapture();
+    program(
+      {
+        list_transforms: [CUSTOM],
+        get_settings: {
+          autoApplyTransform: false,
+          listStyle: "bullets",
+          polishRules: {},
+          polishCustomInstructions: [],
+        },
+        get_runtime_status: {
+          speech: { state: "ready", label: "Speech", modelId: "t", detail: "ready", blocking: false },
+          llm: { state: "none", label: "LLM", modelId: "t", detail: "not loaded", blocking: false },
+        },
+      },
+      reject,
+    );
+    render(<TransformsScreen />);
+  }
+
+  it("keeps the create modal open and names the failure when create_transform rejects", async () => {
+    renderTransforms({ create_transform: "disk full" });
+    await waitFor(() => expect(screen.getByText("Meeting notes")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /Create your own/ }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Standup" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    // The rejection reaches the user, with the backend's reason…
+    await waitFor(() => {
+      const text = vi.mocked(message).mock.calls[0]?.[0] as string;
+      expect(text).toContain("Could not create this preset");
+      expect(text).toContain("disk full");
+    });
+    // …and the modal is still open, so the name and prompt are not lost.
+    expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Standup");
+  });
+
+  it("keeps the preset and names the failure when delete_transform rejects", async () => {
+    vi.mocked(confirm).mockResolvedValue(true);
+    renderTransforms({ delete_transform: "store locked" });
+    await waitFor(() => expect(screen.getByText("Meeting notes")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => {
+      const text = vi.mocked(message).mock.calls[0]?.[0] as string;
+      expect(text).toContain("Could not delete this transform");
+      expect(text).toContain("store locked");
+    });
+    // The card is still listed: a rejected delete is not a delete.
+    expect(screen.getByText("Meeting notes")).toBeTruthy();
+  });
+
+  it("shows the card shortcut with the same formatting as the status line", async () => {
+    renderTransforms();
+    await waitFor(() => expect(screen.getByText("Meeting notes")).toBeTruthy());
+
+    // The kbd on the card and the status line sentence both go through
+    // displayHotkey, so the same binding cannot read two different ways.
+    expect(screen.getByText(displayHotkey(CUSTOM.shortcut))).toBeTruthy();
+    expect(screen.getByText(/Polish runs when you press/)).toBeTruthy();
   });
 });
 

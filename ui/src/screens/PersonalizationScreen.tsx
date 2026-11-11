@@ -277,14 +277,18 @@ function PerAppLanguage() {
   const [langMap, setLangMap] = useState<Record<string, string>>({});
   const [newApp, setNewApp] = useState("");
   const [newLang, setNewLang] = useState("en");
+  // A rejected read must not render as "no overrides": that sentence sends
+  // the user off adding an override the app already has.
+  const [loadFailed, setLoadFailed] = useState(false);
   const speechLanguages = useSpeechLanguages();
   const writes = useWrites();
 
   const refresh = async () => {
     try {
       setLangMap(await invoke<Record<string, string>>("get_app_language_overrides"));
+      setLoadFailed(false);
     } catch {
-      /* command unavailable; keep empty */
+      setLoadFailed(true);
     }
   };
   useEffect(() => {
@@ -329,7 +333,13 @@ function PerAppLanguage() {
         Use a different speech language in one app. Overrides the global language for that app
         only.
       </p>
-      {Object.entries(langMap).map(([appKey, lang]) => (
+      {loadFailed ? (
+        <LoadFailed
+          what="Your per-app language overrides"
+          onRetry={() => void refresh()}
+        />
+      ) : (
+        Object.entries(langMap).map(([appKey, lang]) => (
         <div key={appKey} style={{ borderTop: "1px solid var(--border-subtle)" }}>
           <div style={rowStyle}>
             <code style={{ flex: 1 }}>{appKey}</code>
@@ -364,8 +374,9 @@ function PerAppLanguage() {
             />
           ) : null}
         </div>
-      ))}
-      {Object.keys(langMap).length === 0 ? (
+        ))
+      )}
+      {!loadFailed && Object.keys(langMap).length === 0 ? (
         <p style={{ ...noteText, fontSize: 12.5, margin: "2px 0 8px" }}>
           No overrides. Speech uses your global language in every app.
         </p>
@@ -834,6 +845,7 @@ export default function PersonalizationScreen() {
         ) : (
           learnedTerms.map((t) => {
             const undoKey = `learned:${t.id}`;
+            const seen = dateString(t.lastSeen);
             return (
               <div
                 key={t.id}
@@ -856,7 +868,7 @@ export default function PersonalizationScreen() {
                 >
                   <Chip>{sourceLabel(t.source)}</Chip>
                   <Chip>{`${t.evidence} correction${t.evidence === 1 ? "" : "s"}`}</Chip>
-                  <Chip>{`Last seen ${dateString(t.lastSeen) ?? ""}`}</Chip>
+                  {seen ? <Chip>{`Last seen ${seen}`}</Chip> : null}
                 </div>
                 <div style={{ marginTop: 8 }}>
                   <button

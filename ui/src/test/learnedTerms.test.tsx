@@ -71,6 +71,20 @@ describe("Personalization 'What I learned' section", () => {
     expect(screen.getByRole("button", { name: "Undo Shivon" })).toBeTruthy();
   });
 
+  it("omits the last-seen chip when the term has no readable date", async () => {
+    // A missing timestamp used to print a dangling "Last seen " chip.
+    mockInvokeResponses({
+      get_profile: EMPTY_PROFILE,
+      list_learned_terms: [term({ lastSeen: 0 })],
+    });
+    render(<PersonalizationScreen />);
+
+    await waitFor(() => expect(screen.getByText("Heard as Shavano → Shivon")).toBeTruthy());
+    expect(screen.queryByText(/Last seen/)).toBeNull();
+    // The other chips are untouched.
+    expect(screen.getByText("2 corrections")).toBeTruthy();
+  });
+
   it("undoes the term: calls undo_learned_term with the id and removes the row", async () => {
     mockInvokeResponses({
       get_profile: EMPTY_PROFILE,

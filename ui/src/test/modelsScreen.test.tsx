@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import ModelsScreen from "../screens/ModelsScreen";
 import { invoke } from "@tauri-apps/api/core";
-import { mockInvokeResponses, mockListenCapture, resetTauriMocks } from "./tauriMock";
+import { invokeCalls, mockInvokeResponses, mockListenCapture, resetTauriMocks } from "./tauriMock";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -414,6 +414,23 @@ describe("AI Models screen", () => {
     await waitFor(() => expect(row.textContent).toContain("file in use"));
   });
 
+  it("hides the delete failure when Dismiss is pressed", async () => {
+    // Dismiss used to clear only the armed state, which was already clear,
+    // so the error line sat under the row until the next action on it.
+    renderModels({
+      list_models: [{ ...S1_MINI, selected: false }, NEUDECIDE],
+      delete_model: () => Promise.reject(new Error("file in use")),
+    });
+    const polish = await sectionByTitle("Polish models", "S1-mini");
+    const row = rowInSection(polish, "S1-mini");
+    fireEvent.click(within(row).getByRole("button", { name: "Delete model" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Confirm delete" }));
+    await waitFor(() => expect(row.textContent).toContain("file in use"));
+
+    fireEvent.click(within(row).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(row.textContent).not.toContain("file in use"));
+  });
+
   it("shows a retry banner, not an empty list, when the catalog fails to load", async () => {
     // Both catalogs reject: the screen must say it could not load and offer a
     // retry, not paint a blank list that reads as "no models".
@@ -523,5 +540,23 @@ describe("AI Models screen", () => {
     const whisperRow = rowInSection(dictation, "Whisper large-v3 turbo");
     expect(within(whisperRow).getByText("Multilingual")).toBeTruthy();
     expect(within(whisperRow).queryByText("· measured")).toBeNull();
+  });
+
+  it("re-checks the keychain when the base URL points at a new host", async () => {
+    // The "Key saved" chip and the Remove control describe the key for the
+    // endpoint in the form. Changing the endpoint must re-ask the keychain
+    // about that host, not keep answering for the one that was there on mount.
+    renderModels();
+    fireEvent.click(screen.getByRole("button", { name: "Configure" }));
+    const url = await screen.findByLabelText("Base URL");
+    fireEvent.change(url, {
+      target: { value: "https://generativelanguage.googleapis.com/v1beta/openai" },
+    });
+    await waitFor(() =>
+      expect(invokeCalls()).toContainEqual({
+        cmd: "has_llm_secret",
+        args: { providerId: "generativelanguage.googleapis.com" },
+      })
+    );
   });
 });
