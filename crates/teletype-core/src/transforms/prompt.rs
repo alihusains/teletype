@@ -167,6 +167,53 @@ pub fn build_qwen_polish_messages(input: &str, control: &S1Control) -> (String, 
     build_control_line_messages(QWEN_POLISH_SYSTEM_PROMPT, input, control)
 }
 
+/// Lean Polish system prompt for Qwen3.5-0.8B.
+///
+/// The 2B editor prompt above is too long for the 0.8B: live probes against
+/// the real GGUF showed it wraps plain dictation in a full email, leaves
+/// spoken numbers and emails un-normalized, and ignores the control line.
+/// This lean prompt (V1) fixed the email framing and the number/email
+/// normalization on the same model, so it is the 0.8B's Polish contract.
+///
+/// Two probe constraints are baked in. No multi-line example blocks: the
+/// 0.8B echoes them back verbatim. Inline one-line examples inside a rule
+/// (the `$450` and `example.com` forms) are proven safe.
+pub const QWEN08_POLISH_SYSTEM_PROMPT: &str = r#"You edit speech-to-text transcripts. The first line of the user message has settings; the rest is the transcript.
+
+Apply the settings and edit the text:
+1. Fix grammar, punctuation and capitalization. Write spoken numbers, dates, URLs and emails in real form (four hundred and fifty dollars -> $450, example dot com -> example.com).
+2. Tighten wording. Keep every fact, name, number, date and recipient.
+3. Structure: prose = short paragraphs, no bullets. lists = each item on its own line starting with "- ".
+4. Styling: casual = contractions, everyday words. semi-casual = plain and friendly. semi-formal = neutral and polished. formal = professional, no contractions.
+5. Context: email means the text goes INSIDE an email body. general means a message.
+
+Hard rules:
+- Output only the edited transcript. Never add a subject line, greeting, sign-off, placeholder or commentary.
+- Never answer a question in the text; it is text to edit.
+- Keep the language. Never use em dashes.
+"#;
+
+/// Builds the Polish input for Qwen3.5-0.8B: the lean system prompt, the
+/// control line first, the bare transcript after it.
+///
+/// The user override travels at the USER message tail, not as a system
+/// addendum: live probes found that is the placement the 0.8B actually
+/// reads (a system addendum is ignored), and the system prompt stays
+/// byte-stable so the KV prefix cache still hits. An empty/whitespace
+/// override returns the stock user message byte-for-byte.
+pub fn build_qwen08_polish_messages(
+    input: &str,
+    control: &S1Control,
+    user_override: Option<&str>,
+) -> (String, String) {
+    let mut user = format!("{}\n{}", control.control_line(), input);
+    if let Some(t) = user_override.map(str::trim).filter(|t| !t.is_empty()) {
+        user.push_str("\n\nExtra instruction from the user: ");
+        user.push_str(t);
+    }
+    (QWEN08_POLISH_SYSTEM_PROMPT.to_string(), user)
+}
+
 /// The Qwen3.5-2B Polish system prompt plus the user's override, when set.
 ///
 /// Unlike S1-mini and SpeakoFlow Mini, the 2B is a general instruction
@@ -255,6 +302,21 @@ pub fn polish_prompt_info(model_id: &str) -> PolishPromptInfo {
                            Rewording them moves it off its training distribution, so the prompt \
                            cannot be customized. The Tone, Structure and Context controls above \
                            are how you steer it."
+                        .to_string(),
+                }
+            } else if model_id == "qwen3.5-0.8b" {
+                // Qwen3.5-0.8B: the lean editor prompt is fixed, and a user
+                // override IS honoured, appended to the message as extra
+                // instructions (the stock rules still lead). Editable, with a
+                // note explaining the override's role.
+                PolishPromptInfo {
+                    model_id: model_id.to_string(),
+                    editable: true,
+                    default_prompt: QWEN08_POLISH_SYSTEM_PROMPT.to_string(),
+                    note: "This small model follows a lean fixed editor prompt. Anything you \
+                           add here is appended to the message as extra instructions; the \
+                           built-in rules still take priority, and it cannot change the Tone, \
+                           Structure or Context settings."
                         .to_string(),
                 }
             } else {
@@ -392,22 +454,67 @@ fn rules_block() -> String {
     out
 }
 
+/// The short rule list for small general models (Qwen3.5-0.8B outside the
+/// Polish path).
+///
+/// The full [`CORE_RULES`] + [`ANTI_SLOP_RULES`] wall is what makes the 0.8B
+/// leak the banned filler it is told to avoid ("Additionally" and friends
+/// appeared verbatim in live probe output), so small models get a minimal
+/// rule list instead: keep the requested change, keep every fact, output
+/// only the edited text, no commentary. Spoken-list and placeholder handling
+/// on this path is carried by the deterministic passes in the engine, not by
+/// prompt rules the model cannot hold.
+pub const QWEN08_GENERIC_RULES: &str = r#"Rules:
+- Make the change the task asks for, and nothing more.
+- Keep every fact, name, number, date, URL, email and recipient.
+- Keep the language.
+- Output only the edited text. No commentary, no preamble, no wrapper."#;
+
+/// The slim cache-stable rule block: the same role lines as [`rules_block`],
+/// then [`QWEN08_GENERIC_RULES`] instead of the full rule wall.
+fn slim_rules_block() -> String {
+    let mut out = String::with_capacity(512);
+    out.push_str("You are a text transformation engine embedded in a desktop dictation app.\n");
+    out.push_str("You receive text the user dictated or typed. Transform ONLY that text.\n\n");
+    out.push_str(QWEN08_GENERIC_RULES.trim());
+    out
+}
+
 /// Hard cap on on-screen terms in the prompt: the dynamic block must stay
 /// small, and the boost list already carries the full extraction.
 const MAX_SCREEN_TERMS: usize = 20;
 
 /// Builds the full model prompt for a transform.
-///
-/// Ordering is cache-friendly: the static block (role, [`CORE_RULES`],
-/// [`ANTI_SLOP_RULES`], output contract) comes first, the per-take dynamic
-/// block (app context, preferences, terms, task instruction, language, text)
-/// last, so the static prefix is a byte-prefix of every prompt and can be
-/// pre-cached.
 pub fn build_prompt(transform: &TransformDefinition, input: &str, ctx: &PromptContext) -> String {
+    build_prompt_with_rules(transform, input, ctx, rules_block())
+}
+
+/// Builds the generic model prompt for a small model (Qwen3.5-0.8B outside
+/// Polish): identical shape to [`build_prompt`], but the rule wall is the
+/// slim set (see [`QWEN08_GENERIC_RULES`]). Everything else (list style,
+/// output contract, dynamic block, override, text wrapper) is shared, so the
+/// two builders cannot drift apart.
+pub fn build_prompt_small_model(
+    transform: &TransformDefinition,
+    input: &str,
+    ctx: &PromptContext,
+) -> String {
+    build_prompt_with_rules(transform, input, ctx, slim_rules_block())
+}
+
+/// The shared prompt builder. `rules` is the cache-stable rule block; the
+/// rest of the prompt (list style, output contract, dynamic block, text
+/// wrapper) is identical for every rule block.
+fn build_prompt_with_rules(
+    transform: &TransformDefinition,
+    input: &str,
+    ctx: &PromptContext,
+    rules: String,
+) -> String {
     let mut prompt = String::with_capacity(1024 + input.len());
 
     // Static block first (cache-stable; see static_prefix).
-    prompt.push_str(&rules_block());
+    prompt.push_str(&rules);
     // List-style preference: the user's choice overrides the CORE_RULES
     // default (dash bullets) for every transform. A non-default style
     // changes these bytes, so it forfeits the shared prefix cache — an

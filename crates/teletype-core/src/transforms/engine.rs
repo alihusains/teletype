@@ -5,8 +5,9 @@
 //! input. AutoText restoration happens in the pipeline, not here.
 
 use super::prompt::{
-    build_prompt, build_s1_messages, build_speakoflow_messages,
-    qwen_polish_system_prompt_with_override, s1_too_short, PromptContext, S1Structure,
+    build_prompt, build_prompt_small_model, build_qwen08_polish_messages, build_s1_messages,
+    build_speakoflow_messages, qwen_polish_system_prompt_with_override, s1_too_short,
+    PromptContext, S1Structure, QWEN08_POLISH_SYSTEM_PROMPT,
 };
 use super::validator::{self, Failure, ValidatedOutput};
 use super::TransformDefinition;
@@ -195,6 +196,195 @@ fn capitalize_line_lead(line: &str) -> String {
     out
 }
 
+/// Strips a single spurious bullet marker from the first line when the rest
+/// of the text is not a list. The 0.8B slips a leading "- " into prose
+/// rewrites (live probe, case E); a real list has more than one bulleted
+/// line, so this never touches list output. Reuses [`strip_bullet`] so the
+/// marker set stays one definition.
+fn strip_single_leading_bullet(text: &str) -> String {
+    let (first, rest) = match text.find('\n') {
+        Some(idx) => (&text[..idx], &text[idx + 1..]),
+        None => (text, ""),
+    };
+    let trimmed = first.trim_start();
+    let Some(item) = strip_bullet(trimmed) else {
+        return text.to_string();
+    };
+    if rest.lines().any(|l| strip_bullet(l.trim_start()).is_some()) {
+        return text.to_string();
+    }
+    let indent = &first[..first.len() - trimmed.len()];
+    let mut out = String::with_capacity(text.len());
+    out.push_str(indent);
+    out.push_str(item);
+    if !rest.is_empty() {
+        out.push('\n');
+        out.push_str(rest);
+    }
+    out
+}
+
+/// True when the user's override text asks for British spelling. The
+/// canonical wording is "Always use British spelling." (the live probe
+/// case); "British English" and "UK spelling" are the same ask.
+fn wants_british_spelling(override_text: Option<&str>) -> bool {
+    let Some(t) = override_text.map(str::trim).filter(|t| !t.is_empty()) else {
+        return false;
+    };
+    let lower = t.to_ascii_lowercase();
+    lower.contains("british spelling")
+        || lower.contains("british english")
+        || lower.contains("uk spelling")
+}
+
+/// The small word map behind the British-spelling fallback. The 0.8B cannot
+/// apply the override on long transcripts in any placement (live probes:
+/// system addendum, user tail and explicit mapping all failed; "organize"
+/// stayed American), so the decided fallback is deterministic: a bounded map
+/// of the -ize/-y/-l words the override realistically targets. `recognition`
+/// is already British, so it is not in the map.
+const BRITISH_SPELLING_MAP: &[(&str, &str)] = &[
+    ("organize", "organise"),
+    ("organizing", "organising"),
+    ("organized", "organised"),
+    ("realization", "realisation"),
+    ("utilize", "utilise"),
+    ("utilization", "utilisation"),
+    ("apologize", "apologise"),
+    ("emphasizing", "emphasising"),
+    ("emphasized", "emphasised"),
+    ("labeling", "labelling"),
+    ("modeled", "modelled"),
+];
+
+/// Copies the case shape of `src` onto `dst`: all-caps stays all-caps, a
+/// leading capital stays a leading capital, otherwise lowercase.
+fn match_case(src: &str, dst: &str) -> String {
+    if src.chars().all(|c| c.is_ascii_uppercase()) {
+        return dst.to_ascii_uppercase();
+    }
+    let mut chars = dst.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut out = String::with_capacity(dst.len());
+    if src.starts_with(|c: char| c.is_ascii_uppercase()) {
+        out.push(first.to_ascii_uppercase());
+    } else {
+        out.push(first);
+    }
+    out.extend(chars);
+    out
+}
+
+/// Replaces whole-word occurrences of `needle` (case-insensitive) with
+/// `replacement`, preserving the match's case shape. A word boundary is a
+/// non-alphanumeric edge, so "organization" is never touched by the
+/// "organize" entry and "utilized" is never touched by "utilize".
+fn replace_whole_word(text: &str, needle: &str, replacement: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < n {
+        if word_boundary_match(needle, &chars, i) {
+            let window: String = chars[i..i + needle.len()].iter().collect();
+            out.push_str(&match_case(&window, replacement));
+            i += needle.len();
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// True when `needle` starts at `i` in `chars` as a whole word: non-
+/// alphanumeric edges (or string ends) on both sides, and a case-insensitive
+/// letter match.
+fn word_boundary_match(needle: &str, chars: &[char], i: usize) -> bool {
+    if i + needle.len() > chars.len() {
+        return false;
+    }
+    if i > 0 && chars[i - 1].is_ascii_alphanumeric() {
+        return false;
+    }
+    let after = i + needle.len();
+    if after < chars.len() && chars[after].is_ascii_alphanumeric() {
+        return false;
+    }
+    chars[i..after]
+        .iter()
+        .zip(needle.chars())
+        .all(|(a, b)| a.eq_ignore_ascii_case(&b))
+}
+
+/// Applies the British-spelling fallback to polished output. Pure, idempotent
+/// and conservative: whole-word matches only, case-preserving, and it never
+/// deletes or reorders anything, so it cannot drop user content.
+fn apply_british_spelling(text: &str) -> String {
+    let mut out = text.to_string();
+    for (am, br) in BRITISH_SPELLING_MAP {
+        out = replace_whole_word(&out, am, br);
+    }
+    out
+}
+
+/// F1: the 0.8B can echo the control line verbatim as the first line of
+/// its output (live probe, 3/3 runs at temp 0), and the validator does not
+/// catch it, so it would reach the user. Strip at most one leading line that
+/// is the control line itself or a near-miss echo of it (the model mangles
+/// one token sometimes); the rest of the text is never touched.
+fn strip_echoed_control_line(text: &str, ctx: &PromptContext) -> String {
+    let control = ctx.s1_control.control_line();
+    let mut lines = text.splitn(2, '\n');
+    let first = lines.next().unwrap_or("").trim();
+    let is_echo = first == control
+        || (first.starts_with("[Styling:")
+            && first.contains("[Structure:")
+            && first.contains("[Context:"));
+    if is_echo {
+        lines.next().unwrap_or("").to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+/// The 0.8B Polish-path safety net: the same prose shaping as the 2B
+/// (bullets folded, leads capitalized), plus the deterministic repairs the
+/// live probes proved the 0.8B needs: an echoed leading control line (F1),
+/// a spurious leading bullet in prose mode, and the British-spelling
+/// fallback when the override asks for it.
+fn qwen08_polish_postprocess(cleaned: &str, ctx: &PromptContext) -> String {
+    let deechoed = strip_echoed_control_line(cleaned, ctx);
+    let prose = ctx.s1_control.structure == S1Structure::Prose;
+    let shaped = if prose {
+        strip_single_leading_bullet(&prose_from_bullets(&deechoed))
+    } else {
+        deechoed
+    };
+    let capped = capitalize_leads(&shaped);
+    if wants_british_spelling(ctx.user_override.as_deref()) {
+        apply_british_spelling(&capped)
+    } else {
+        capped
+    }
+}
+
+/// The 0.8B generic-path safety net (live probe, case E): the model slips a
+/// spurious leading bullet and a lowercase lead into prose rewrites. Both
+/// are repaired deterministically, and the British-spelling fallback applies
+/// here too, because the override reaches the generic path as well.
+/// Runs on model output only, never on the raw input.
+fn qwen08_generic_postprocess(text: &str, ctx: &PromptContext) -> String {
+    let capped = capitalize_leads(&strip_single_leading_bullet(text));
+    if wants_british_spelling(ctx.user_override.as_deref()) {
+        apply_british_spelling(&capped)
+    } else {
+        capped
+    }
+}
+
 /// The closed set of non-lexical sounds that a model may legitimately
 /// polish away to nothing (F-71). Deliberately narrower than the filler
 /// tiers in `crate::fillers`: discourse markers ("like", "you know", "so")
@@ -307,6 +497,40 @@ fn run_qwen_polish(
         ctx,
         on_token,
         "Qwen3.5",
+        (system, user),
+    )
+}
+
+/// Qwen3.5-0.8B takes the same control line for Polish, but with the lean
+/// system prompt tuned for its size (see `QWEN08_POLISH_SYSTEM_PROMPT`).
+/// It is not a cleanup fine-tune: outside the Polish path it falls through
+/// to the slim generic prompt and keeps instruction following for the other
+/// presets.
+///
+/// The user override travels at the USER message tail, not as a system
+/// addendum: live probes found that is the placement the 0.8B actually
+/// reads, and keeping the system prompt byte-stable preserves the KV prefix
+/// cache. The 0.8B still cannot apply a British-spelling override on long
+/// transcripts in any placement (proven model limit), so the deterministic
+/// [`apply_british_spelling`] fallback runs on its output in
+/// [`qwen08_polish_postprocess`].
+fn run_qwen08_polish(
+    provider: &dyn crate::llm::InferenceProvider,
+    protected_input: &str,
+    ctx: &PromptContext,
+    on_token: &mut Option<&mut dyn FnMut(&str)>,
+) -> Result<String, String> {
+    let (system, user) = build_qwen08_polish_messages(
+        protected_input,
+        &ctx.s1_control,
+        ctx.user_override.as_deref(),
+    );
+    run_fixed_messages(
+        provider,
+        protected_input,
+        ctx,
+        on_token,
+        "Qwen3.5-0.8B",
         (system, user),
     )
 }
@@ -448,12 +672,15 @@ fn run_single_chunk(
     // Style screen and this engine cannot disagree about what a model honours.
     let style = crate::style::model_style(provider.model_id());
     let is_s1 = provider.model_id() == "s1-mini" && is_polish;
-    let is_qwen_polish =
-        (provider.model_id() == "qwen3.5-2b" || provider.model_id() == "qwen3.5-0.8b") && is_polish;
-    // S1-mini and SpeakoFlow Mini are card-faithful cleanup models, and
-    // Qwen3.5-2B takes their control line for Polish only. All three use a
-    // lean prompt instead of `build_prompt`; every other transform on the 2B
-    // keeps the generic instruction path.
+    let is_qwen2b_polish = provider.model_id() == "qwen3.5-2b" && is_polish;
+    let is_qwen08_polish = provider.model_id() == "qwen3.5-0.8b" && is_polish;
+    let is_qwen_polish = is_qwen2b_polish || is_qwen08_polish;
+    let is_qwen08 = provider.model_id() == "qwen3.5-0.8b";
+    // S1-mini and SpeakoFlow Mini are card-faithful cleanup models, and both
+    // Qwen sizes take their control line for Polish only, each with its own
+    // system prompt (the 2B the editor prompt, the 0.8B the lean one).
+    // Every other transform on either Qwen keeps the generic instruction
+    // path (slim rules for the 0.8B).
     let is_card_cleanup = style.polishes_from_card && is_polish;
 
     // A cleanup-only fine-tune cannot follow another preset's instruction:
@@ -538,12 +765,17 @@ fn run_single_chunk(
                 run_s1(provider, protected_input, ctx, on_token),
                 super::prompt::S1_SYSTEM_PROMPT.to_string(),
             )
-        } else if is_qwen_polish {
+        } else if is_qwen2b_polish {
             (
                 run_qwen_polish(provider, protected_input, ctx, on_token),
                 super::prompt::qwen_polish_system_prompt_with_override(
                     ctx.user_override.as_deref(),
                 ),
+            )
+        } else if is_qwen08_polish {
+            (
+                run_qwen08_polish(provider, protected_input, ctx, on_token),
+                QWEN08_POLISH_SYSTEM_PROMPT.to_string(),
             )
         } else {
             (
@@ -553,13 +785,15 @@ fn run_single_chunk(
         };
         match run_result {
             Ok(cleaned) => {
-                let cleaned = if is_qwen_polish {
+                let cleaned = if is_qwen2b_polish {
                     let shaped = if ctx.s1_control.structure == S1Structure::Prose {
                         prose_from_bullets(&cleaned)
                     } else {
                         cleaned
                     };
                     capitalize_leads(&shaped)
+                } else if is_qwen08_polish {
+                    qwen08_polish_postprocess(&cleaned, ctx)
                 } else {
                     cleaned
                 };
@@ -653,7 +887,14 @@ fn run_single_chunk(
             }
         }
     } else {
-        let prompt = build_prompt(transform, protected_input, ctx);
+        // The 0.8B leaks the banned filler the full rule wall tells it to
+        // avoid, so outside Polish it takes the slim rule set; every other
+        // model (including the 2B) keeps the full `build_prompt` byte-for-byte.
+        let prompt = if is_qwen08 {
+            build_prompt_small_model(transform, protected_input, ctx)
+        } else {
+            build_prompt(transform, protected_input, ctx)
+        };
         // P6.5: the max_tokens budget scales with the input (ceil(1.4×
         // input_tokens) + 24, floor 128, ceiling 4096). The old
         // `chars/3 + 100` clamp of 256..2048 could silently truncate long
@@ -689,15 +930,27 @@ fn run_single_chunk(
                     validator::validate(&raw, protected_input, transform, &prompt)
                 };
                 match validated {
-                    ValidatedOutput::Transformed(text) => TransformResult {
-                        text,
-                        transformed: true,
-                        metrics: TransformMetrics {
-                            latency_ms: started.elapsed().as_millis(),
-                            ..Default::default()
-                        },
-                        input_text: Some(protected_input.to_string()),
-                    },
+                    ValidatedOutput::Transformed(text) => {
+                        // The 0.8B generic-path safety net (case E): repair
+                        // the spurious leading bullet and lowercase lead the
+                        // model slips into prose rewrites, and apply the
+                        // British-spelling fallback when the override asks
+                        // for it. Runs on model output only.
+                        let text = if is_qwen08 {
+                            qwen08_generic_postprocess(&text, ctx)
+                        } else {
+                            text
+                        };
+                        TransformResult {
+                            text,
+                            transformed: true,
+                            metrics: TransformMetrics {
+                                latency_ms: started.elapsed().as_millis(),
+                                ..Default::default()
+                            },
+                            input_text: Some(protected_input.to_string()),
+                        }
+                    }
                     // F-71: filler-only input polished to empty is a
                     // success, not a rejection (see the card-cleanup arm).
                     ValidatedOutput::Fallback(_, failure)
@@ -1740,6 +1993,537 @@ mod tests {
             "a whitespace-only override must be the stock prompt"
         );
         assert!(result.transformed);
+    }
+
+    /// A provider that reports itself as Qwen3.5-0.8B and records both
+    /// dispatch arms, mirroring [`QwenRecorder`] for the 2B.
+    #[derive(Default)]
+    struct Qwen08Recorder {
+        stream: std::sync::Mutex<(Option<String>, Option<String>)>,
+        plain: std::sync::Mutex<Option<String>>,
+        reply: Option<&'static str>,
+    }
+    impl crate::llm::InferenceProvider for Qwen08Recorder {
+        fn model_id(&self) -> &str {
+            "qwen3.5-0.8b"
+        }
+        fn model_name(&self) -> &str {
+            "Qwen3.5 0.8B"
+        }
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            *self.plain.lock().unwrap() = Some(prompt.to_string());
+            Ok(self
+                .reply
+                .unwrap_or(
+                    "A clear structured prompt that summarizes meeting notes into action items",
+                )
+                .to_string())
+        }
+        fn generate_with_system_stream(
+            &self,
+            system: &str,
+            user: &str,
+            _params: crate::llm::GenerationParams,
+            _on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, String> {
+            let mut g = self.stream.lock().unwrap();
+            g.0 = Some(system.to_string());
+            g.1 = Some(user.to_string());
+            Ok(self
+                .reply
+                .unwrap_or("they were ready to go so i told them to start the meeting now")
+                .to_string())
+        }
+    }
+
+    /// The 0.8B Polish path takes the lean V1 system prompt, not the 2B
+    /// editor prompt: the control line leads the user message, the bare
+    /// transcript follows, and nothing else reaches the wire.
+    #[test]
+    fn qwen08_polish_uses_the_lean_prompt() {
+        use crate::transforms::prompt::{S1Context, S1Control, S1Structure, S1Styling};
+
+        let rec = Qwen08Recorder::default();
+        let input = "they was ready to go so i told them to start the meeting now";
+        let ctx = PromptContext {
+            s1_control: S1Control {
+                styling: S1Styling::Casual,
+                structure: S1Structure::Prose,
+                context: S1Context::Email,
+            },
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        let (system, user) = rec.stream.lock().unwrap().clone();
+        assert_eq!(
+            system.as_deref(),
+            Some(super::super::prompt::QWEN08_POLISH_SYSTEM_PROMPT),
+            "the 0.8B must get the lean prompt, not the 2B editor prompt"
+        );
+        assert!(!system.unwrap().contains("USER POLISH PROMPT"));
+        assert_eq!(
+            user.as_deref(),
+            Some(
+                format!("[Styling: casual] [Structure: prose] [Context: email]\n{input}").as_str()
+            )
+        );
+        assert!(
+            rec.plain.lock().unwrap().is_none(),
+            "Polish must not fall through to the generic prompt"
+        );
+        assert!(result.transformed);
+    }
+
+    /// The 0.8B override travels at the USER message tail (the placement the
+    /// live probes proved the model reads); the lean system prompt stays
+    /// byte-stable so the KV prefix cache keeps working.
+    #[test]
+    fn qwen08_override_goes_to_the_user_tail() {
+        let rec = Qwen08Recorder::default();
+        let input = "they was ready to go so i told them to start the meeting now";
+        let ctx = PromptContext {
+            user_override: Some("Always use British spelling.".into()),
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        let (system, user) = rec.stream.lock().unwrap().clone();
+        assert_eq!(
+            system.as_deref(),
+            Some(super::super::prompt::QWEN08_POLISH_SYSTEM_PROMPT),
+            "the override must not touch the system prompt"
+        );
+        let user = user.expect("user message must be captured");
+        assert!(user.starts_with("[Styling: semi-formal]"));
+        assert!(
+            user.ends_with("\n\nExtra instruction from the user: Always use British spelling."),
+            "the override must sit at the user tail: {user}"
+        );
+        assert!(result.transformed);
+    }
+
+    /// A whitespace-only override changes nothing on the 0.8B path either.
+    #[test]
+    fn qwen08_empty_override_changes_nothing() {
+        let rec = Qwen08Recorder::default();
+        let input = "they was ready to go so i told them to start the meeting now";
+        let ctx = PromptContext {
+            user_override: Some("   \n ".into()),
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+        let (_, user) = rec.stream.lock().unwrap().clone();
+        assert_eq!(
+            user.as_deref(),
+            Some(
+                format!("[Styling: semi-formal] [Structure: lists] [Context: general]\n{input}")
+                    .as_str()
+            ),
+            "a whitespace-only override must be the stock user message"
+        );
+        assert!(result.transformed);
+    }
+
+    /// The 0.8B cannot apply a British-spelling override on long transcripts
+    /// (proven model limit), so the deterministic fallback runs on its
+    /// output when the override asks for it: the word map applies, the rest
+    /// of the polish is untouched.
+    #[test]
+    fn qwen08_polish_british_fallback_applies_to_output() {
+        let rec = Qwen08Recorder {
+            reply: Some("We need to organize the report before the meeting on Tuesday."),
+            ..Default::default()
+        };
+        let input = "we need to organize the report before the meeting on tuesday";
+        let ctx = PromptContext {
+            user_override: Some("Always use British spelling.".into()),
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        assert!(result.transformed, "the output must be accepted");
+        assert!(
+            result.text.contains("organise"),
+            "the fallback must apply the word map: {}",
+            result.text
+        );
+        assert!(!result.text.contains("organize"), "{}", result.text);
+        // The rest of the polish is untouched.
+        assert!(result
+            .text
+            .contains("the report before the meeting on Tuesday"));
+    }
+
+    /// Without a British-spelling override the fallback stays off: the 0.8B
+    /// output is not rewritten.
+    #[test]
+    fn qwen08_polish_british_fallback_inactive_without_override() {
+        let rec = Qwen08Recorder {
+            reply: Some("We need to organize the report before the meeting on Tuesday."),
+            ..Default::default()
+        };
+        let input = "we need to organize the report before the meeting on tuesday";
+        let result =
+            run_transform_blocking(&rec, &polish(), input, &PromptContext::default(), &mut None);
+
+        assert!(result.transformed);
+        assert!(
+            result.text.contains("organize"),
+            "no override, no fallback: {}",
+            result.text
+        );
+    }
+
+    /// Prose mode: the 0.8B slips a spurious leading bullet into prose
+    /// (live probe, case E shape). The deterministic pass strips the single
+    /// marker and capitalizes the lead.
+    #[test]
+    fn qwen08_polish_prose_strips_a_spurious_leading_bullet() {
+        use crate::transforms::prompt::{S1Context, S1Control, S1Structure, S1Styling};
+
+        let rec = Qwen08Recorder {
+            reply: Some("- Let's move the meeting to Friday at 2 PM, so everyone can join then."),
+            ..Default::default()
+        };
+        let input = "um so basically move the meeting to friday at 2 pm so everyone can join";
+        let ctx = PromptContext {
+            s1_control: S1Control {
+                styling: S1Styling::SemiFormal,
+                structure: S1Structure::Prose,
+                context: S1Context::General,
+            },
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        assert!(result.transformed, "the repaired output must be accepted");
+        assert!(
+            !result.text.contains("- "),
+            "prose must not contain bullet markers: {}",
+            result.text
+        );
+        assert!(
+            result.text.starts_with("Let's move the meeting"),
+            "the lead must be capitalized and bullet-free: {}",
+            result.text
+        );
+    }
+
+    /// Lists structure: a real bulleted list is left alone (only a single
+    /// spurious marker may be stripped, and only in prose mode).
+    #[test]
+    fn qwen08_polish_lists_keeps_real_bullets() {
+        use crate::transforms::prompt::{S1Context, S1Control, S1Structure, S1Styling};
+
+        let rec = Qwen08Recorder {
+            reply: Some("- First, update the changelog.\n- Second, email the beta users.\n- Third, check the status page."),
+            ..Default::default()
+        };
+        let input = "three things before the launch first update the changelog second email the beta users third check the status page";
+        let ctx = PromptContext {
+            s1_control: S1Control {
+                styling: S1Styling::SemiFormal,
+                structure: S1Structure::Lists,
+                context: S1Context::General,
+            },
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        assert!(result.transformed);
+        let lines: Vec<&str> = result.text.lines().collect();
+        assert_eq!(
+            lines.len(),
+            3,
+            "the list must keep three lines: {}",
+            result.text
+        );
+        assert!(lines.iter().all(|l| l.starts_with("- ")), "{}", result.text);
+    }
+
+    /// The 0.8B outside Polish takes the slim rule set: the short rule list
+    /// reaches the wire, and the banned-filler wall it leaks is gone.
+    #[test]
+    fn qwen08_generic_path_uses_the_slim_rules() {
+        let rewriter = TransformStore::with_built_ins()
+            .get("builtin-rewriter")
+            .unwrap()
+            .clone();
+        let rec = Qwen08Recorder {
+            reply: Some("Let's push the meeting to Thursday, the design review isnt done."),
+            ..Default::default()
+        };
+        let input = "so i was thinking we should maybe push the meeting to thursday because the design review isnt done";
+        let ctx = PromptContext {
+            user_instruction: Some("make it shorter and friendlier".into()),
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &rewriter, input, &ctx, &mut None);
+
+        let prompt = rec
+            .plain
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the generic path must call generate");
+        assert!(
+            prompt.contains("Make the change the task asks for"),
+            "the slim rules must reach the wire"
+        );
+        assert!(
+            !prompt.contains("Never use these words: leverage"),
+            "the banned-filler wall the 0.8B leaks must be gone"
+        );
+        assert!(
+            prompt.contains("make it shorter and friendlier"),
+            "the user instruction must still reach the model"
+        );
+        assert!(result.transformed);
+    }
+
+    /// The 2B outside Polish keeps the full rule wall byte-for-byte: the
+    /// slim set must not leak across model sizes.
+    #[test]
+    fn qwen2b_generic_path_keeps_the_full_rules() {
+        let rewriter = TransformStore::with_built_ins()
+            .get("builtin-rewriter")
+            .unwrap()
+            .clone();
+        let rec = QwenRecorder::default();
+        let input = "so i was thinking we should maybe push the meeting to thursday because the design review isnt done";
+        let ctx = PromptContext {
+            user_instruction: Some("make it shorter and friendlier".into()),
+            ..Default::default()
+        };
+        let _ = run_transform_blocking(&rec, &rewriter, input, &ctx, &mut None);
+
+        let prompt = rec
+            .plain
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the generic path must call generate");
+        assert!(
+            prompt.contains(crate::transforms::ANTI_SLOP_RULES.trim()),
+            "the 2B must keep the full rule wall"
+        );
+        assert!(
+            !prompt.contains("Make the change the task asks for"),
+            "the slim rules must not reach the 2B"
+        );
+    }
+
+    /// Case E end to end: the 0.8B slips a spurious leading bullet and a
+    /// lowercase lead into a prose rewrite on the generic path; both are
+    /// repaired deterministically on the model output.
+    #[test]
+    fn qwen08_generic_path_repairs_bullet_and_lead() {
+        let rewriter = TransformStore::with_built_ins()
+            .get("builtin-rewriter")
+            .unwrap()
+            .clone();
+        let rec = Qwen08Recorder {
+            reply: Some("- let's push the meeting to thursday, the design review isnt done and the team needs more time to look at the mockups"),
+            ..Default::default()
+        };
+        let input = "so i was thinking we should maybe push the meeting to thursday because the design review isnt done and honestly the team needs more time to look at the mockups";
+        let ctx = PromptContext {
+            user_instruction: Some("make it shorter and friendlier".into()),
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &rewriter, input, &ctx, &mut None);
+
+        assert!(result.transformed, "the repaired output must be accepted");
+        assert!(
+            !result.text.contains("- "),
+            "the spurious bullet must be stripped: {}",
+            result.text
+        );
+        assert!(
+            result.text.starts_with("Let's push the meeting"),
+            "the lead must be capitalized: {}",
+            result.text
+        );
+    }
+
+    /// F1: the 0.8B can echo the control line verbatim as the first line of
+    /// its output (live probe, 3/3 runs at temp 0), and the validator does
+    /// not catch it, so it would reach the user. The deterministic pass
+    /// strips exactly that line; the body survives untouched.
+    #[test]
+    fn qwen08_polish_strips_echoed_control_line() {
+        use crate::transforms::prompt::{S1Context, S1Control, S1Structure, S1Styling};
+
+        let rec = Qwen08Recorder {
+            reply: Some(
+                "[Styling: casual] [Structure: lists] [Context: general]\nFor the party, I need to buy milk, eggs, bread, and cheese.",
+            ),
+            ..Default::default()
+        };
+        let input = "for the party i need to buy milk, buy eggs, buy bread, and buy cheese";
+        let ctx = PromptContext {
+            s1_control: S1Control {
+                styling: S1Styling::Casual,
+                structure: S1Structure::Lists,
+                context: S1Context::General,
+            },
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        assert!(result.transformed, "the stripped output must be accepted");
+        assert!(
+            !result.text.starts_with('['),
+            "the echoed control line must be gone: {}",
+            result.text
+        );
+        assert!(
+            !result.text.contains("[Styling:"),
+            "no control line may reach the user: {}",
+            result.text
+        );
+        assert!(
+            result.text.starts_with("For the party"),
+            "the body must survive the strip: {}",
+            result.text
+        );
+    }
+
+    /// F1 near-miss: the model mangles one token of the echoed control line
+    /// (a capital C in "Casual"). The strip removes the whole first line on
+    /// the bracket shape, not on an exact match.
+    #[test]
+    fn qwen08_polish_strips_mangled_control_line_echo() {
+        use crate::transforms::prompt::{S1Context, S1Control, S1Structure, S1Styling};
+
+        let rec = Qwen08Recorder {
+            reply: Some(
+                "[Styling: Casual] [Structure: lists] [Context: general]\nFor the party, I need to buy milk, eggs, bread, and cheese.",
+            ),
+            ..Default::default()
+        };
+        let input = "for the party i need to buy milk, buy eggs, buy bread, and buy cheese";
+        let ctx = PromptContext {
+            s1_control: S1Control {
+                styling: S1Styling::Casual,
+                structure: S1Structure::Lists,
+                context: S1Context::General,
+            },
+            ..Default::default()
+        };
+        let result = run_transform_blocking(&rec, &polish(), input, &ctx, &mut None);
+
+        assert!(result.transformed, "the stripped output must be accepted");
+        assert!(
+            !result.text.starts_with('['),
+            "the mangled echo must be gone: {}",
+            result.text
+        );
+        assert!(
+            !result.text.contains("[Styling:"),
+            "no control line may reach the user: {}",
+            result.text
+        );
+        assert!(
+            result.text.starts_with("For the party"),
+            "the body must survive the strip: {}",
+            result.text
+        );
+    }
+
+    // --- 0.8B deterministic safety net: pure helper tests ----------------
+
+    #[test]
+    fn qwen08_british_map_is_whole_word_and_case_preserving() {
+        assert_eq!(
+            apply_british_spelling("we need to organize the event"),
+            "we need to organise the event"
+        );
+        // Leading capital is preserved.
+        assert_eq!(
+            apply_british_spelling("Organize the event before Friday."),
+            "Organise the event before Friday."
+        );
+        // All-caps stays all-caps.
+        assert_eq!(
+            apply_british_spelling("ORGANIZE THE EVENT"),
+            "ORGANISE THE EVENT"
+        );
+        // Every mapped form, once.
+        assert_eq!(
+            apply_british_spelling(
+                "organizing organized realization utilize utilization apologize emphasizing emphasized labeling modeled"
+            ),
+            "organising organised realisation utilise utilisation apologise emphasising emphasised labelling modelled"
+        );
+    }
+
+    #[test]
+    fn qwen08_british_map_never_touches_partial_words() {
+        // "organization" contains no whole-word "organize"; "utilized" and
+        // "realizes" are not in the map. None of them may change.
+        for input in [
+            "the organization of the event",
+            "we utilized the plan",
+            "she realizes the value",
+            "preorganized",
+        ] {
+            assert_eq!(apply_british_spelling(input), input, "{input}");
+        }
+    }
+
+    #[test]
+    fn qwen08_british_map_is_idempotent() {
+        let once = apply_british_spelling("we need to organize the event");
+        assert_eq!(apply_british_spelling(&once), once);
+    }
+
+    #[test]
+    fn qwen08_wants_british_spelling_detects_the_wording() {
+        assert!(wants_british_spelling(Some("Always use British spelling.")));
+        assert!(wants_british_spelling(Some("use british english please")));
+        assert!(wants_british_spelling(Some("UK spelling only")));
+        assert!(!wants_british_spelling(Some(
+            "Always use American spelling."
+        )));
+        assert!(!wants_british_spelling(Some("make it shorter")));
+        assert!(!wants_british_spelling(Some("   ")));
+        assert!(!wants_british_spelling(None));
+    }
+
+    #[test]
+    fn qwen08_strip_single_leading_bullet_removes_the_spurious_marker() {
+        assert_eq!(
+            strip_single_leading_bullet("- let's push the meeting to thursday"),
+            "let's push the meeting to thursday"
+        );
+        assert_eq!(
+            strip_single_leading_bullet("- First part.\nSecond part follows."),
+            "First part.\nSecond part follows."
+        );
+        // No bullet: untouched.
+        assert_eq!(
+            strip_single_leading_bullet("Already clean."),
+            "Already clean."
+        );
+        // Empty: untouched.
+        assert_eq!(strip_single_leading_bullet(""), "");
+    }
+
+    #[test]
+    fn qwen08_strip_single_leading_bullet_leaves_real_lists_alone() {
+        let list = "- Update the changelog.\n- Email the beta users.\n- Check the status page.";
+        assert_eq!(strip_single_leading_bullet(list), list);
+        // Idempotent.
+        assert_eq!(
+            strip_single_leading_bullet(list),
+            strip_single_leading_bullet(list)
+        );
     }
 
     /// The prompt asks for prose, but a small model still returns bullets
