@@ -271,3 +271,23 @@ describe("DictationScreen file queue (A-4 / A-11)", () => {
     expect(screen.getByText("Choose file")).toBeTruthy();
   });
 });
+
+describe("DictationScreen file error", () => {
+  it("shows the failed state once, with the error detail on one line", async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "list_dictation_history") return [];
+      if (cmd === "transcribe_file") throw new Error("no suitable format reader found");
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    render(<DictationScreen />);
+    await waitFor(() => expect(screen.getByText(/Transcribe an audio file/)).toBeTruthy());
+
+    dropPaths(["/tmp/broken.aiff"]);
+
+    await waitFor(() => expect(screen.getByText("Transcription failed")).toBeTruthy());
+    // The raw error appears exactly once, in the detail line under the state.
+    expect(
+      screen.getAllByText("The file was not transcribed: no suitable format reader found")
+    ).toHaveLength(1);
+  });
+});

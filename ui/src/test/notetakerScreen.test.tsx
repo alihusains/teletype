@@ -144,4 +144,38 @@ describe("NotetakerScreen", () => {
     expect(screen.getByText("Groceries")).toBeTruthy();
     expect(screen.queryByText("Meeting notes")).toBeNull();
   });
+
+  it("shows a retry row, not the empty state, when list_notes rejects", async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "list_notes") throw new Error("notes file locked");
+      if (cmd === "get_open_note") return null;
+      if (cmd === "get_settings") return { scratchpadEnabled: false };
+      throw new Error(`[tauriMock] unexpected invoke: ${cmd}`);
+    });
+    render(<NotetakerScreen />);
+
+    expect(await screen.findByText("Notes could not be read.")).toBeTruthy();
+    expect(screen.queryByText("No notes yet.")).toBeNull();
+    expect(screen.getByText("notes file locked")).toBeTruthy();
+    expect(screen.getByText("Try again")).toBeTruthy();
+  });
+
+  it("rolls the routing toggle back when save_settings rejects", async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "list_notes") return [NOTE_A];
+      if (cmd === "get_open_note") return null;
+      if (cmd === "get_settings") return { scratchpadEnabled: false };
+      if (cmd === "save_settings") throw new Error("settings locked");
+      throw new Error(`[tauriMock] unexpected invoke: ${cmd}`);
+    });
+    render(<NotetakerScreen />);
+
+    const box = screen.getByRole("checkbox") as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    // The optimistic flip lands synchronously…
+    expect(box.checked).toBe(true);
+    // …and the rejected write rolls it back.
+    await waitFor(() => expect(box.checked).toBe(false));
+  });
 });

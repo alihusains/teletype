@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import ImpactCard from "../components/ImpactCard";
 import { LoadFailed, LoadingRow } from "../components/StateRows";
+import { confirmDialog } from "../lib/dialogs";
+import { errorMessage } from "../lib/errors";
 import { ShieldIcon } from "../lib/PrivacyBadge";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { useResource } from "../lib/writeGuard";
@@ -125,7 +127,7 @@ export default function HomeScreen({
           <div className="tt-eyebrow">
             {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
           </div>
-          <div className="tt-screen-title" style={{ marginTop: 7 }}>Welcome back</div>
+          <h2 className="tt-screen-title" style={{ marginTop: 7 }}>Welcome back</h2>
         </div>
         <div
           style={{
@@ -481,11 +483,44 @@ function HistoryRow({
   onChanged: () => void;
 }) {
   const [hover, setHover] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // The "Copied" flag is set only on success. A rejected writeText shows
+  // "Copy failed" in the same spot, so the affordance is honest.
+  const copy = async () => {
+    setCopyState("idle");
+    let ok = true;
+    try {
+      await navigator.clipboard.writeText(entry.text);
+    } catch {
+      ok = false;
+    }
+    const mark = ok ? "copied" : "failed";
+    setCopyState(mark);
+    window.setTimeout(() => setCopyState((c) => (c === mark ? "idle" : c)), ok ? 1200 : 2400);
+  };
+
+  // Confirm first (window.confirm is dead in this webview), then run the
+  // delete so a rejected write says so in the row instead of vanishing.
+  const remove = async () => {
+    if (deleting) return;
+    if (!(await confirmDialog("Delete this dictation?", { title: "Delete dictation" }))) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await invoke("delete_dictation_entry", { id: entry.id });
+      onChanged();
+    } catch (e) {
+      setDeleteError(errorMessage(e));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div
-      role="button"
-      tabIndex={0}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
@@ -511,6 +546,59 @@ function HistoryRow({
         >
           {entry.text}
         </div>
+        {deleteError && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginTop: 8,
+              fontSize: 11,
+              color: "var(--danger)",
+              minWidth: 0,
+            }}
+          >
+            <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>Delete failed: {deleteError}</span>
+            <button
+              type="button"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                void remove();
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--danger)",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              aria-label="Dismiss delete error"
+              onClick={(ev) => {
+                ev.stopPropagation();
+                setDeleteError(null);
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                fontSize: 11,
+                color: "var(--danger)",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         {entry.appName && (
           <div style={{ marginTop: 8 }}>
             <span
@@ -564,13 +652,11 @@ function HistoryRow({
         >
         <button
           type="button"
-          title={copied ? "Copied!" : "Copy to clipboard"}
-          aria-label={copied ? "Copied" : "Copy to clipboard"}
+          title={copyState === "copied" ? "Copied!" : copyState === "failed" ? "Copy failed" : "Copy to clipboard"}
+          aria-label={copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy to clipboard"}
           onClick={(ev) => {
             ev.stopPropagation();
-            navigator.clipboard.writeText(entry.text);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1200);
+            void copy();
           }}
           style={{
             background: "none",
@@ -583,25 +669,37 @@ function HistoryRow({
             borderRadius: 6,
           }}
         >
-          <Icon name={copied ? "check" : "copy"} size={15} color={copied ? "var(--success)" : "var(--text-secondary)"} />
+          <Icon
+            name={copyState === "copied" ? "check" : "copy"}
+            size={15}
+            color={
+              copyState === "copied"
+                ? "var(--success)"
+                : copyState === "failed"
+                  ? "var(--danger)"
+                  : "var(--text-secondary)"
+            }
+          />
         </button>
         <button
           type="button"
-          title="Delete"
-          aria-label="Delete entry"
+          title={deleting ? "Deleting…" : "Delete"}
+          aria-label={deleting ? "Deleting" : "Delete entry"}
+          disabled={deleting}
           onClick={(ev) => {
             ev.stopPropagation();
-            invoke("delete_dictation_entry", { id: entry.id }).then(onChanged).catch(() => {});
+            void remove();
           }}
           style={{
             background: "none",
             border: "none",
-            cursor: "pointer",
+            cursor: deleting ? "default" : "pointer",
             padding: 5,
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
             borderRadius: 6,
+            opacity: deleting ? 0.6 : 1,
           }}
         >
           <Icon name="trash" size={15} color="var(--text-secondary)" />
