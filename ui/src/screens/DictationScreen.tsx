@@ -297,7 +297,9 @@ export default function DictationScreen() {
               transcribe.error === null &&
               transcribe.words === null &&
               "Transcribe an audio file (m4a, wav, mp3, flac, ogg)"}
-            {transcribe.status === "idle" && transcribe.error !== null && transcribe.error}
+            {transcribe.status === "idle" &&
+              transcribe.error !== null &&
+              "Transcription failed"}
           </div>
           {transcribe.status === "transcribing" && (
             <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>

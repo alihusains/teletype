@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
 import { confirmDialog } from "../lib/dialogs";
+import { errorMessage } from "../lib/errors";
 
 /** The wire shape for one note (Note in teletype-core, camelCase). */
 export interface Note {
@@ -59,6 +60,9 @@ export default function NotetakerScreen() {
   const [body, setBody] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [now, setNow] = useState(() => Date.now());
+  // A rejected list_notes must read as a failed read with a retry, not as
+  // "No notes yet." (the A-3 rule the Dictation tab follows).
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const dirtyRef = useRef(false);
   const dirtyTimer = useRef<number | null>(null);
@@ -66,10 +70,13 @@ export default function NotetakerScreen() {
   const noteRef = useRef<StoredNote | null>(null);
 
   const refresh = useCallback(async () => {
-    const items = await invoke<Note[]>("list_notes").catch((e) => {
-      console.error(e);
-      return null;
-    });
+    let items: Note[] | null = null;
+    try {
+      items = await invoke<Note[]>("list_notes");
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(errorMessage(e));
+    }
     if (items) setNotes(items);
     const open = await invoke<StoredNote | null>("get_open_note").catch(() => null);
     if (open) {
@@ -188,13 +195,18 @@ export default function NotetakerScreen() {
   );
 
   const toggleEnabled = async (value: boolean) => {
+    // Optimistic flip, rolled back when the read or the write rejects, so
+    // the checkbox never claims a setting the backend does not hold.
     setEnabled(value);
     const settings = await invoke<Record<string, unknown>>("get_settings").catch(() => null);
-    if (settings) {
-      await invoke("save_settings", {
-        settings: { ...settings, scratchpadEnabled: value },
-      }).catch(console.error);
+    if (!settings) {
+      setEnabled(!value);
+      return;
     }
+    const saved = await invoke("save_settings", {
+      settings: { ...settings, scratchpadEnabled: value },
+    }).catch(() => null);
+    if (saved === null) setEnabled(!value);
   };
 
   useEffect(() => {
@@ -284,11 +296,22 @@ export default function NotetakerScreen() {
             </div>
           </div>
           <div className="tt-scroll-thin" style={{ flex: 1, minHeight: 0 }}>
-            {visible.length === 0 && (
-              <p style={{ padding: 16, fontSize: 13, color: "var(--text-secondary)" }}>
-                {q ? "No notes match." : "No notes yet."}
-              </p>
-            )}
+            {visible.length === 0 &&
+              (loadError ? (
+                <div role="alert" style={{ padding: 16, fontSize: 12, color: "var(--text-secondary)" }}>
+                  <div style={{ color: "var(--danger)", fontWeight: 500, marginBottom: 4 }}>
+                    Notes could not be read.
+                  </div>
+                  <div style={{ marginBottom: 8, overflowWrap: "anywhere" }}>{loadError}</div>
+                  <button className="tt-btn tt-btn-sm" onClick={() => void refresh()}>
+                    Try again
+                  </button>
+                </div>
+              ) : (
+                <p style={{ padding: 16, fontSize: 13, color: "var(--text-secondary)" }}>
+                  {q ? "No notes match." : "No notes yet."}
+                </p>
+              ))}
             {visible.map((n) => (
               <div
                 key={n.id}

@@ -9,10 +9,10 @@
  * with its own retry, and the other column keeps working.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import HomeScreen from "../screens/HomeScreen";
-import { mockInvokeResponses, mockListenCapture, resetTauriMocks } from "./tauriMock";
+import { invokeCalls, mockInvokeResponses, mockListenCapture, resetTauriMocks } from "./tauriMock";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
@@ -52,6 +52,7 @@ const INSIGHTS = {
 afterEach(() => {
   cleanup();
   resetTauriMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("HomeScreen independent loads (A-3)", () => {
@@ -119,5 +120,70 @@ describe("HomeScreen independent loads (A-3)", () => {
     expect(screen.getByText("2h 15m")).toBeTruthy();
     // Both resources settled successfully: no retry row remains.
     await waitFor(() => expect(screen.queryByText(/could not be read/)).toBeNull());
+  });
+});
+
+describe("HomeScreen history row actions", () => {
+  it("shows Copied only after the clipboard write succeeds", async () => {
+    mockInvokeResponses({ list_dictation_history: HISTORY, get_insights: INSIGHTS });
+    mockListenCapture();
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal("navigator", { clipboard: { writeText } } as never);
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText("Meeting notes from this morning")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(screen.getByTitle("Copied!")).toBeTruthy();
+  });
+
+  it("shows Copy failed, not Copied, when the clipboard write rejects", async () => {
+    mockInvokeResponses({ list_dictation_history: HISTORY, get_insights: INSIGHTS });
+    mockListenCapture();
+    const writeText = vi.fn(() => Promise.reject(new Error("denied")));
+    vi.stubGlobal("navigator", { clipboard: { writeText } } as never);
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText("Meeting notes from this morning")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Copy to clipboard" }));
+
+    await waitFor(() => expect(screen.getByTitle("Copy failed")).toBeTruthy());
+    expect(screen.queryByTitle("Copied!")).toBeNull();
+  });
+
+  it("does not delete when the confirm is declined", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    mockInvokeResponses({ list_dictation_history: HISTORY, get_insights: INSIGHTS });
+    mockListenCapture();
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText("Meeting notes from this morning")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Delete entry" }));
+
+    await waitFor(() => expect(confirm).toHaveBeenCalled());
+    expect(invokeCalls().some((c) => c.cmd === "delete_dictation_entry")).toBe(false);
+    confirm.mockRestore();
+  });
+
+  it("keeps the row and shows the error with a retry when delete_dictation_entry rejects", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockListenCapture();
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "list_dictation_history") return HISTORY;
+      if (cmd === "get_insights") return INSIGHTS;
+      if (cmd === "delete_dictation_entry") throw new Error("disk full");
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    render(<HomeScreen />);
+
+    await waitFor(() => expect(screen.getByText("Meeting notes from this morning")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Delete entry" }));
+
+    await waitFor(() => expect(screen.getByText(/Delete failed: disk full/)).toBeTruthy());
+    expect(screen.getByText("Meeting notes from this morning")).toBeTruthy();
+    expect(screen.getByText("Retry")).toBeTruthy();
+    expect(invokeCalls()).toContainEqual({ cmd: "delete_dictation_entry", args: { id: "h1" } });
+    confirm.mockRestore();
   });
 });
