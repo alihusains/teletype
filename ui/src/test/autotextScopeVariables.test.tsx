@@ -159,4 +159,50 @@ describe("AutoText scope and variables", () => {
     expect(screen.getAllByRole("button", { name: "Use Gmail" })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /Use File:/ })).toBeNull();
   });
+
+  describe("date format", () => {
+    it("treats the backend default (empty) as the named ISO format, not custom", () => {
+      render(<AutoTextScreen />);
+      const select = screen.getByRole("combobox", { name: "Date format" }) as HTMLSelectElement;
+      expect(select.value).toBe("iso");
+      expect(screen.queryByLabelText("Custom date template")).toBeNull();
+    });
+
+    it("opens the custom template input when Custom… is picked, and saves it", async () => {
+      seed({ save_settings: null });
+      render(<AutoTextScreen />);
+      const select = screen.getByRole("combobox", { name: "Date format" }) as HTMLSelectElement;
+
+      // Before the fix the select snapped back to the saved value and the
+      // input never appeared: the custom option was unreachable.
+      fireEvent.change(select, { target: { value: "custom" } });
+      const input = await screen.findByLabelText("Custom date template");
+      expect((select as HTMLSelectElement).value).toBe("custom");
+
+      fireEvent.change(input, { target: { value: "DD.MM.YY" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save format" }));
+
+      await waitFor(() =>
+        expect(invokeCalls()).toContainEqual({
+          cmd: "save_settings",
+          args: { settings: expect.objectContaining({ dateFormat: "DD.MM.YY" }) },
+        }),
+      );
+    });
+
+    it("hides the custom input again when a named format is picked", async () => {
+      seed({
+        get_settings: { typingAutotextEnabled: true, autotextTiming: "delimiter", dateFormat: "DD.MM.YY" },
+        save_settings: null,
+      });
+      render(<AutoTextScreen />);
+      const select = await screen.findByRole("combobox", { name: "Date format" }) as HTMLSelectElement;
+      expect(select.value).toBe("custom");
+      expect(screen.getByLabelText("Custom date template")).toBeTruthy();
+
+      fireEvent.change(select, { target: { value: "us" } });
+      await waitFor(() => expect(screen.queryByLabelText("Custom date template")).toBeNull());
+      expect(select.value).toBe("us");
+    });
+  });
 });

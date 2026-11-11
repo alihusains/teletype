@@ -26,7 +26,7 @@ const LEVEL_BADGES: Record<LogEntry["level"], string> = {
   Error: "ERR",
 };
 
-// Duration chip color: green (<500ms), yellow (500–2000ms), red (>2000ms).
+// Duration chip color: green (<500ms), yellow (500 to 2000ms), red (>2000ms).
 function durationColor(ms: number): string {
   if (ms < 500) return "#9ae6b4";
   if (ms <= 2000) return "#f5d48f";

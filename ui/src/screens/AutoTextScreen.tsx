@@ -291,9 +291,16 @@ export default function AutoTextScreen() {
   const settings = useResource<Settings>(() => invoke<Settings>("get_settings"));
   const typingEnabled = settings.data?.typingAutotextEnabled ?? true;
   const autotextTiming = settings.data?.autotextTiming ?? "delimiter";
-  const dateFormat = settings.data?.dateFormat ?? "";
+  // The backend's default is "" and it renders "" as the ISO template, so an
+  // empty stored value is the named "iso" format, not a custom one.
+  const dateFormat = settings.data?.dateFormat || "iso";
   const isCustomFormat = !DATE_FORMATS.some((f) => f.id === dateFormat);
   const [customFormat, setCustomFormat] = useState("");
+  // "Custom…" is a local choice, not a saved value: the template is only
+  // persisted when the user saves it, so the edit row must stay open while it
+  // is being written even though the saved format is still a named one.
+  const [customEditing, setCustomEditing] = useState(false);
+  const showCustomInput = isCustomFormat || customEditing;
 
   // A-2: hold-and-restore. The switch flips optimistically and comes back to
   // its previous position when the save rejects; a rejected get_settings is a
@@ -519,7 +526,7 @@ export default function AutoTextScreen() {
         <div>
           <h2 className="tt-screen-title">Snippets</h2>
           <p style={{ color: "var(--text-secondary)", marginTop: 4, fontSize: 13 }}>
-            The stuff you shouldn't have to re-type. Say a phrase to drop in an email, link, or signature instantly.
+            Say a phrase to drop in an email, link, or signature instantly.
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
@@ -595,12 +602,14 @@ export default function AutoTextScreen() {
               <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
                 <select
                   aria-label="Date format"
-                  value={isCustomFormat ? "custom" : (dateFormat || "iso")}
+                  value={showCustomInput ? "custom" : dateFormat}
                   onChange={(e) => {
                     const v = e.target.value;
                     if (v === "custom") {
+                      setCustomEditing(true);
                       setCustomFormat(dateFormat || "YYYY-MM-DD");
                     } else {
+                      setCustomEditing(false);
                       saveDateFormat(v);
                     }
                   }}
@@ -611,7 +620,7 @@ export default function AutoTextScreen() {
                   ))}
                   <option value="custom">Custom…</option>
                 </select>
-                {isCustomFormat && (
+                {showCustomInput && (
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <input
                       aria-label="Custom date template"

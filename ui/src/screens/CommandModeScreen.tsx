@@ -204,13 +204,17 @@ export default function CommandModeScreen() {
   };
 
   const pickDeciderModel = async (id: string) => {
+    const prev = deciderModel;
     setDeciderModel(id);
     try {
       const settings = await invoke<Record<string, unknown>>("get_settings");
       settings.commandDeciderModel = id;
       await invoke("save_settings", { settings });
     } catch (e) {
+      // The picker shows the backend's value; a rejected save must put the
+      // previous model back, the same way the toggle above restores on error.
       console.error("Failed to save decider model:", e);
+      setDeciderModel(prev);
     }
   };
 
