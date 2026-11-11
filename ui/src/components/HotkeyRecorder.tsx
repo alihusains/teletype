@@ -59,7 +59,7 @@ export default function HotkeyRecorder({
       await invoke("start_hotkey_capture");
       setCapturing(true);
 
-      // Poll for the result — the native panel writes to a temp file
+      // Poll for the result: the native panel writes to a temp file
       // when the user presses Enter (confirm) or Esc (cancel).
       const pollStart = Date.now();
       const POLL_TIMEOUT_MS = 60_000;

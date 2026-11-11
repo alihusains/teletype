@@ -78,7 +78,6 @@ export default function WebviewHotkeyRecorder({ value, onSave }: Props) {
     setChord(initialChord());
   }, []);
 
-
   // Window-level capture-phase listeners: the keycap is a plain div so it
   // cannot swallow keys, and the chord must still build when focus is
   // anywhere in the settings window. State updates stay in the reducer;
@@ -90,6 +89,14 @@ export default function WebviewHotkeyRecorder({ value, onSave }: Props) {
     const onKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      // Esc cancels the capture, matching the native macOS panel and the
+      // "Esc cancels" hint under the keycap. The chord reducer also treats
+      // Esc as a reset, but that alone would leave the recorder still
+      // capturing with an empty chord.
+      if (e.code === "Escape") {
+        cancelCapture();
+        return;
+      }
       setChord((prev) => {
         const next = chordOnKeydown(prev, { code: e.code, repeat: e.repeat });
         if (next.key !== null && prev.key === null) {
@@ -109,7 +116,7 @@ export default function WebviewHotkeyRecorder({ value, onSave }: Props) {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
     };
-  }, [capturing, finish]);
+  }, [capturing, finish, cancelCapture]);
 
   const toggleCapture = () => {
     if (capturing) {

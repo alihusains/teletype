@@ -206,6 +206,9 @@ export default function DictionaryScreen() {
   };
 
   const remove = async (id: string) => {
+    // Same confirm gate as pack delete and the AutoText screen: a word row is
+    // one click away, and the trash icon is the only affordance on it.
+    if (!(await confirmDialog("Delete this word?", { title: "Delete dictionary word" }))) return;
     await invoke("remove_dictionary_word", { id }).catch(console.error);
     if (editing?.id === id) resetForm();
     refresh();
@@ -502,7 +505,7 @@ export default function DictionaryScreen() {
             (userPacksError ? (
               // D-3/D-5: a failed read is its own state. It must not be
               // confused with "no packs" (empty) or "dictionary off"
-              // (dictEnabled false) — those are three different things.
+              // (dictEnabled false), which are three different things.
               <LoadFailed
                 what="load the vocabulary packs"
                 detail={userPacksError}

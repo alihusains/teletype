@@ -7,7 +7,7 @@
  * say it is not set.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import CommandModeScreen from "../screens/CommandModeScreen";
 import { mockInvokeResponses, mockListenCapture, resetTauriMocks } from "./tauriMock";
 
@@ -118,5 +118,28 @@ describe("Command Mode screen", () => {
   it("says the hotkey is not set when the setting is empty", async () => {
     renderScreen({ hotkey: "" });
     expect(await screen.findByText("Hotkey: not set (wake phrase still works)")).toBeTruthy();
+  });
+
+  it("puts the previous decider back when the save rejects", async () => {
+    // save_settings rejects, so the picker must not keep showing a model the
+    // backend never stored (the toggle above already restores on error).
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "save_settings") throw new Error("read-only volume");
+      if (cmd === "get_settings")
+        return { commandModeEnabled: true, commandHotkey: "Cmd+Shift+.", commandDeciderModel: "neudecide-q4" };
+      if (cmd === "list_command_deciders") return DECIDERS;
+      throw new Error(`[tauriMock] unexpected invoke: ${cmd}`);
+    });
+    mockListenCapture();
+    render(<CommandModeScreen />);
+
+    const select = (await screen.findByRole("combobox", { name: "Decider" })) as HTMLSelectElement;
+    expect(select.value).toBe("neudecide-q4");
+
+    fireEvent.change(select, { target: { value: "qwen3-asr+llm" } });
+
+    // The rejected write reverts the picker to the stored model.
+    await waitFor(() => expect(select.value).toBe("neudecide-q4"));
   });
 });

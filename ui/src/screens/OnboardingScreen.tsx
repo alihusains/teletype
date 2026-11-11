@@ -5,6 +5,7 @@ import {
   DownloadProgressBar,
   type DownloadProgress,
 } from "../components/DownloadProgress";
+import { LoadFailed } from "../components/StateRows";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { errorMessage } from "../lib/errors";
 import { ShieldIcon } from "../lib/PrivacyBadge";
@@ -72,6 +73,7 @@ export default function OnboardingScreen({
   const [step, setStep] = useState(repair ? 1 : 0);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
+  const [speechModelsError, setSpeechModelsError] = useState<string | null>(null);
   const [llmModels, setLlmModels] = useState<LlmModelStatus[]>([]);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
@@ -109,8 +111,14 @@ export default function OnboardingScreen({
     // between on this machine and language, instead of the whole catalog.
     // Settings asks for the full list.
     invoke<SpeechModelStatus[]>("list_speech_models", { shortlist: true })
-      .then(setSpeechModels)
-      .catch((e) => console.error("list_speech_models failed:", e));
+      .then((rows) => {
+        setSpeechModels(rows);
+        setSpeechModelsError(null);
+      })
+      .catch((e) => {
+        console.error("list_speech_models failed:", e);
+        setSpeechModelsError(errorMessage(e));
+      });
     // Fetch LLM models for the polish step. The backend shortlists to the few
     // rows worth choosing on this machine (Mac GPU gets the accelerated set,
     // Windows/CPU gets the CPU set), same as the speech model step above.
@@ -188,6 +196,21 @@ export default function OnboardingScreen({
   const selectSpeechModel = async (id: string) => {
     await invoke("select_speech_model", { id }).catch(console.error);
     await invoke<SpeechModelStatus[]>("list_speech_models", { shortlist: true }).then(setSpeechModels);
+  };
+
+  // The shortlist is never legitimately empty (the backend always includes the
+  // recommended row), so an empty list means the read failed and the step must
+  // say so with a retry instead of a disabled Continue and no card.
+  const reloadSpeechModels = () => {
+    invoke<SpeechModelStatus[]>("list_speech_models", { shortlist: true })
+      .then((rows) => {
+        setSpeechModels(rows);
+        setSpeechModelsError(null);
+      })
+      .catch((e) => {
+        console.error("list_speech_models failed:", e);
+        setSpeechModelsError(errorMessage(e));
+      });
   };
 
   const selectLlmModel = async (id: string) => {
@@ -406,6 +429,14 @@ export default function OnboardingScreen({
               One download and you can start speaking. Everything runs on this
               device.
             </p>
+
+            {speechModels.length === 0 && (
+              <LoadFailed
+                what="the dictation models"
+                detail={speechModelsError ?? "The model list came back empty; retry to reload it."}
+                onRetry={reloadSpeechModels}
+              />
+            )}
 
             {recommendedModel && (
               <ModelStepCard

@@ -193,7 +193,7 @@ function usePillPreviewLevels(active: boolean): number[] {
 
 // The previews are miniature copies of the live pill, so they use the same
 // tokens as CAPSULE/CLOCK in pill.tsx: --surface, --shadow-3, --text. That
-// also makes them follow the app theme — a light pill in light mode and a
+// also makes them follow the app theme: a light pill in light mode and a
 // dark pill in dark mode, exactly like the real thing.
 function previewClockStyle(): CSSProperties {
   return {
@@ -790,8 +790,12 @@ export default function SettingsScreen({ active }: { active: boolean }) {
     setDictating(payload.phase !== "idle");
   });
   const runSetupAgain = () => {
+    if (!settings) return;
+    // A rejected save must not be silent: every other write on this screen
+    // surfaces its failure in the banner under the header.
     invoke("save_settings", { settings: { ...settings, hasCompletedOnboarding: false } }).catch((e) => {
       console.error("[teletype] run setup again failed:", e);
+      setSaveError(errorMessage(e));
     });
   };
   // Coarse 5s poll, paused when the window is hidden: the readiness chips must
@@ -1102,7 +1106,19 @@ export default function SettingsScreen({ active }: { active: boolean }) {
           <Select
             label="Theme"
             value={settings.theme || "system"}
-            onChange={(v) => invoke("set_theme", { theme: v }).catch(console.error)}
+            onChange={(v) => {
+              // set_theme persists and pushes settings-changed, but this
+              // screen's local copy does not refetch. Update it locally (and
+              // roll back on failure) or the select snaps back to the old
+              // value on the next render, showing a theme the app no longer
+              // uses. Same pattern as the app icon picker below.
+              const prev = settings.theme || "system";
+              setSettings({ ...settings, theme: v });
+              invoke("set_theme", { theme: v }).catch((e) => {
+                setSettings((s) => (s ? { ...s, theme: prev } : s));
+                console.error(e);
+              });
+            }}
             options={[
               { value: "system", label: "System" },
               { value: "light", label: "Light" },
@@ -1115,7 +1131,14 @@ export default function SettingsScreen({ active }: { active: boolean }) {
           <Toggle
             label="Reduce Motion (follows the OS setting when off)"
             checked={!!settings.reduceMotion}
-            onChange={(v) => invoke("set_reduce_motion", { enabled: v }).catch(console.error)}
+            onChange={(v) => {
+              const prev = !!settings.reduceMotion;
+              setSettings({ ...settings, reduceMotion: v });
+              invoke("set_reduce_motion", { enabled: v }).catch((e) => {
+                setSettings((s) => (s ? { ...s, reduceMotion: prev } : s));
+                console.error(e);
+              });
+            }}
           />
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
