@@ -1,3 +1,4 @@
+//! claim: polish-quality
 //! t8: Qwen3.5-0.8B prompt design, verified against the pub surface.
 //!
 //! The 0.8B gets the lean V1 Polish prompt (model-scoped, routed through the
