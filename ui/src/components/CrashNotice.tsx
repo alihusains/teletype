@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { Icon } from "./Icon";
 
 interface CrashNoticeProps {
   message: string;
@@ -31,16 +32,7 @@ export default function CrashNotice({ message, onDismiss }: CrashNoticeProps) {
       }}
     >
       <span style={{ color: "var(--warning)", display: "grid", placeItems: "center", flex: "0 0 auto" }}>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
-          <path
-            d="M8 1L15 14H1L8 1Z"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinejoin="round"
-          />
-          <path d="M8 6V10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          <circle cx="8" cy="12" r="0.75" fill="currentColor" />
-        </svg>
+        <Icon name="alert" size={16} />
       </span>
       <span style={{ flex: 1, minWidth: 0 }}>{message}</span>
       <div style={{ display: "flex", gap: 8, flex: "0 0 auto" }}>

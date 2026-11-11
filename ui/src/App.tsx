@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTauriEvent } from "./lib/useTauriEvent";
 import { messageDialog } from "./lib/dialogs";
@@ -66,7 +66,7 @@ const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
       { id: "autotext", label: "AutoText", icon: "autotext" },
       { id: "dictionary", label: "Dictionary", icon: "dictionary" },
       { id: "style", label: "Style", icon: "style" },
-      { id: "command-mode", label: "Command Mode", icon: "sparkles" },
+      { id: "command-mode", label: "Command Mode", icon: "zap" },
     ],
   },
   {
@@ -119,6 +119,9 @@ export default function App() {
   }, []);
   // A transform skip/fallback toast shown at dictation time (P1-16 T7b).
   const [skipToast, setSkipToast] = useState<string | null>(null);
+  // One timer for the whole toast: a second message resets the clock instead
+  // of letting the first timer dismiss the second one early.
+  const skipToastTimer = useRef<number | null>(null);
   // Escape-recovery offer: a crashed run left a spool behind. The backend
   // emits "recovery-available" at startup, but it fires before this UI
   // mounts, so mount also polls recovery_status to catch it.
@@ -171,7 +174,8 @@ export default function App() {
     // UiState::Message with the skip text; we show it for a few seconds.
     if (payload.phase === "message" && payload.text) {
       setSkipToast(payload.text);
-      setTimeout(() => setSkipToast(null), 6000);
+      if (skipToastTimer.current !== null) window.clearTimeout(skipToastTimer.current);
+      skipToastTimer.current = window.setTimeout(() => setSkipToast(null), 6000);
     }
   });
 
@@ -348,7 +352,9 @@ export default function App() {
   // The footer dot is the one piece of state visible from every screen, so it
   // has to be true at all times rather than only when it looks good. Dictation
   // phase wins when it is anything but idle, because that is what the user is
-  // doing right now; otherwise the answer comes from the runtime.
+  // doing right now; otherwise the answer comes from the runtime. The
+  // "error" branch keeps the footer consistent with the shared StatusRow,
+  // which renders the same state as a warning, not a green "Ready".
   const navStatus = listening
     ? {
         label: dictationState,
@@ -363,6 +369,12 @@ export default function App() {
             color: "var(--warning)",
             title: runtime.speech.detail,
           }
+        : runtime.speech.state === "error"
+          ? {
+              label: "Model error",
+              color: "var(--warning)",
+              title: runtime.speech.detail,
+            }
         : runtime.speech.state === "loading"
           ? {
               label: "Loading model…",
@@ -377,116 +389,124 @@ export default function App() {
 
   return (
     <div style={{ display: "flex", height: "100vh", position: "relative" }}>
-      {skipToast && (
+      {/* One fixed stack for every shell toast. They used to each pin to
+          bottom: 26 on their own, so two toasts at once (the recovery offer
+          stays up until dismissed while a dictation toast can fire any time)
+          landed on the same spot and one hid the other. */}
+      {(skipToast !== null || recoverySeconds !== null || recoveredText !== null || learnedOffer !== null) && (
         <div
           style={{
             position: "fixed",
             bottom: 26,
             left: "50%",
             transform: "translateX(-50%)",
-            background: "var(--text)",
-            color: "var(--bg)",
-            fontSize: 13,
-            fontWeight: 500,
-            padding: "11px 20px",
-            borderRadius: "var(--radius-pill)",
-            boxShadow: "var(--shadow-3)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 10,
             zIndex: 1000,
-            animation: "fade-in 0.18s ease-out",
             maxWidth: 520,
-            textAlign: "center",
+            width: "max-content",
           }}
         >
-          <span
-            aria-hidden
-            style={{
-              display: "inline-block",
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              background: "var(--warning)",
-              marginRight: 8,
-              verticalAlign: "middle",
-            }}
-          />
-          {skipToast}
-        </div>
-      )}
-      {(recoverySeconds !== null || recoveredText !== null) && (        <div
-          style={{
-            position: "fixed",
-            bottom: 26,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "var(--text)",
-            color: "var(--bg)",
-            fontSize: 13,
-            fontWeight: 500,
-            padding: "12px 20px",
-            borderRadius: "var(--radius)",
-            boxShadow: "var(--shadow-3)",
-            zIndex: 1000,
-            animation: "fade-in 0.18s ease-out",
-            maxWidth: 520,
-            textAlign: "center",
-          }}
-          role="alert"
-        >
-          {recoveredText === null ? (
-            <>
-              <div>
-                {recoveryTruncated && recoverySeconds !== null && recoveryTotalSeconds !== null && recoveryTotalSeconds > recoverySeconds
-                  ? `Found ~${recoverySeconds}s of a ~${recoveryTotalSeconds}s take. The rest was lost when Teletype stopped. Recover what survived?`
-                  : `Unfinished dictation (~${recoverySeconds}s) from a previous run. Recover it?`}
-              </div>
-              <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
-                <button onClick={recoverSpool} disabled={recoveryBusy}>
-                  {recoveryBusy ? "Recovering…" : "Recover"}
-                </button>
-                <button onClick={discardSpool} disabled={recoveryBusy}>
-                  Discard
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ maxHeight: 120, overflow: "auto", textAlign: "left" }}>{recoveredText}</div>
-              <div style={{ marginTop: 4, fontSize: 12, color: "var(--bg)", opacity: 0.7 }}>
-                Saved to History.
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <button onClick={discardSpool}>Dismiss</button>
-              </div>
-            </>
+          {skipToast && (
+            <div
+              style={{
+                background: "var(--text)",
+                color: "var(--bg)",
+                fontSize: 13,
+                fontWeight: 500,
+                padding: "11px 20px",
+                borderRadius: "var(--radius-pill)",
+                boxShadow: "var(--shadow-3)",
+                animation: "fade-in 0.18s ease-out",
+                maxWidth: 520,
+                textAlign: "center",
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  display: "inline-block",
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: "var(--warning)",
+                  marginRight: 8,
+                  verticalAlign: "middle",
+                }}
+              />
+              {skipToast}
+            </div>
           )}
-        </div>
-      )}
-      {learnedOffer && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: 26,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "var(--text)",
-            color: "var(--bg)",
-            fontSize: 13,
-            fontWeight: 500,
-            padding: "12px 20px",
-            borderRadius: "var(--radius)",
-            boxShadow: "var(--shadow-3)",
-            zIndex: 1000,
-            animation: "fade-in 0.18s ease-out",
-            maxWidth: 520,
-            textAlign: "center",
-          }}
-          role="alert"
-        >
-          <div>{learnedOffer.message}</div>
-          <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
-            <button onClick={undoLearned}>Undo</button>
-            <button onClick={() => setLearnedOffer(null)}>Keep</button>
-          </div>
+          {(recoverySeconds !== null || recoveredText !== null) && (
+            <div
+              style={{
+                background: "var(--text)",
+                color: "var(--bg)",
+                fontSize: 13,
+                fontWeight: 500,
+                padding: "12px 20px",
+                borderRadius: "var(--radius)",
+                boxShadow: "var(--shadow-3)",
+                animation: "fade-in 0.18s ease-out",
+                maxWidth: 520,
+                textAlign: "center",
+              }}
+              role="alert"
+            >
+              {recoveredText === null ? (
+                <>
+                  <div>
+                    {recoveryTruncated && recoverySeconds !== null && recoveryTotalSeconds !== null && recoveryTotalSeconds > recoverySeconds
+                      ? `Found ~${recoverySeconds}s of a ~${recoveryTotalSeconds}s take. The rest was lost when Teletype stopped. Recover what survived?`
+                      : `Unfinished dictation (~${recoverySeconds}s) from a previous run. Recover it?`}
+                  </div>
+                  <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
+                    <button onClick={recoverSpool} disabled={recoveryBusy}>
+                      {recoveryBusy ? "Recovering…" : "Recover"}
+                    </button>
+                    <button onClick={discardSpool} disabled={recoveryBusy}>
+                      Discard
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ maxHeight: 120, overflow: "auto", textAlign: "left" }}>{recoveredText}</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: "var(--bg)", opacity: 0.7 }}>
+                    Saved to History.
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <button onClick={discardSpool}>Dismiss</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+          {learnedOffer && (
+            <div
+              style={{
+                background: "var(--text)",
+                color: "var(--bg)",
+                fontSize: 13,
+                fontWeight: 500,
+                padding: "12px 20px",
+                borderRadius: "var(--radius)",
+                boxShadow: "var(--shadow-3)",
+                animation: "fade-in 0.18s ease-out",
+                maxWidth: 520,
+                textAlign: "center",
+              }}
+              role="alert"
+            >
+              <div>{learnedOffer.message}</div>
+              <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "center" }}>
+                <button onClick={undoLearned}>Undo</button>
+                <button onClick={() => setLearnedOffer(null)}>Keep</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
       <nav

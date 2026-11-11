@@ -6,6 +6,7 @@
 // wearing Teletype's own tokens — nothing here imports EW's palette.
 
 import type { CSSProperties, ReactNode } from "react";
+import { Icon } from "../components/Icon";
 
 export function Section({
   title,
@@ -491,7 +492,7 @@ export function FrozenNotice({ children }: { children: ReactNode }) {
         borderRadius: "var(--radius-sm)",
       }}
     >
-      <span aria-hidden="true">ⓘ</span>
+      <Icon name="info" size={13} />
       <span>{children}</span>
     </div>
   );
