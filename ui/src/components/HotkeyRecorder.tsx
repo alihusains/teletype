@@ -19,12 +19,25 @@ const MODS: Record<string, string> = {
   Space: "Space",
 };
 
+// hotkeyCapture.ts emits long modifier segments ("Command", "Control",
+// "Option") while values saved through the native panel use the short forms.
+// Collapse the long names to the short ones, case-insensitively, before the
+// symbol lookup so both wire formats render identically.
+const MOD_ALIASES: Record<string, string> = {
+  command: "Cmd",
+  control: "Ctrl",
+  option: "Opt",
+};
+
 /** Compact "⌥ 1" style rendering of a Tauri hotkey string. */
 export function displayHotkey(hotkey: string): string {
   if (typeof hotkey !== "string" || !hotkey) return "";
   return hotkey
     .split("+")
-    .map((p) => MODS[p] ?? p)
+    .map((p) => {
+      const canonical = MOD_ALIASES[p.toLowerCase()] ?? p;
+      return MODS[canonical] ?? canonical;
+    })
     .join(" ");
 }
 

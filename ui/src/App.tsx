@@ -713,7 +713,7 @@ export default function App() {
             <DictationScreen />
           </div>
           <div style={{ display: screen === "insights" ? "block" : "none" }}>
-            <InsightsScreen />
+            <InsightsScreen onNavigate={(s) => setScreen(s as Screen)} />
           </div>
           <div style={{ display: screen === "transforms" ? "block" : "none" }}>
             <TransformsScreen onNavigate={(s) => setScreen(s as Screen)} />

@@ -49,3 +49,27 @@ describe('displayHotkey', () => {
     expect(result).toBe('⌃ ⌥ ⇧ A')
   })
 })
+
+describe('displayHotkey webview capture segments', () => {
+  it('normalizes Command to Cmd', () => {
+    expect(displayHotkey('Command+Shift+M')).toBe('⌘ ⇧ M')
+  })
+
+  it('normalizes Control to Ctrl', () => {
+    expect(displayHotkey('Control+Shift+M')).toBe('⌃ ⇧ M')
+  })
+
+  it('normalizes Option to Opt', () => {
+    expect(displayHotkey('Option+K')).toBe('Opt K')
+  })
+
+  it('normalizes case-insensitively', () => {
+    expect(displayHotkey('COMMAND+Shift+M')).toBe('⌘ ⇧ M')
+    expect(displayHotkey('control+Shift+A')).toBe('⌃ ⇧ A')
+  })
+
+  it('keeps existing short forms working', () => {
+    expect(displayHotkey('Cmd+Shift+M')).toBe('⌘ ⇧ M')
+    expect(displayHotkey('Ctrl+Shift+M')).toBe('⌃ ⇧ M')
+  })
+})
