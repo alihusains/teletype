@@ -8946,16 +8946,19 @@ pub fn resolve_speech_model_for_id(
     // The catalog entry always implies its own engine. `Settings.speech_engine`
     // is the documented fallback for ids outside the catalog, so it has to
     // be what actually decides the loader here.
-    let engine = entry
-        .as_ref()
-        .map(|m| m.engine())
-        .unwrap_or_else(|| match settings.speech_engine {
-            crate::commands::SpeechEngine::Whisper => teletype_speech::catalog::Engine::Whisper,
-            crate::commands::SpeechEngine::Parakeet => teletype_speech::catalog::Engine::Parakeet,
-            crate::commands::SpeechEngine::ParakeetCpp => {
-                teletype_speech::catalog::Engine::ParakeetCpp
-            }
-        });
+    let engine =
+        entry
+            .as_ref()
+            .map(|m| m.engine())
+            .unwrap_or_else(|| match settings.speech_engine {
+                crate::commands::SpeechEngine::Whisper => teletype_speech::catalog::Engine::Whisper,
+                crate::commands::SpeechEngine::Parakeet => {
+                    teletype_speech::catalog::Engine::Parakeet
+                }
+                crate::commands::SpeechEngine::ParakeetCpp => {
+                    teletype_speech::catalog::Engine::ParakeetCpp
+                }
+            });
     let kind = match engine {
         teletype_speech::catalog::Engine::ParakeetCoreml => SpeechEngineKind::Fluid,
         teletype_speech::catalog::Engine::SherpaParakeet => SpeechEngineKind::Sherpa,

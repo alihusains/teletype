@@ -158,6 +158,7 @@ function renderModels(overrides: Record<string, unknown> = {}) {
   mockInvokeResponses({
     list_models: [S1_MINI, QWEN, GEMMA, NEUDECIDE],
     list_speech_models: [ULTRA, WHISPER],
+    get_command_mode_status: "Available",
     detect_ollama: false,
     has_llm_secret: false,
     select_model: null,

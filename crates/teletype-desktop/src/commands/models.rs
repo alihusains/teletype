@@ -149,8 +149,10 @@ fn model_list(
     };
 
     if !shortlist {
-        let mut models: Vec<ModelStatus> =
-            teletype_inference::catalog::catalog().iter().map(status).collect();
+        let mut models: Vec<ModelStatus> = teletype_inference::catalog::catalog()
+            .iter()
+            .map(status)
+            .collect();
         // Stable sort by the catalog's explicit priority so the list order is
         // independent of array position (S1-mini first, then the rest).
         models.sort_by_key(|m| {
@@ -209,6 +211,42 @@ fn apple_intelligence_row(selected_id: &str) -> ModelStatus {
         requires_license_accept: false,
         attribution: None,
         runs_on_host: true,
+    }
+}
+
+/// Command Mode availability for the LLM + ASR pair the user has selected, as
+/// resolved from the loaded catalog and the host's ASR state. The model picker
+/// renders this as the Command Mode chip, or the plain-language reason when it
+/// is not `Available`.
+#[tauri::command]
+pub async fn get_command_mode_status(
+    state: State<'_, AppState>,
+) -> CommandResult<teletype_catalog::CommandModeStatus> {
+    let settings = state.settings();
+    let asr_usable = teletype_speech::catalog::find(&settings.selected_speech_model)
+        .map(|m| speech_model_installed(&m, &state.models_dir, teletype_fluid::bridge_built()))
+        .unwrap_or(false);
+    Ok(command_mode_status(
+        &state.catalog,
+        &settings.selected_llm_model,
+        &settings.selected_speech_model,
+        asr_usable,
+    ))
+}
+
+/// Command Mode availability for the LLM + ASR pair the user has selected.
+fn command_mode_status(
+    catalog: &teletype_catalog::Catalog,
+    selected_llm_id: &str,
+    selected_speech_id: &str,
+    asr_usable: bool,
+) -> teletype_catalog::CommandModeStatus {
+    let llm = catalog.llm_by_id(selected_llm_id);
+    let asr = catalog.speech_by_id(selected_speech_id);
+    match (llm, asr) {
+        (Some(l), Some(s)) => teletype_catalog::gate::command_mode_available(l, s, asr_usable),
+        (None, _) => teletype_catalog::CommandModeStatus::MissingToolCallingLlm,
+        (_, None) => teletype_catalog::CommandModeStatus::MissingUsableAsr,
     }
 }
 
@@ -1158,7 +1196,8 @@ pub fn ensure_local_provider(app: &AppHandle) {
         crate::LogLevel::Info,
         format!(
             "loading LLM model on first use: {} ({})",
-            entry.name(), entry.id()
+            entry.name(),
+            entry.id()
         ),
     );
     let started = std::time::Instant::now();
@@ -1656,7 +1695,8 @@ pub async fn download_speech_model(
     // audio projector must sit in one directory, and llama.cpp refuses to load
     // with only one of the pair, so both are fetched and both are
     // checksum-verified before the row counts as installed.
-    let files: Vec<SpeechFileSpec> = if entry.engine() == teletype_speech::catalog::Engine::Qwen3Asr {
+    let files: Vec<SpeechFileSpec> = if entry.engine() == teletype_speech::catalog::Engine::Qwen3Asr
+    {
         let base = entry.base_url().ok_or_else(|| {
             CommandError::model(format!(
                 "Catalog error: the '{}' row needs a base_url to fetch its two files.",
@@ -1664,14 +1704,17 @@ pub async fn download_speech_model(
             ))
         })?;
         let dir = entry.provider_path(&state.models_dir);
-        entry.artifacts().iter().map(|a| SpeechFileSpec {
-            name: a.file.to_string(),
-            url: format!("{base}/{}", a.file),
-            dest: dir.join(&a.file),
-            sha256: a.sha256.clone(),
-            bytes: a.bytes,
-        })
-        .collect()
+        entry
+            .artifacts()
+            .iter()
+            .map(|a| SpeechFileSpec {
+                name: a.file.to_string(),
+                url: format!("{base}/{}", a.file),
+                dest: dir.join(&a.file),
+                sha256: a.sha256.clone(),
+                bytes: a.bytes,
+            })
+            .collect()
     } else {
         let dest = match entry.engine() {
             teletype_speech::catalog::Engine::SherpaParakeet => {
@@ -2056,7 +2099,9 @@ fn speech_model_ready(
             _ => e.provider_path(models_dir).exists(),
         }
     });
-    let name = entry.map(|e| e.name().to_string()).unwrap_or_else(|| "Your model".to_string());
+    let name = entry
+        .map(|e| e.name().to_string())
+        .unwrap_or_else(|| "Your model".to_string());
     let message = if ready {
         format!("{name} is ready. Hold your hotkey and speak.")
     } else if exists {
@@ -3315,7 +3360,10 @@ mod tests {
         let dir = std::env::temp_dir().join("teletype-speech-runtime");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let first = teletype_speech::catalog::catalog().first().cloned().unwrap();
+        let first = teletype_speech::catalog::catalog()
+            .first()
+            .cloned()
+            .unwrap();
         let id = first.id().to_string();
         let file = dir.join(first.file());
 
@@ -3370,7 +3418,10 @@ mod tests {
         let dir = std::env::temp_dir().join("teletype-speech-runtime-loaded");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let first = teletype_speech::catalog::catalog().first().cloned().unwrap();
+        let first = teletype_speech::catalog::catalog()
+            .first()
+            .cloned()
+            .unwrap();
         let id = first.id().to_string();
 
         std::fs::write(dir.join(first.file()), b"").unwrap();

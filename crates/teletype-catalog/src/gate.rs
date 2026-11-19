@@ -1,9 +1,11 @@
 //! Pure gate: is Command Mode available for the selected LLM + ASR pair?
 
+use serde::Serialize;
+
 use crate::schema::{Capability, LlmEntry, SpeechEntry};
 
 /// Why Command Mode is (or isn't) available for a given selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum CommandModeStatus {
     Available,
     MissingToolCallingLlm,

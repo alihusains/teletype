@@ -1152,7 +1152,7 @@ pub(crate) fn qwen_asr_installed(models_dir: &std::path::Path) -> bool {
             .metadata()
             .map(|m| m.is_file() && m.len() > 0)
             .unwrap_or(false)
-        })
+    })
 }
 
 /// The Qwen3-ASR row's download size in MB, for the picker row.

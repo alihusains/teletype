@@ -1372,6 +1372,7 @@ pub fn run() {
             commands::undo_learned_term,
             // Models
             commands::list_models,
+            commands::get_command_mode_status,
             commands::select_model,
             commands::download_model,
             commands::delete_model,
@@ -1588,11 +1589,10 @@ fn load_catalog(data_dir: &std::path::Path) -> teletype_catalog::Catalog {
     // failure keeps the last good working copy, so this is never fatal.
     let result = teletype_catalog::update::try_update(data_dir, &HttpFetch);
     tracing::info!(?result, "catalog silent update check");
-    teletype_catalog::Catalog::load_from_dir(&catalogs_dir)
-        .unwrap_or_else(|e| {
-            tracing::warn!(?e, "catalog working copy invalid; using bundled defaults");
-            teletype_catalog::Catalog::bundled()
-        })
+    teletype_catalog::Catalog::load_from_dir(&catalogs_dir).unwrap_or_else(|e| {
+        tracing::warn!(?e, "catalog working copy invalid; using bundled defaults");
+        teletype_catalog::Catalog::bundled()
+    })
 }
 
 #[cfg(test)]

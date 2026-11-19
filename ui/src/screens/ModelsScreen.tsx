@@ -39,6 +39,14 @@ import {
   TextInput,
 } from "../settings/primitives";
 
+/** Why Command Mode is unavailable for the selected LLM + ASR pair, as
+    returned by the `get_command_mode_status` IPC command. */
+type CommandModeStatus =
+  | "Available"
+  | "MissingToolCallingLlm"
+  | "MissingUsableAsr"
+  | "MissingBoth";
+
 interface ModelStatus {
   id: string;
   name: string;
@@ -284,6 +292,11 @@ function DeleteButton({
 
 export default function ModelsScreen() {
   const [models, setModels] = useState<ModelStatus[]>([]);
+  // Command Mode availability for the selected LLM + ASR pair. `Available`
+  // renders the chip; anything else renders the plain-language reason.
+  const [commandModeStatus, setCommandModeStatus] = useState<CommandModeStatus>(
+    "Available",
+  );
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const store = useDownloadStore();
   const [downloadError, setDownloadError] = useState<{ id: string; message: string } | null>(null);
@@ -385,9 +398,15 @@ export default function ModelsScreen() {
         setCatalogError(errorMessage(e));
         return [] as SpeechModelStatus[];
       }),
-    ]).then(([llm, speech]) => {
+      invoke<CommandModeStatus>("get_command_mode_status").catch((e) => {
+        console.error(e);
+        setCommandModeStatus("MissingBoth");
+        return "MissingBoth";
+      }),
+    ]).then(([llm, speech, status]) => {
       if (llm.length || speech.length) setCatalogError(null);
       setModels(llm);
+      setCommandModeStatus(status as CommandModeStatus);
       setSpeechModels(speech);
       return llm;
     });
@@ -963,22 +982,35 @@ export default function ModelsScreen() {
               color: "var(--text-tertiary)",
             }}
           >
-            <span>
-              Command Mode uses:{" "}
-              <strong style={{ color: "var(--text-secondary)" }}>
-                {toolModels[0].name}
-              </strong>{" "}
-              {isDownloaded(toolModels[0]) ? "· installed" : "· not downloaded"}
-            </span>
-            {!isDownloaded(toolModels[0]) && (
-              <SecondaryButton
-                onClick={() => void download(toolModels[0].id)}
-                disabled={store.active.includes(toolModels[0].id)}
-              >
-                {store.active.includes(toolModels[0].id)
-                  ? `${Math.round(store.progress[toolModels[0].id]?.percent ?? 0)}%`
-                  : "Download"}
-              </SecondaryButton>
+            {commandModeStatus === "Available" ? (
+              <>
+                <span>
+                  Command Mode uses:{" "}
+                  <strong style={{ color: "var(--text-secondary)" }}>
+                    {toolModels[0].name}
+                  </strong>{" "}
+                  {isDownloaded(toolModels[0]) ? "· installed" : "· not downloaded"}
+                </span>
+                {!isDownloaded(toolModels[0]) && (
+                  <SecondaryButton
+                    onClick={() => void download(toolModels[0].id)}
+                    disabled={store.active.includes(toolModels[0].id)}
+                  >
+                    {store.active.includes(toolModels[0].id)
+                      ? `${Math.round(store.progress[toolModels[0].id]?.percent ?? 0)}%`
+                      : "Download"}
+                  </SecondaryButton>
+                )}
+              </>
+            ) : (
+              <span>
+                {commandModeStatus === "MissingToolCallingLlm" &&
+                  "Command Mode needs an LLM that can run tools. Pick a model with tool calling."}
+                {commandModeStatus === "MissingUsableAsr" &&
+                  "Command Mode needs a usable speech model on this computer."}
+                {commandModeStatus === "MissingBoth" &&
+                  "Command Mode needs an LLM that can run tools and a usable speech model on this computer."}
+              </span>
             )}
           </div>
         )}
