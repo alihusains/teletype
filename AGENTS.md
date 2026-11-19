@@ -63,6 +63,13 @@ Do not claim to have inspected a source that was not actually accessible.
 
 Keep `.agents/brain/PROJECT_BRAIN.md` concise.
 
+**Freshness is mandatory.** Before and after meaningful work run
+`bash scripts/check-brain-freshness.sh` (read-only). Update the `brain-freshness`
+marker and the status/topology sections when the release line, HEAD, or verified
+facts change. A `post-commit` hook reminds you when code changed but the brain
+did not; it is advisory, so the final report must explicitly say either what was
+updated in the brain or "no brain change needed". See §14 of the brain.
+
 Update the brain when you learn something that is:
 - important to understanding the project
 - likely to matter in future tasks
@@ -228,7 +235,11 @@ At task completion, briefly report:
 
 ## Agent team
 
-Project-scoped agent definitions live in `.claude/agents/`. They form the Teletype build team. The lightweight index, ownership map, and lifecycle states live in `.agents/agents/registry.md`; add/change/retire a specialist there and in `.agents/agents/changelog.md`, not just in this table.
+The table below is the only committed definition of the Teletype build team.
+There are no per-agent files in this repository (`.claude/agents/`,
+`.agents/agents/registry.md` and `.agents/agents/changelog.md` do not exist).
+Treat the roles as routing labels: change this table when a specialist is added,
+retired, or gains a new domain.
 
 | Agent | Role |
 |---|---|
@@ -249,28 +260,29 @@ Classify every task (TRIVIAL / MEANINGFUL / MAJOR) before working. The level
 determines which review is required and which counters to bump. Full rules:
 `.agents/workflows/task-classification.md`. Checkpoint counters live in
 `.agents/state/evolution-state.yaml` (specialist review every 10 meaningful
-tasks, full health review every 30, plus immediate triggers). The post-task
-check itself is the `/ali-evolve-agents` skill; the health review is
-`/ali-agent-health`.
+tasks, full health review every 30, plus immediate triggers). Those two files
+are the committed procedure; the `/ali-evolve-agents` and `/ali-agent-health`
+skills that used to wrap them are not in this repository, so run the checks
+from the workflow files by hand.
 
 ## Project skills (.agents/skills/)
 
-Reusable `/ali-*` skills for this repo (read the SKILL.md when the trigger fires):
+Only one skill is committed today:
 
 | Skill | Trigger | Purpose |
 |---|---|---|
-| `ali-pi-team` | `/ali-pi-team` | The build team: decompose a task, delegate MECH units to pi (background), do QUICK units inline, verify before done. |
-| `ali-verify-pi-work` | `/ali-verify-pi-work` | Verify a pi "done" claim: re-run its commands, read the real diff, check for crash artifacts. Never trust a pi report alone. |
-| `ali-app-dev-loop` | `/ali-app-dev-loop` | Start/restart the Tauri dev app correctly (vite 1420 + binary + llama-server re-sign L006) and confirm the window serves. |
-| `ali-agent-health` | `/ali-agent-health` | Validate the agent system + brain for drift: registry/reality mismatch, dead brain references, stale decisions, orphaned or overlapping specialists. A report, not a fixer. |
-| `ali-evolve-agents` | `/ali-evolve-agents` | After meaningful work, decide whether the brain, a specialist, or the team needs an evidence-based update. Promote a learning to a gotcha/rule when it recurs; add a specialist only for a genuinely new recurring domain. |
+| `brag` | `/brag`, "make a launch video" | Turn the project website or code into a short HyperFrames launch video. |
 
-**Convention:** when Ali gives a build task, default to `/ali-pi-team`. After any pi task, run `/ali-verify-pi-work` before reporting done. When the app needs a live check or comes up blank, use `/ali-app-dev-loop`. When the team or brain feels stale, run `/ali-agent-health`; after a big or novel task, run `/ali-evolve-agents`.
+The `/ali-pi-team`, `/ali-verify-pi-work`, `/ali-app-dev-loop`,
+`/ali-agent-health` and `/ali-evolve-agents` skills are **not** in this
+repository. Do not cite them as loadable skills. The pi-workflow knowledge they
+used to hold survives as prose in this file (see "Multi-agent behavior") and as
+the task reports committed under `tasks/pi-reports/`.
 
 ## Decisions (ADR)
 
 Durable architecture and product decisions live in `PROJECT_BRAIN.md` under
-Decisions (D001–D009). Decisions that arrive with a code change and deserve a
+Decisions (D001–D044). Decisions that arrive with a code change and deserve a
 standalone record live in `.agents/brain/adr/` as `ADR-NNN-short-name.md`
 (decision, context, alternatives, consequences, evidence, status, date). Do not
 duplicate a decision in both places: the brain keeps the one-line pointer, the

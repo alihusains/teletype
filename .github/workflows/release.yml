@@ -738,7 +738,11 @@ jobs:
             cargo-target-windows-
       - name: Install tauri-cli
         run: |
-          if (-not (cargo tauri --version 2>$null | Select-String "2.9.3")) {
+          # Must match the macOS jobs' pin (2.12.0). This check used to test
+          # for "2.9.3" while installing 2.12.0, so it reinstalled on every run
+          # and would have skipped the install entirely on a runner that really
+          # had 2.9.3 — building Windows with a tauri-cli the Mac jobs do not use.
+          if (-not (cargo tauri --version 2>$null | Select-String "2.12.0")) {
             cargo install tauri-cli --version "2.12.0" --locked
           }
       - uses: actions/setup-node@v4

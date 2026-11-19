@@ -755,39 +755,26 @@ fn journey_05_llm_failure_falls_back_to_the_users_own_words() {
     }
 }
 
-/// BUG-04 (S1, silent data loss). The validator has no check for "the model's
-/// output is unrelated to the input", so a refusal or an off-topic answer is
-/// accepted as a valid transform and typed into the user's document. Every
-/// word the user dictated is replaced by the model's apology.
+/// BUG-04 (S1, silent data loss) — FIXED. The validator once had no check
+/// for "the model's output is unrelated to the input", so a refusal or an
+/// off-topic answer was accepted as a valid transform and typed into the
+/// user's document, replacing every word they dictated with the model's
+/// apology.
 ///
-/// `transforms/validator.rs` rejects: empty output, markdown fences,
-/// instruction echo, a preamble, runaway growth, truncation, and a dropped
-/// AutoText placeholder. "I'm sorry, I can't help with that." defeats all of
-/// them:
-///   * it is not empty and not fenced;
-///   * `MIN_INPUT_LEN_TO_CHECK_ECHO` is 24 and the reply is 34 chars, so the
-///     echo check *does* run, but it only fires when
-///     `longest_common_substring(input, cleaned)` covers 90% of the output --
-///     a refusal shares almost nothing, so it passes (validator.rs:114-129);
-///   * "i'm sorry" is not in `PREAMBLES` (validator.rs:57-75), so
-///     `find_preamble` does not fire -- and even if it did, the guard at
-///     validator.rs:138-139 only rejects a preamble whose remainder looks
-///     like content, which a refusal's does not;
-///   * it is shorter than the input, so neither the growth cap (line 148) nor
-///     the truncation floor (line 155, which needs an input of 80+ chars)
-///     applies.
-///
-/// The module doc at validator.rs:5-6 states the contract this breaks: "On
-/// failure the pipeline falls back to the original input -- never to the
-/// model's raw output." There is no `Failure` variant for "off-topic", and
-/// `Failure::Preamble` cannot express it. A fix needs a content-overlap
-/// check: for an input above some floor, require the output to share a
-/// minimum fraction of the input's content words (AutoText placeholders
-/// excluded), and fall back otherwise.
+/// The fix: `transforms/validator.rs` now has a content-overlap check
+/// (`Failure::OffTopic`, driven by `off_topic_reason`). For an input above
+/// `OFF_TOPIC_MIN_WORDS`, the output must share at least `OFF_TOPIC_MIN_SHARED`
+/// (0.34) of the input's content words (AutoText placeholders excluded), or
+/// the pipeline falls back to the original input. The editor path
+/// (`validate_editor`) uses a lower floor (`OFF_TOPIC_MIN_SHARED_EDITOR`, 0.15)
+/// because "make it more concise" legitimately drops most filler. A separate
+/// `Failure::LanguageDrift` check catches a script change (e.g. Latin input
+/// rewritten into Cyrillic), which the overlap check alone cannot see.
 ///
 /// This is reachable in normal use, not just with an adversarial model: any
 /// dictation that reads like an instruction, any content a model declines,
-/// and any small local model that answers instead of rewriting.
+/// and any small local model that answers instead of rewriting. This test is
+/// the regression guard.
 #[test]
 fn journey_05z_a_model_refusal_must_not_replace_the_users_words() {
     let spoken = "the quarterly review is on friday morning";
@@ -1669,23 +1656,26 @@ fn journey_13_a_users_settings_survive_a_restart() {
     assert_eq!(reloaded.entries[0].replacement, "221B Baker Street");
 }
 
-/// BUG-01 (S1, data loss). Every persisted collection struct in the app
-/// requires all of its fields, so any field added or renamed in a later
-/// version makes the whole document fail to parse. `JsonStore::load` then
-/// renames the file to `.corrupt` and returns the default: the user's entire
-/// AutoText library, custom transforms, style profiles, preferences or
-/// scratchpad silently becomes empty on upgrade, with no error surfaced and
-/// no undo. This is the documented-but-not-implemented "settings fields are
-/// serde-defaulted for backward compatibility" contract.
+/// BUG-01 (S1, data loss) — FIXED. Historically every persisted collection
+/// struct required all of its fields, so any field added or renamed in a
+/// later version made the whole document fail to parse. `JsonStore::load`
+/// then renamed the file to `.corrupt` and returned the default: the user's
+/// entire AutoText library, custom transforms, style profiles, preferences or
+/// scratchpad silently became empty on upgrade, with no error surfaced and
+/// no undo.
 ///
-/// Missing defaults today:
-///   `AutoTextEntry`      description, scope (only `snippet`/`system` have one)
-///   `TransformDefinition` all 12 fields
+/// The fix: every field on the affected collection structs now carries
+/// `#[serde(default)]`, so a document written by an older build (missing a
+/// newer field) still parses and loads. This test is the regression guard.
+///
+/// Structs that were missing defaults (now all serde-defaulted):
+///   `AutoTextEntry`      description, scope
+///   `TransformDefinition` all fields
 ///   `StyleProfile`        all fields
 ///   `Preference`          all fields
 ///   `Note`                all fields
 /// (`DictionaryWord.fuzzy` and the `Dictionary`/`UserProfile` collection
-/// structs do carry defaults, which is why only some stores are affected.)
+/// structs always carried defaults.)
 #[test]
 fn journey_13b_a_new_field_added_in_a_later_version_does_not_wipe_settings() {
     // Simulates an upgrade: a settings file written by an older build that

@@ -96,6 +96,11 @@ ew/
 # (models/tinydecide/model.bin was removed from tracking; re-download with
 # the curl commands in crates/teletype-inference/src/tinydecide.rs.)
 models/tinydecide/model.bin
+# Needle 3 (35 MB) and any future .cact weights. `models/needle3.cact` was
+# tracked until 2026-11-19 and every clone paid for it. Fetch with
+# scripts/fetch-needle-model.sh (SHA-256 pinned); the tests that use it skip
+# when it is absent.
+models/*.cact
 # Conformance model builds for crates/tinydecide (upstream TinyDecide repo,
 # downloaded with the curl commands documented in .agents/brain/PROJECT_BRAIN.md;
 # the conformance fixtures in crates/conformance/ are committed):

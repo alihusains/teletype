@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Non-blocking brain-freshness reminder.
+#
+# Enable with:  git config core.hooksPath .githooks
+# A code commit that does not touch .agents/brain/ prints a reminder; it never
+# fails the commit. See AGENTS.md "Freshness is mandatory" and brain §14.
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+changed_code=0
+changed_brain=0
+while IFS= read -r file; do
+  case "$file" in
+    .agents/brain/*) changed_brain=1 ;;
+    *) changed_code=1 ;;
+  esac
+done < <(git -C "$root" diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+
+if [[ "$changed_code" -eq 1 && "$changed_brain" -eq 0 ]]; then
+  printf '\n[brain-freshness] This commit changed code but not .agents/brain/.\n'
+  printf '  If anything durable changed, update PROJECT_BRAIN.md and its freshness\n'
+  printf '  marker, then amend or follow up. Check: bash scripts/check-brain-freshness.sh\n'
+  printf '  (advisory only — the commit already succeeded)\n\n'
+fi
+exit 0

@@ -1,5 +1,7 @@
 # Project Brain
 
+<!-- brain-freshness: version=v0.2.19 head=66fe309 updated=2026-11-19 -->
+
 This file is the durable working memory for this project.
 
 It is written for both humans and coding agents.
@@ -23,6 +25,22 @@ Feature-rich and working on macOS. **Do not describe the product as "at parity
 with Wispr Flow"**: the honest position is measured per-axis, and the platform,
 language, and streaming-preview gaps are real. `usp.md` §3/§4 is the current
 verified competitive sheet.
+
+**Update 2026-11-19 (current state — read this before the historical blocks below):**
+`main` @ `66fe309`, tracking `origin/main`; latest tag **v0.2.19** (2026-11-11),
+50 commits since v0.2.14 (2026-10-29). One worktree only
+(`~/Documents/projects/teletype`). Work since v0.2.14: model-scoped AI Polish +
+cleanup-only model capability gate, Command Mode CMD-1 `no_action` / CMD-2 chord
+takeover + decider model picker, delivery fixes (paste instead of type, including
+terminals), ASR silent-tail cut (ASRHALL-1), polish sanitizers (doubled
+punctuation, spoken self-repair splicing), Windows llama-server prebuilt guard,
+UI audits u1–u5, the Transforming pill (t9), the lean 0.8B polish prompt (t8),
+Insights nav wiring, and committed `tasks/pi-reports/` (t8/t9/u1–u5). Notetaker
+replaced Scratchpad (see D044 and the 2026-11-25 learning). A brag/HyperFrames
+promo composition was produced (`brag-output/`, 2026-11-07 learning). At this
+check the only untracked paths were the 2026-11-07 brag learning, `brag-output/`
+and `skills-lock.json`. Verify freshness any time with
+`bash scripts/check-brain-freshness.sh` (see §14).
 
 **Full workspace test suite green (2026-10-06 re-run):** `cargo test --workspace`
 → **0 failures** across all crates (389 core, 73, 62, 50, 48 inference, 15, 13,
@@ -171,7 +189,7 @@ still the single authoritative full decode. Details and the viable alternatives:
 `tasks/pi-tasks/streaming-asr-spike-findings.md`. The reference project's numbers
 come from a different engine arrangement and do not transfer to us.
 
-**Update (2026-11-01, Decision D020):** the shipped successor is **commit-while-you-go** — per-segment incremental decode with a live preview (P4.1 endpointer/segmenter, P4.2 preview resync; `fcae04b` on `feat/beat-wispr`). It fixes the 2026-10-10 "miss in the stretch" gap while respecting the two-promises constraints. It is NOT a token-by-token live stream.
+**Update (2026-11-01, Decision D017):** the shipped successor is **commit-while-you-go** — per-segment incremental decode with a live preview (P4.1 endpointer/segmenter, P4.2 preview resync; `fcae04b` on `feat/beat-wispr`). It fixes the 2026-10-10 "miss in the stretch" gap while respecting the two-promises constraints. It is NOT a token-by-token live stream.
 
 Earlier status (kept for history): the P0 "Polish" batch (subprocess LLM server,
 OpenAI-compatible provider, keyring secrets, expanded model catalog) was
@@ -194,13 +212,18 @@ github.com/alihusains/teletype (origin remote), branch `main`, owner: Ali.
 
 **Release line (verified 2026-10-18, live UAT + self-test + two-tier command battery — verified, not claimed):**
 `feat/beat-wispr` @ `5aba0a4` (2026-10-18 20:11) IS the v0.2.7 line; `main` = v0.2.6 release line; last tag `v0.2.7-rc1`, prior stable release `v0.2.6`. What was re-verified against the live running app that day (worktree binary, started 23:03, observed to 23:1x):
-App boots clean into running state (LLM s1-mini warm in ≈0.53 s; no crash report produced; controller thread `teletype-dictation` alive); **default decider is `neudecide` when `neudecide-v1` model is present in `~/Library/Caches/com.teletype.app/models`** (live log `command decider: neudecide (model present)`) — the Gate A parity gaps (0/50 direct, 45/50 conflate) were measured on TTS clips and remain a *known risk*, while the live-mic 3-line battery all landed through the same path, so it is not treated as a release blocker; the D019 VAD gate is what protects takes shorter than 300 ms. End-to-end delivery chain verified live (dictation→transcribe→polish→inject, with the raw-transcript fallback never blocked); recovery spool then sticks across restart and clears on the next clean delivery; no crash after sustained uptime + restart exercise. **Kill/restart contract: SIGTERM only** (app ignores SIGINT outright; TERM exits ≈0.35 s clean — see D017, G024). Two stale brain entries from sandbox lineage are **not** in this repo: the `SIGINT-limits` planned harness and `list_tests.rs`/`probe_sigint.rs` (described in the session/entries.md restore fragments, L05x–L07x-style) — verified absent from worktree and main tree and from history; do not cite as live. Spoken-phrase card rescans do **not** persist across restart (`recordings/` never populated post-restart; in-memory + trace only) — that an open product micro-call, not a blocker. Nightly CI on this line: gate-a/matrix/red-green + coverage-report jobs green; 4 non-blocking reds pre-existing (cross-8 delay test, mixed-sweep, nightly deploy report, unsigned-app + secret-gate on mask) — no release value inside them.
+App boots clean into running state (LLM s1-mini warm in ≈0.53 s; no crash report produced; controller thread `teletype-dictation` alive); **default decider is `neudecide` when `neudecide-v1` model is present in `~/Library/Caches/com.teletype.app/models`** (live log `command decider: neudecide (model present)`) — the Gate A parity gaps (0/50 direct, 45/50 conflate) were measured on TTS clips and remain a *known risk*, while the live-mic 3-line battery all landed through the same path, so it is not treated as a release blocker; the D019 VAD gate is what protects takes shorter than 300 ms. End-to-end delivery chain verified live (dictation→transcribe→polish→inject, with the raw-transcript fallback never blocked); recovery spool then sticks across restart and clears on the next clean delivery; no crash after sustained uptime + restart exercise. **Kill/restart contract: SIGTERM only** (app ignores SIGINT outright; TERM exits ≈0.35 s clean — see D020, G024). Two stale brain entries from sandbox lineage are **not** in this repo: the `SIGINT-limits` planned harness and `list_tests.rs`/`probe_sigint.rs` (described in the session/entries.md restore fragments, L05x–L07x-style) — verified absent from worktree and main tree and from history; do not cite as live. Spoken-phrase card rescans do **not** persist across restart (`recordings/` never populated post-restart; in-memory + trace only) — that an open product micro-call, not a blocker. Nightly CI on this line: gate-a/matrix/red-green + coverage-report jobs green; 4 non-blocking reds pre-existing (cross-8 delay test, mixed-sweep, nightly deploy report, unsigned-app + secret-gate on mask) — no release value inside them.
 
 **Update 2026-10-19 (v0.2.7 line; supersedes the Gate-A risk note above):** `feat/beat-wispr` FF-merged into `origin/main`; tag `v0.2.7` = `797f4f1`. The 2026-10-18 tokenizer defect is fixed (`79d89dc` + follow-up) and the re-run (`evals/RESULTS.md` run `command_suite_2026-10-18_c`) flipped the A.5 gates: suite **61/185 (33.0%)** vs needle **15/185 (8.1%)** = **+24.9 pts MET**; parity **46/50 (92%) MET**; latency p95 **87.5 ms** under the recalibrated **≤ 200 ms** budget (Ali approved 2026-10-18; the 80 ms bound retired) — then `86ad110` made NeuDecide the default (`default = ["neudecide"]`). CI on this line (run `39208405054`): 9 jobs green; 3 real reds — Lint (`clippy`), Checks (third-party-notices sync: `neudecide`, `arc-swap`, `@testing-library/jest-dom` missing from `THIRD-PARTY-NOTICES.txt`), macOS Intel `cargo check` — plus benches (non-blocking); re-check `gh run list` before citing CI. Gate-A human spoken battery remains outstanding.
 
 ---
 
-**Current work topology (2026-10-19, v0.2.7 line):** one governing plan; the execution branch is FF-merged into `main` and tagged `v0.2.7`.
+**Current work topology (2026-11-19):** one worktree, `main` @ `66fe309`
+(tracking `origin/main`); **no** local `refactor`, `feat/beat-wispr`, or release
+worktrees remain. The 2026-10-19 multi-branch topology below is historical
+provenance only — do not act on it as current state.
+
+**Historical work topology (2026-10-19, v0.2.7 line):** one governing plan; the execution branch is FF-merged into `main` and tagged `v0.2.7`.
 
 - `main` — release line at **v0.2.7** (`797f4f1`; tag `v0.2.7`). FF-merged from `feat/beat-wispr` on 2026-10-19, carrying the full Beat-Wispr plan execution, the NeuDecide default decider (see the D018 update below), the refactor merge (`b8b8f38`), and the 2026-10-16/19 QA battery fixes; the EG-1 catalog removal (D019) is on this line.
 - `feat/beat-wispr` — plan execution source branch (`888ca81`, one docs/brain commit ahead of `797f4f1`; shippable code identical to `v0.2.7`). `PROGRESS.md` on that branch is the plan's gate/phase source of truth. **Task-level state (2026-10-19):** all plan phases have their tasks implemented and committed — P0.1–P0.5; P1.1–P1.12; P2.1–P2.9; P3.1–P3.9 incl. the 86-cell bake-off + `docs/decisions/D-engine-defaults.md`; P4.1–P4.4; P5.1–P5.8 code; P6.1–P6.5; P7.1–P7.8 + P7.10; P8.1–P8.7; P9 hardening + Phase-10 harness. Optional P6.6/P7.9 not started. **P1.1/P1.2 ARE landed**: `crates/teletype-core/src/injector.rs` uses `BEFORE_PASTE_CAP` 150 ms + `wait_for_modifiers_released` (no fixed pre-paste sleep) and `BEFORE_RESTORE` 350 ms runs on a detached thread. **Gate evidence still outstanding:** human corpus 0/120 clips; live release→paste latency traces never captured; Windows real-hardware sherpa run; the 32-case e2e delivery matrix not executed (`evals/runs/e2e_matrix_2026-10-17/MATRIX.md` is a BLOCKED dry-run); no `WISPR_COMPARISON.md` (Phase 10 run not performed).
@@ -281,7 +304,8 @@ read, AppleScript delete) are recorded as L088.
 
 Typing (~40 wpm) is far slower than speaking (~130-160 wpm). Existing dictation
 tools either ship audio to the cloud (privacy problem), charge subscriptions
-(cost), or require internet (dependency). See `README-github.md`.
+(cost), or require internet (dependency). See `README.md` (the public README is
+the top-level file).
 
 ### Desired outcome
 
@@ -317,11 +341,18 @@ Record durable context the user has explicitly provided.
 | Topic | Context | Source | Date |
 |---|---|---|---|
 | Audience | Personal open-source project, never commercial | user answer | 2026-09-22 |
-| Plan of record | `roadmap.md` is the authoritative plan; `checkpoint.md` is historical status | user answer | 2026-09-22 |
+| Plan of record | `roadmap.md` is the authoritative plan; `checkpoint.md` is historical status. **`roadmap.md` is gitignored and exists only on the owner's machine** — see the note under this table | user answer | 2026-09-22 |
 | Windows priority | Equal priority with macOS going forward | user answer | 2026-09-22 |
 | Uncommitted P0 batch | ServerProvider / OpenAiCompat / keyring / catalog work needs review + verification before commit | user answer | 2026-09-22 |
 | Personalization retention priority | The more the user uses the app, the more it learns, and the more visible that learning is. "Less effort, high impact, quick wins" is the sequencing rule for the T5 sprint. | user answer | 2026-10-02 |
 | T5 sprint in roadmap | `roadmap.md` "2026-10-02 — Personalization & Insights visibility sprint" (T5.1-T5.13) is the current active plan for making personalization + insights visible. | user answer | 2026-10-02 |
+
+**Sources that are not in the repository (2026-11-19).** `roadmap.md`,
+`prompt.md` and `T2.1-plan.md` are deliberately gitignored (see `.gitignore`,
+"Internal planning notes"). They exist only on the owner's machine, so every
+reference to them below is history a fresh clone cannot follow. Do not treat
+those files as readable evidence. Current state lives in §1 of this brain;
+product positioning lives in `usp.md` and `PRODUCT.md`.
 
 Rules:
 - Prefer direct user statements over assumptions.
@@ -405,7 +436,7 @@ no recommendation may change until it is recorded.
 | `ui/` | React frontend | `src/App.tsx`, `src/pill.tsx`, `src/screens/` (13 screens) |
 | `docs/` | Architecture reference | `architecture.md` |
 | `scripts/` | llama-server build | `build-llama-server.sh` |
-| Root docs | Plans and status | `prompt.md` (original spec), `roadmap.md` (plan of record), `checkpoint.md` (historical status), `README-github.md` (public README; root `README.md` is the brain-starter doc) |
+| Root docs | Plans and status | `README.md` (public README), `PRODUCT.md`, `usp.md` (competitive sheet), `checkpoint.md` (historical status), `teletype_complete_roadmap.md`. `roadmap.md`, `prompt.md` and `T2.1-plan.md` are **gitignored, local-only** — absent from a fresh clone |
 | `docs/` roadmaps | Platform roadmaps (2026-09-26) | `roadmap-windows.md` (Windows port plan + measured learnings from the reference), `roadmap-macos.md` (macOS completion/parity/hardening plan) |
 | `.agents/brain/` | This brain + learnings | `PROJECT_BRAIN.md`, `learnings/LEARNING_TEMPLATE.md` |
 
@@ -643,7 +674,7 @@ Mirrors EW's KeychainManager; roadmap P0.3 requirement.
 
 **Date:** 2026-09-22
 
-**Status:** accepted
+**Status:** accepted (file is gitignored / local-only — see the note in §3)
 
 **Decision:**
 Priorities and sequencing come from `roadmap.md` (P0-P4, EW-derived).
@@ -848,11 +879,15 @@ controllable from the workflow side).
 
 **Evidence / source:** full reasoning in `adr/ADR-010-unsigned-builds-ship.md`.
 
-### Decision D011
+### Decision D044
 
 **Title:** Scratchpad is now Notetaker — real notes, not an append-only list
 
 **Date:** 2026-11-25
+
+**Note:** renumbered 2026-11-19 from a duplicate D011; the controller/event-loop
+decision below keeps D011. Physical position in this list is historical, not
+chronological.
 
 **Status:** accepted (implemented on `release/v0.2.7`; `teletype-core/src/scratchpad.rs`, `teletype-desktop/src/commands/scratchpad.rs`, `ui/src/screens/NotetakerScreen.tsx`)
 
@@ -877,6 +912,37 @@ the open note. IPC is camelCase (`list_notes`, `create_note`, `open_note`,
 pass); `cargo test -p teletype-desktop` green; `tsc --noEmit` exit 0; vitest
 287/287 (incl. `notetakerScreen.test.tsx`); live app screenshots show the note
 list, open note, autosave, and delete-confirm. See `learnings/2026-11-25-notetaker-replaces-scratchpad.md`.
+
+### Decision D045
+
+**Title:** Model weights are fetched, never committed; `needle_e2e` is a local-only harness
+
+**Date:** 2026-11-19
+
+**Status:** accepted (implemented; `models/needle3.cact` untracked, `scripts/fetch-needle-model.sh`)
+
+**Decision:**
+No model weights are tracked in git. `models/needle3.cact` (35 MB) was removed
+from the index on 2026-11-19 and `models/*.cact` is ignored; the file is fetched
+with `scripts/fetch-needle-model.sh`, which pins the SHA-256. Tests that need it
+declare `Option` and print a `SKIP:` line when it is absent instead of exiting
+non-zero, so a clean clone can run the workspace suite.
+
+CI does **not** download the model. `needle_e2e` is a local-only harness, like
+the `benchmark` binary: it runs where someone fetched the weights, and it skips
+everywhere else. The skip is honest coverage loss, accepted deliberately over a
+~35 MB download on every CI run.
+
+**Alternatives considered:**
+Keep the blob tracked (rejected: every clone pays 35 MB for a model one test
+uses); add a fetch step to the inference CI job (considered and declined by the
+user 2026-11-19); `#[ignore]` on the test (unnecessary — the skip path already
+keeps the suite green and reads the same in logs).
+
+**Evidence / source:** `git ls-files models/` is empty; guard in
+`scripts/check-no-built-binaries.sh` fails on any tracked `models/*.cact` over
+1 MB; `cargo test -p teletype-inference --test needle_e2e` prints SKIP and
+passes with the file moved aside.
 
 ### Decision D011
 
@@ -2565,8 +2631,8 @@ Record constraints that future agents must know.
 | ~13 MB release binary, no bundled model assets | Performance/privacy non-negotiable | `roadmap.md` section 0 |
 | `teletype-core` stays platform-free | Cross-platform boundary; tested via mocks | `docs/architecture.md` |
 | English-first; Parakeet is English-only, `"auto"` resolves to `"en"` | Model capability; prevents mis-transcription | `checkpoint.md` language guard |
-| macOS 14+, Rust 1.88+, Node 18+, CMake required | Build/toolchain floor | `README-github.md` |
-| Windows platform layer stubbed | UIA/OCR, injection, hotkey, tray not implemented | `README-github.md` Status |
+| macOS 14+, Rust 1.88+, Node 18+, CMake required | Build/toolchain floor | `README.md` (the old `README-github.md` is gone) |
+| Windows platform layer stubbed | UIA/OCR, injection, hotkey, tray not implemented | `README.md` Status |
 | No telemetry / analytics ever on by default | Product stance + EW contrast | `roadmap.md`, D003 |
 | Never log transcripts, AutoText values, or keys | Privacy contract | `docs/architecture.md`, `prompt.md` |
 | Never edit `S1_SYSTEM_PROMPT` without retraining | The prompt text and the S1-mini artifact are one contract (transcribed from the published card at the pinned revision); only the generic `CORE_RULES`/`build_prompt` path may absorb new rules | `crates/teletype-core/src/transforms/prompt.rs` header comment |
@@ -2961,7 +3027,7 @@ Questions that affect future implementation.
 | Q003 | Default provider priority chain when Apple Intelligence and local server both exist (order + UI copy)? | Roadmap P1.4 / open decision #3 | user | open |
 | Q004 | Windows: which seam lands first given "equal priority" (hotkey, injection, tray, mic)? | D005 says equal priority but no Windows plan exists yet | user | open |
 | Q006 | "Detected <Lang>. Lock it?" chip after auto-detect (EW's LanguageChipView pattern)? | Follow-up to the 2026-09-25 language picker work; needs detected-language signal from ASR (P2-35) | user | open |
-| Q005 | Repo hygiene: root `README.md` is the brain-starter doc while the public README lives in `README-github.md`; also stray untracked files exist | Confusing for contributors and agents | user | open |
+| Q005 | Repo hygiene: multiple root docs compete for "current plan" (`PROGRESS.md`, `checkpoint.md`, `teletype_complete_roadmap.md`, plus the local-only `roadmap.md`), and stray untracked files exist | Confusing for contributors and agents | user | open (resolved 2026-11-19 for the README half: the public README is root `README.md`; `README-github.md` does not exist) |
 
 Agents may answer an open question from reliable evidence.
 When evidence is insufficient, ask the user rather than inventing an answer.
@@ -2982,7 +3048,7 @@ Track important external sources that shaped the project.
 | LiveKit Agents UI (`github.com/livekit/components-js`, `packages/shadcn`, Apache-2.0) | Dot-matrix grid visualizer ported as the `dotGrid` pill style. Component is plain React+CSS (no WebGL); the LiveKit coupling is only `useMultibandTrackVolume`/`useAgent` wrappers, and the official `volumeBands` prop is the clean injection seam. Aura/Wave visualizers ARE WebGL shaders and are not cheap ports | 2026-09-26 | Vendored with attribution in `ui/src/pill.tsx` |
 | `github.com/jaredpalmer/kev` (Apache-2.0) + `logicrw/awesome-jev-projects` + pinggy.io JEV-alternatives benchmark (2026-09-23) | Jev = TypeSafe's closed "System One" decision model: state + typed questions (Choice/Score/Noul) → probability per option in one parallel pass, no token generation, 50-100ms hosted. Open clones (Laya 421M BERT, Kev 0.8-27B Qwen+LoRA, SemIf frozen-logit wrapper, NanoJev 0.6B, jevlike trainer) reproduce the interface, NOT zero-shot accuracy: independent jabr 49-task benchmark = Jev 0.966 vs best-open 0.704. Kev-0.8B MLX on Apple Silicon: 47ms warm / 77ms fresh per multi-question request. Teletype fit: NOT a drop-in for polish (text generation, wrong job); plausible use = fast intent classifier (polish vs raw insertion), context-app detection, transform routing. Blocked on: Python sidecar vs Rust-only + llama-server D002 precedent, 13MB binary + no-bundled-weights constraint, zero-shot accuracy gap | 2026-09-26 | Research only, no code written; user asked "useful or not" before any implementation |
 | `github.com/yijunyu/jev-rs` (Apache-2.0/MIT) + `jev-sdk` crate (docs.rs) | Rust-native Jev-class engine: reads next-token logprobs from any llama-server GGUF (Qwen3-4B: 75ms p50 warm, zero output tokens), wire-compatible `POST /v1/systemone`, `jev ask`/`serve`/`mcp`/`eval`/`calibrate`. Accuracy on dev_tasks: 0.71 overall (choice 0.92, noul 0.64, score 0.56) — same 0.70 open-class ceiling. Reuses the llama-server Teletype ALREADY bundles (D002 subprocess, no new runtime, no Python). `jev-sdk` = hosted-TypeSafe-only client (network, violates D003). Fit: strictly better than Python Kev for a future agent layer (same accuracy, Rust, no new sidecar), but still not useful for current deterministic pipeline | 2026-09-26 | Follow-up to Kev research; no code written |
-| Root planning docs: `Teletype Agent Plan Beat Wispr Flow.md` + `Teletype Agent Plan NeuDecide Addendum.md` (desk-checked 2026-11-01) + `PROGRESS.md` on `feat/beat-wispr` | Governing plan: gates 0–7, P0.1–P7.1, baseline-ways rule, never-break-delivery rule, NeuDecide hybrid decider shape (tool from audio, arguments from transcript, Apache-2.0) | 2026-11-01 | Plan of record (Decision D020); executes on `feat/beat-wispr`; state = that branch's `PROGRESS.md` |
+| Root planning docs: `Teletype Agent Plan Beat Wispr Flow.md` + `Teletype Agent Plan NeuDecide Addendum.md` (desk-checked 2026-11-01) + `PROGRESS.md` on `feat/beat-wispr` | Governing plan: gates 0–7, P0.1–P7.1, baseline-ways rule, never-break-delivery rule, NeuDecide hybrid decider shape (tool from audio, arguments from transcript, Apache-2.0) | 2026-11-01 | Plan of record (Decision D017); executes on `feat/beat-wispr`; state = that branch's `PROGRESS.md` |
 | `huggingface.co/AuroraAI-Research/AuroraASR-1M` (published 2026-10-18, Apache-2.0; 0 downloads at check) | Sub-1M (949,073-param) weight-shared Conformer-CTC dictation: 4 unique Conformer-lite blocks ×2 passes, d_model=128, 256-piece BPE, greedy CTC, no LM; trained on LibriSpeech-960h only, English-only, 16 kHz; **no punctuation/casing in output**. Self-reported WER (greedy): test-clean 11.43 / test-other 26.50 — within ~0.5 of Femto-ASR (2.39M, 10.95/25.36), far above Citrinet-256 (10M; 3.8/9.8), Moonshine Tiny (27M; 4.58 clean), Whisper tiny.en (39M; 5.6/14.6). Speed claims (unverified by us): RTF 0.0023 = 436× real-time on 1 CPU core; 3.81 MB FP32 / 1.06 MB INT8, claims near-lossless to INT8. Verdict 2026-10-21: admirable extreme-minimal model, but NOT a replacement for Parakeet TDT 0.6B v3 as our primary ASR — higher WER (parakeet class beats it by roughly 1/3 on clean and ~5× on test-other), no punctuation, read-speech-only training with no noise augmentation, no production track record. Plausible only as a cheap pre-screen/embedded path or an `evals/` baseline for tiny models | 2026-10-21 (HF API + model card; numbers self-reported) | Research only, no code written; user asked "is this a good ASR" before any implementation |
 
 ---
@@ -3024,6 +3090,28 @@ Record explicit user decisions that are likely to matter later.
 
 ## 14. Brain maintenance notes
 
+### Freshness contract (2026-11-19)
+
+The brain must describe the checkout it sits in, not a historical snapshot.
+
+- The `<!-- brain-freshness: version=… head=… updated=… -->` marker near the top
+  is the machine-readable "last verified" point. Update it whenever the release
+  line, HEAD, or verified facts change.
+- Run `bash scripts/check-brain-freshness.sh` before starting meaningful work
+  and again before reporting done. It is read-only and always exits 0: it
+  reports marker/tag drift, duplicate decision IDs, and untracked brain files.
+- A tracked `post-commit` hook (`.githooks/post-commit`, enabled via
+  `core.hooksPath = .githooks`) prints a **non-blocking** reminder when a commit
+  changes code but not `.agents/brain/`. The reminder is a prompt to decide,
+  not an automatic edit.
+- If a task changed no durable knowledge, say so explicitly in the final report
+  ("no brain change needed"). Do not manufacture entries, and do not leave a
+  known-stale section standing because it was not in the diff.
+- Recorded IDs are unique: D001–D043 plus D044 (Notetaker) and D045 (fetched
+  model weights). A duplicate ID or a
+  reference to a decision that does not match its block is a defect to fix on
+  sight (see the D011/D016/D017/D020 corrections made 2026-11-19).
+
 ### When an agent should update this file
 
 Update when:
@@ -3046,7 +3134,7 @@ Do not add:
 
 ---
 
-| 2026-11-01 | `ali-agent-health` audit (6 checks) + `to-tickets` for the Beat-Wispr plan: registry 8/8 ACTIVE; all learning files status-tailed; fixed duplicate section number (`## 10. QA audit` → unnumbered); fixed stale `typing_windows.rs` path (now `typing/` since `8f86c5c`); added current-work topology (3-branch + plan authority), Decisions **D019** (EG-1 removal, `1ebd339`) and **D020** (commit-while-you-go streaming, `fcae04b`, plan of record), learning **L032** (QA battery practice), planning-docs source row; added ADR-013/ADR-014 files (local-only — see drift notes). Left for Ali: (a) brain is mostly gitignored (`.gitignore: .agents/*`) and the two tracked lineages (main `caa90f4`, refactor `ae98488`) will conflict on merge — prefer the refactor lineage and salvage from there; (b) ADR-013/014 and most learnings are untracked locally — track or resign if they must survive between checkouts; (c) an older, uncommitted brain revision (v0.2.5-era: "State here?" 31-item list, QA-battery bug list) existed in a prior working tree and was never committed anywhere in git — durable items from it have been re-verified and re-recorded above (L023); the rest is treated as lost. |
+| 2026-11-01 | `ali-agent-health` audit (6 checks) + `to-tickets` for the Beat-Wispr plan: registry 8/8 ACTIVE; all learning files status-tailed; fixed duplicate section number (`## 10. QA audit` → unnumbered); fixed stale `typing_windows.rs` path (now `typing/` since `8f86c5c`); added current-work topology (3-branch + plan authority), Decisions **D016** (EG-1 removal, `1ebd339`) and **D017** (commit-while-you-go streaming, `fcae04b`, plan of record) — IDs corrected 2026-11-19 against the actual decision blocks; learning **L032** (QA battery practice), planning-docs source row; added ADR-013/ADR-014 files (local-only — see drift notes). Left for Ali: (a) brain is mostly gitignored (`.gitignore: .agents/*`) and the two tracked lineages (main `caa90f4`, refactor `ae98488`) will conflict on merge — prefer the refactor lineage and salvage from there; (b) ADR-013/014 and most learnings are untracked locally — track or resign if they must survive between checkouts; (c) an older, uncommitted brain revision (v0.2.5-era: "State here?" 31-item list, QA-battery bug list) existed in a prior working tree and was never committed anywhere in git — durable items from it have been re-verified and re-recorded above (L023); the rest is treated as lost. |
 
 ## 15. Future company brain hook
 

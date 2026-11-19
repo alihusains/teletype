@@ -78,9 +78,9 @@ fn voice_command_e2e() {
 
     if td_provider.is_none() && nd_provider.is_none() {
         eprintln!("SKIP: no model files found. Download with:");
+        eprintln!("  ./scripts/fetch-needle-model.sh   # models/needle3.cact");
         eprintln!("  curl -L -o models/tinydecide/meta.json https://huggingface.co/TheREZOR/TinyDecide/resolve/main/meta.json");
         eprintln!("  curl -L -o models/tinydecide/model.bin https://huggingface.co/TheREZOR/TinyDecide/resolve/main/model.bin");
-        eprintln!("  curl -L -o models/needle3.cact https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact");
         return;
     }
 

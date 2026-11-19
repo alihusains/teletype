@@ -6,7 +6,13 @@
 //!   cargo test -p teletype-inference --test needle_e2e -- --nocapture
 //!
 //! The model file must be at `models/needle3.cact` (relative to the
-//! workspace root). Set `NEEDLE3_CACT` to override the path.
+//! workspace root). Fetch it with `./scripts/fetch-needle-model.sh`; it is
+//! not committed (a 35 MB weight file). Set `NEEDLE3_CACT` to point at a
+//! copy elsewhere. When the file is absent the test prints a SKIP line and
+//! passes, so a clean clone can still run the workspace suite.
+//!
+//! This is a local-only harness (brain D045): CI does not download the model,
+//! so the test always skips there. Run it on a machine with the weights.
 //!
 //! # FINDINGS (2026-10-12)
 //!
@@ -53,30 +59,32 @@ use std::time::Instant;
 use teletype_core::llm::{DecisionProvider, GenerationParams, InferenceProvider};
 use teletype_inference::{NeedleProvider, EXTRACT_SYSTEM_PROMPT};
 
-fn model_path() -> std::path::PathBuf {
+fn model_path() -> Option<std::path::PathBuf> {
     if let Ok(p) = std::env::var("NEEDLE3_CACT") {
-        return std::path::PathBuf::from(p);
+        return Some(std::path::PathBuf::from(p));
     }
     // Workspace root is two levels up from the crate.
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest
+    match manifest
         .join("../..")
         .join("models")
         .join("needle3.cact")
         .canonicalize()
-        .unwrap_or_else(|_| {
-            eprintln!("ERROR: models/needle3.cact not found. Download it with:");
-            eprintln!(
-                "  curl -L -o models/needle3.cact \
-                 https://huggingface.co/Cactus-Compute/needle3/resolve/main/needle3.cact"
-            );
-            std::process::exit(1);
-        })
+    {
+        Ok(p) => Some(p),
+        Err(_) => {
+            eprintln!("SKIP: models/needle3.cact not found (local-only test, CI skips it). Fetch it with:");
+            eprintln!("  ./scripts/fetch-needle-model.sh");
+            None
+        }
+    }
 }
 
 #[test]
 fn e2e_load_init_complete() {
-    let path = model_path();
+    let Some(path) = model_path() else {
+        return;
+    };
     println!("\n=== Needle 3 E2E Test ===");
     println!("Model: {}", path.display());
 

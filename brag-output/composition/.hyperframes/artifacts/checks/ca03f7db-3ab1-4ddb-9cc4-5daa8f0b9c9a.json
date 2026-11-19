@@ -1,0 +1,748 @@
+{
+  "ok": false,
+  "strict": false,
+  "browserSkipped": false,
+  "lint": {
+    "ok": false,
+    "errorCount": 1,
+    "warningCount": 1,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "gsap_repeated_fromto_without_baseline",
+        "severity": "warning",
+        "message": "2 tl.fromTo() calls target \"#s2-state-transcribing\" with no stable baseline. The last-authored fromTo \"from\" values become the element's resting state for any seek before the first tween actually runs, because GSAP applies fromTo from-values at authoring time (immediateRender), not at tween position.",
+        "selector": "#s2-state-transcribing",
+        "dataAttributes": {},
+        "sourceFile": "/Users/alihusainsorathiya/Documents/projects/teletype/brag-output/composition/compositions/scene-02.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Add `immediateRender: false` to every fromTo except the earliest-positioned one (at 1.66s), so pre-first-tween seeks keep its \"from\" values. A hiding `tl.set(..., 0)` baseline trips gsap_timeline_set_initial_hide, and a `gsap.set` authored before the fromTo calls is overwritten by them."
+      },
+      {
+        "code": "gsap_non_transform_motion",
+        "severity": "error",
+        "message": "GSAP tween on \"#s2-caret\" uses motion that snaps to integer device pixels: left. Layout and text-reflow properties snap during browser layout; roundProps rounds the tween value. Slow motion or an ease-out tail then stutters under the seek-by-frame capture engine. Animate transforms (x/y/scale/opacity) instead.",
+        "selector": "#s2-caret",
+        "dataAttributes": {},
+        "sourceFile": "/Users/alihusainsorathiya/Documents/projects/teletype/brag-output/composition/compositions/scene-02.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "replace left with the transform equivalent (x), e.g. tl.fromTo(\"#s2-caret\", { x: -1300 }, { x: 0, ...yourAnimation }). Transforms interpolate sub-pixel and stay smooth at any speed."
+      }
+    ],
+    "filesScanned": 6
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "layout": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 5,
+    "findings": [
+      {
+        "code": "container_overflow",
+        "severity": "info",
+        "time": 1.243,
+        "selector": "#s1-glow",
+        "message": "Element extends outside a clipping layout container.",
+        "rect": {
+          "left": 755.71,
+          "top": -264.29,
+          "right": 2064.29,
+          "bottom": 1044.29,
+          "width": 1308.58,
+          "height": 1308.58
+        },
+        "containerSelector": "#scene-01 > div:nth-of-type(1)",
+        "fixHint": "Resize/reposition the child or container, or mark intentional overflow with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 0,
+          "top": 0,
+          "right": 1920,
+          "bottom": 1080,
+          "width": 1920,
+          "height": 1080
+        },
+        "overflow": {
+          "right": 144.29,
+          "top": 264.29
+        },
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-01.html",
+        "bbox": {
+          "x": 755.71,
+          "y": -264.29,
+          "width": 1308.58,
+          "height": 1308.58
+        },
+        "firstSeen": 1.243,
+        "lastSeen": 1.243,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          1.243
+        ]
+      },
+      {
+        "code": "content_overlap",
+        "severity": "info",
+        "time": 4.999,
+        "selector": "#s2-state-listening",
+        "message": "Two text blocks overlap and may render unreadable.",
+        "rect": {
+          "left": 1254,
+          "top": 815,
+          "right": 1354.86,
+          "bottom": 838,
+          "width": 100.86,
+          "height": 23
+        },
+        "containerSelector": "#s2-state-transcribing",
+        "text": "Listening…",
+        "fixHint": "Give each block its own zone, or put data-layout-allow-overlap on the text or on a container inside the scene. A marker on the scene root does not apply.",
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-02.html",
+        "bbox": {
+          "x": 1254,
+          "y": 815,
+          "width": 100.86,
+          "height": 23
+        },
+        "firstSeen": 4.999,
+        "lastSeen": 4.999,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          4.999
+        ]
+      },
+      {
+        "code": "escaped_container",
+        "severity": "info",
+        "time": 16.156,
+        "selector": "#s4-minutes",
+        "message": "Positioned element renders far outside its offset parent — its coordinates were likely computed in a different frame (canvas/viewport pixels).",
+        "rect": {
+          "left": 1028.95,
+          "top": 550.8,
+          "right": 1218.16,
+          "bottom": 584.78,
+          "width": 189.21,
+          "height": 33.98
+        },
+        "containerSelector": "#s4-record-right",
+        "text": "minutes saved",
+        "fixHint": "Compute left/top in the offset parent's frame (subtract its rect), or mark intentional placement with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 1028.95,
+          "top": 342.94,
+          "right": 1532.6,
+          "bottom": 359.93,
+          "width": 503.65,
+          "height": 16.99
+        },
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-04.html",
+        "bbox": {
+          "x": 1028.95,
+          "y": 550.8,
+          "width": 189.21,
+          "height": 33.98
+        },
+        "firstSeen": 16.156,
+        "lastSeen": 16.156,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          16.156
+        ]
+      },
+      {
+        "code": "escaped_container",
+        "severity": "info",
+        "time": 16.156,
+        "selector": "#s4-per",
+        "message": "Positioned element renders far outside its offset parent — its coordinates were likely computed in a different frame (canvas/viewport pixels).",
+        "rect": {
+          "left": 1028.95,
+          "top": 590.77,
+          "right": 1168.29,
+          "bottom": 611.76,
+          "width": 139.34,
+          "height": 20.99
+        },
+        "containerSelector": "#s4-record-right",
+        "text": "per 1,000 words",
+        "fixHint": "Compute left/top in the offset parent's frame (subtract its rect), or mark intentional placement with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 1028.95,
+          "top": 342.94,
+          "right": 1532.6,
+          "bottom": 359.93,
+          "width": 503.65,
+          "height": 16.99
+        },
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-04.html",
+        "bbox": {
+          "x": 1028.95,
+          "y": 590.77,
+          "width": 139.34,
+          "height": 20.99
+        },
+        "firstSeen": 16.156,
+        "lastSeen": 16.156,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          16.156
+        ]
+      },
+      {
+        "code": "escaped_container",
+        "severity": "info",
+        "time": 16.156,
+        "selector": "#s4-chart",
+        "message": "Positioned element renders far outside its offset parent — its coordinates were likely computed in a different frame (canvas/viewport pixels).",
+        "rect": {
+          "left": 1358.72,
+          "top": 538.81,
+          "right": 1475.64,
+          "bottom": 638.74,
+          "width": 116.92,
+          "height": 99.93
+        },
+        "containerSelector": "#s4-record-right",
+        "text": "",
+        "fixHint": "Compute left/top in the offset parent's frame (subtract its rect), or mark intentional placement with data-layout-allow-overflow.",
+        "containerRect": {
+          "left": 1028.95,
+          "top": 342.94,
+          "right": 1532.6,
+          "bottom": 359.93,
+          "width": 503.65,
+          "height": 16.99
+        },
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-04.html",
+        "bbox": {
+          "x": 1358.72,
+          "y": 538.81,
+          "width": 116.92,
+          "height": 99.93
+        },
+        "firstSeen": 16.156,
+        "lastSeen": 16.156,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          16.156
+        ]
+      }
+    ],
+    "duration": 22.37,
+    "samples": [
+      1.243,
+      3.728,
+      6.214,
+      8.699,
+      11.185,
+      13.671,
+      16.156,
+      18.642,
+      21.127
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 5,
+    "truncated": false
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": true,
+    "samples": [
+      1.243,
+      6.214,
+      11.185,
+      16.156,
+      21.127
+    ],
+    "checked": 36,
+    "passed": 36
+  },
+  "craft": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 8,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "first_frame_empty",
+        "severity": "warning",
+        "message": "Frame 0 shows only the background, and the first frame is the thumbnail on social players: have the title or key image already on screen at 0 s instead of entering from nothing; see references/review.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 4 text elements stay under it for 0.5 s or more, the smallest \"YOUR MAC\" at 15 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "YOUR MAC",
+        "selector": "#s1-mac-label",
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-01.html",
+        "bbox": {
+          "x": 629.91,
+          "y": 805.52,
+          "width": 100.18,
+          "height": 19
+        },
+        "time": 0.5,
+        "times": [
+          0.5,
+          0.5,
+          0.5,
+          2.749
+        ],
+        "fontPx": 15,
+        "floorPx": 28,
+        "seconds": 2.874,
+        "elements": [
+          {
+            "selector": "#s1-mac-label",
+            "text": "YOUR MAC",
+            "fontPx": 15,
+            "time": 0.5,
+            "seconds": 2.874
+          },
+          {
+            "selector": "div.s1-cloud-label",
+            "text": "THEIR SERVERS",
+            "fontPx": 15,
+            "time": 0.5,
+            "seconds": 2.874
+          },
+          {
+            "selector": "#s1-upload-label",
+            "text": "uploading audio",
+            "fontPx": 16,
+            "time": 0.5,
+            "seconds": 2.249
+          },
+          {
+            "selector": "#s1-upload-done",
+            "text": "audio uploaded",
+            "fontPx": 16,
+            "time": 2.749,
+            "seconds": 0.625
+          }
+        ]
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 8 text elements stay under it for 0.5 s or more, the smallest \"Draft.md\" at 15 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "Draft.md",
+        "selector": "#s2-window-title",
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-02.html",
+        "bbox": {
+          "x": 1128.23,
+          "y": 355.83,
+          "width": 63.54,
+          "height": 18.96
+        },
+        "time": 3.749,
+        "times": [
+          3.749,
+          3.874,
+          3.874,
+          3.999,
+          3.999,
+          5.374,
+          7.498,
+          7.498
+        ],
+        "fontPx": 14.97,
+        "floorPx": 28,
+        "seconds": 5.124,
+        "elements": [
+          {
+            "selector": "#s2-window-title",
+            "text": "Draft.md",
+            "fontPx": 14.97,
+            "time": 3.749,
+            "seconds": 5.124
+          },
+          {
+            "selector": "span.key.wide",
+            "text": "Space",
+            "fontPx": 15,
+            "time": 3.874,
+            "seconds": 4.999
+          },
+          {
+            "selector": "#s2-timer",
+            "text": "0:02",
+            "fontPx": 15.79,
+            "time": 3.999,
+            "seconds": 4.874
+          },
+          {
+            "selector": "span.hold",
+            "text": "Hold",
+            "fontPx": 17,
+            "time": 3.874,
+            "seconds": 4.999
+          },
+          {
+            "selector": "#s2-caption",
+            "text": "typed straight into .",
+            "fontPx": 18,
+            "time": 7.498,
+            "seconds": 1.375
+          },
+          {
+            "selector": "#s2-caption > b:nth-of-type(1)",
+            "text": "whatever app has focus",
+            "fontPx": 18,
+            "time": 7.498,
+            "seconds": 1.375
+          },
+          {
+            "selector": "#s2-state-listening",
+            "text": "Listening…",
+            "fontPx": 18.75,
+            "time": 3.999,
+            "seconds": 1
+          },
+          {
+            "selector": "#s2-state-done",
+            "text": "Done",
+            "fontPx": 19,
+            "time": 5.374,
+            "seconds": 3.499
+          }
+        ]
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 7 text elements stay under it for 0.5 s or more, the smallest \"speech engine\" at 14 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "speech engine",
+        "selector": "#s3-engine-sub",
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-03.html",
+        "bbox": {
+          "x": 667.03,
+          "y": 611.82,
+          "width": 97.35,
+          "height": 16.69
+        },
+        "time": 9.623,
+        "times": [
+          9.248,
+          9.498,
+          9.623,
+          9.623,
+          9.998,
+          10.123,
+          10.498
+        ],
+        "fontPx": 13.74,
+        "floorPx": 28,
+        "seconds": 3.624,
+        "elements": [
+          {
+            "selector": "#s3-engine-sub",
+            "text": "speech engine",
+            "fontPx": 13.74,
+            "time": 9.623,
+            "seconds": 3.624
+          },
+          {
+            "selector": "#s3-boundary-label",
+            "text": "YOUR MAC",
+            "fontPx": 14,
+            "time": 9.498,
+            "seconds": 3.749
+          },
+          {
+            "selector": "#s3-eyebrow",
+            "text": "ON-DEVICE SPEECH ENGINE",
+            "fontPx": 15,
+            "time": 9.248,
+            "seconds": 3.999
+          },
+          {
+            "selector": "#s3-memory",
+            "text": "audio stays in memory",
+            "fontPx": 15,
+            "time": 9.998,
+            "seconds": 3.249
+          },
+          {
+            "selector": "#s3-never",
+            "text": "NEVER UPLOADED",
+            "fontPx": 15,
+            "time": 10.498,
+            "seconds": 2.749
+          },
+          {
+            "selector": "#s3-engine-name",
+            "text": "Parakeet · Whisper",
+            "fontPx": 21.6,
+            "time": 9.623,
+            "seconds": 3.624
+          },
+          {
+            "selector": "#s3-result-text",
+            "text": "The deploy went out this morning.",
+            "fontPx": 21.93,
+            "time": 10.123,
+            "seconds": 3.124
+          }
+        ]
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "\"so the, uh , deploy went out, um , this morning\" (9 words) is on screen 1.13 s (±0.01 s), under its 2.40 s floor: hold it about 0.5 s + 0.3 s a word (3.20 s here) before it leaves or changes; see references/motion.md.",
+        "text": "so the, uh , deploy went out, um , this morning",
+        "selector": "#s4-raw",
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-04.html",
+        "bbox": {
+          "x": 386.15,
+          "y": 470.26,
+          "width": 776.5400000000001,
+          "height": 45.90999999999997
+        },
+        "time": 13.27,
+        "words": 9,
+        "seconds": 1.133,
+        "floorSeconds": 2.4
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 8 text elements stay under it for 0.5 s or more, the smallest \"CLEANUP\" at 14 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "CLEANUP",
+        "selector": "#s4-clean-card > div:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-04.html",
+        "bbox": {
+          "x": 386.15,
+          "y": 402.4,
+          "width": 82.38,
+          "height": 16.96
+        },
+        "time": 13.372,
+        "times": [
+          13.372,
+          13.372,
+          14.872,
+          16.121,
+          16.121,
+          16.121,
+          16.121,
+          16.121
+        ],
+        "fontPx": 13.91,
+        "floorPx": 28,
+        "seconds": 2.624,
+        "elements": [
+          {
+            "selector": "#s4-clean-card > div:nth-of-type(1)",
+            "text": "CLEANUP",
+            "fontPx": 13.91,
+            "time": 13.372,
+            "seconds": 2.624
+          },
+          {
+            "selector": "#s4-record-left > div:nth-of-type(1)",
+            "text": "YOUR RECORD",
+            "fontPx": 13.98,
+            "time": 16.121,
+            "seconds": 2.5
+          },
+          {
+            "selector": "#s4-record-right > div:nth-of-type(1)",
+            "text": "INSIGHTS",
+            "fontPx": 13.98,
+            "time": 16.121,
+            "seconds": 2.5
+          },
+          {
+            "selector": "#s4-clean-sub",
+            "text": "automatic · deterministic",
+            "fontPx": 14.9,
+            "time": 13.372,
+            "seconds": 2.624
+          },
+          {
+            "selector": "#s4-clean-note",
+            "text": "fillers gone · punctuation added",
+            "fontPx": 14.9,
+            "time": 14.872,
+            "seconds": 1.124
+          },
+          {
+            "selector": "#s4-file-note",
+            "text": "every dictation, archived",
+            "fontPx": 15.98,
+            "time": 16.121,
+            "seconds": 2.5
+          },
+          {
+            "selector": "#s4-per",
+            "text": "per 1,000 words",
+            "fontPx": 17.98,
+            "time": 16.121,
+            "seconds": 2.5
+          },
+          {
+            "selector": "#s4-file-name",
+            "text": "2026-11-07.md",
+            "fontPx": 23.97,
+            "time": 16.121,
+            "seconds": 2.5
+          }
+        ]
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "\"The deploy went out this morning.\" (6 words) is on screen 1.40 s (±0.01 s), under its 1.72 s floor: hold it about 0.5 s + 0.3 s a word (2.30 s here) before it leaves or changes; see references/motion.md.",
+        "text": "The deploy went out this morning.",
+        "selector": "#s4-clean",
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-04.html",
+        "bbox": {
+          "x": 431,
+          "y": 559.75,
+          "width": 596.8400000000001,
+          "height": 46
+        },
+        "time": 14.505,
+        "words": 6,
+        "seconds": 1.397,
+        "floorSeconds": 1.725
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 4 text elements stay under it for 0.5 s or more, the smallest \"Free · open source · on your Mac.\" at 22 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "Free · open source · on your Mac.",
+        "selector": "#s5-free",
+        "dataAttributes": {},
+        "sourceFile": "compositions/scene-05.html",
+        "bbox": {
+          "x": 776.95,
+          "y": 714.16,
+          "width": 366.1,
+          "height": 26
+        },
+        "time": 20.245,
+        "times": [
+          18.746,
+          18.996,
+          19.246,
+          20.245
+        ],
+        "fontPx": 22,
+        "floorPx": 28,
+        "seconds": 2.125,
+        "elements": [
+          {
+            "selector": "#s5-free",
+            "text": "Free · open source · on your Mac.",
+            "fontPx": 22,
+            "time": 20.245,
+            "seconds": 2.125
+          },
+          {
+            "selector": "#s5-chip-2",
+            "text": "No account.",
+            "fontPx": 25.97,
+            "time": 18.996,
+            "seconds": 0.75
+          },
+          {
+            "selector": "#s5-chip-1",
+            "text": "No cloud.",
+            "fontPx": 26,
+            "time": 18.746,
+            "seconds": 1
+          },
+          {
+            "selector": "#s5-chip-3",
+            "text": "No subscription.",
+            "fontPx": 26,
+            "time": 19.246,
+            "seconds": 0.5
+          }
+        ]
+      }
+    ],
+    "enabled": true,
+    "step": 0.125,
+    "samples": 179
+  },
+  "audio": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "hdr": {
+    "autoPromotion": null,
+    "inspection": "available"
+  },
+  "snapshots": {
+    "enabled": false,
+    "files": [],
+    "times": [],
+    "findingFiles": []
+  }
+}

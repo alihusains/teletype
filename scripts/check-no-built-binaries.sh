@@ -23,7 +23,7 @@ if [[ -n "$staged_paths" ]]; then
   while read -r f; do
     [[ -n "$f" ]] || continue
     case "$f" in
-      crates/teletype-desktop/binaries/*|target/*|*/node_modules/*)
+      crates/teletype-desktop/binaries/*|target/*|*/node_modules/*|models/*.cact)
         echo "FAIL: build artifact staged for commit: $f" >&2
         bad=1
         ;;
@@ -42,6 +42,17 @@ for f in crates/teletype-desktop/binaries/llama-server \
     fi
   fi
 done
+
+# Model weights are fetched, never tracked. models/needle3.cact was committed
+# until 2026-11-19 (35 MB in every clone); keep it from coming back.
+while read -r f; do
+  [[ -n "$f" ]] || continue
+  size=$(git cat-file -s ":$f" 2>/dev/null || echo 0)
+  if [[ "$size" -gt 1000000 ]]; then
+    echo "FAIL: model weight tracked: $f is $size bytes. Use models/* on demand." >&2
+    bad=1
+  fi
+done < <(git ls-files 'models/*.cact' 2>/dev/null || true)
 
 if [[ $bad -eq 0 ]]; then
   echo "OK: no build artifacts staged"
