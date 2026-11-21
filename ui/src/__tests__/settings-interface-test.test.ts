@@ -56,7 +56,7 @@ const SETTINGS_FIXTURE: Settings = {
   commandWakePhrase: true,
   pendingNotice: null,
   polishWholeTextAtEnd: false,
-  polishSkipWhenClean: true,
+  polishSkipWhenClean: false,
   instantStart: 'off',
   preferBuiltinMicWithBt: true,
   audioConditioning: false,

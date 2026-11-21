@@ -1,5 +1,6 @@
 //! Transform definitions: reusable AI instructions.
 
+pub mod backtrack;
 pub mod engine;
 pub mod families;
 pub mod gate;

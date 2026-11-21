@@ -16,6 +16,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::learning::judge::{
+    judge_replace, phon_sim, JudgeContext, Judgement, SkipReason, SCREEN_CONFIRMED_PHON_SIM,
+};
+
 /// Where a preference applies.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -177,6 +181,55 @@ impl Default for UserProfile {
             s1_control: Default::default(),
             app_language_overrides: BTreeMap::new(),
         }
+    }
+}
+
+/// Dictionary-write guard for a learned terminology swap (D006): only a
+/// mishearing may become a learned dictionary word, never a style edit, a
+/// rewrite, or a structural span.
+///
+/// Strict wrapper: with no screen confirmation the word-list skip floor stays
+/// at `0.6`, exactly as before. Use
+/// [`is_learnable_terminology_with_screen_terms`] when the caller captured the
+/// terms visible on screen at edit time.
+pub fn is_learnable_terminology(from: &str, to: &str) -> bool {
+    is_learnable_terminology_with_screen_terms(from, to, &[])
+}
+
+/// As [`is_learnable_terminology`], but a `to` matching one of `screen_terms`
+/// (case-insensitively) is screen-confirmed: the judge waives the single-word
+/// word-list skip for it and lowers the phonetic floor to
+/// [`SCREEN_CONFIRMED_PHON_SIM`], so a name visible on screen can be learned
+/// even in the `0.45..0.6` band. Structural skips and style/rewrite verdicts
+/// are never waived.
+pub fn is_learnable_terminology_with_screen_terms(
+    from: &str,
+    to: &str,
+    screen_terms: &[String],
+) -> bool {
+    let screen_confirmed = screen_terms.iter().any(|t| t.eq_ignore_ascii_case(to));
+    let ctx = JudgeContext {
+        // The extractor already found a targeted swap; treat that as the
+        // sub-0.9 evidence the judge expects before dropping the proper-noun
+        // requirement.
+        min_conf: Some(0.8),
+        screen_terms: screen_terms.to_vec(),
+        ..Default::default()
+    };
+    match judge_replace(from, to, &ctx) {
+        Judgement::Mishearing { .. } => true,
+        Judgement::Skip {
+            reason:
+                SkipReason::EverydayWord | SkipReason::CommonFirstName | SkipReason::EverydayAcronym,
+        } => {
+            let floor = if screen_confirmed {
+                SCREEN_CONFIRMED_PHON_SIM
+            } else {
+                0.6
+            };
+            phon_sim(from, to) >= floor
+        }
+        _ => false,
     }
 }
 
@@ -365,6 +418,54 @@ mod tests {
         // A document written before the field existed still deserializes.
         let legacy: UserProfile = serde_json::from_str(r#"{"language":"en"}"#).unwrap();
         assert!(legacy.app_language_overrides.is_empty());
+    }
+
+    #[test]
+    fn terminology_guard_is_strict_without_screen_terms() {
+        assert!(is_learnable_terminology("margets", "Markets"));
+        assert!(is_learnable_terminology("kubernates", "kubernetes"));
+        // A common first name in the 0.45–0.6 band stays refused.
+        assert!(!is_learnable_terminology("sevan", "Sarah"));
+        // Casing-only changes are style, and structural spans are never terms.
+        assert!(!is_learnable_terminology("markets", "Markets"));
+        assert!(!is_learnable_terminology("the", "a"));
+        assert!(!is_learnable_terminology("src/main.rs", "src/main2.rs"));
+    }
+
+    #[test]
+    fn screen_confirmed_first_name_becomes_learnable_terminology() {
+        let terms = vec!["Sarah".to_string()];
+        assert!(is_learnable_terminology_with_screen_terms(
+            "sevan", "Sarah", &terms
+        ));
+        assert!(is_learnable_terminology_with_screen_terms(
+            "sevan",
+            "Sarah",
+            &["sarah".to_string()]
+        ));
+        // No confirmation, or confirmation of an unrelated term, keeps the
+        // strict behaviour.
+        assert!(!is_learnable_terminology_with_screen_terms(
+            "sevan",
+            "Sarah",
+            &[]
+        ));
+        assert!(!is_learnable_terminology_with_screen_terms(
+            "sevan",
+            "Sarah",
+            &["PyTorch".to_string()]
+        ));
+        // Structural and style guards survive screen confirmation.
+        assert!(!is_learnable_terminology_with_screen_terms(
+            "src/main.rs",
+            "src/main2.rs",
+            &["src/main2.rs".to_string()]
+        ));
+        assert!(!is_learnable_terminology_with_screen_terms(
+            "markets",
+            "Markets",
+            &["Markets".to_string()]
+        ));
     }
 
     #[test]

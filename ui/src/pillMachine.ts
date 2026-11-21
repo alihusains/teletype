@@ -19,6 +19,14 @@ export interface PolishDiffPayload {
   /** The card id Rust handed out (overlay::show_result); the pill passes it
    * back to `dismiss_pill_result` so a late dismiss cannot hide a new take. */
   card?: number;
+  /** Polish profile that actually ran (e.g. "structured"). Optional: older
+   * payloads and payloads without a profile omit the key entirely. */
+  profile?: string;
+  /** Gate / fallback reason from the same result. Optional for the same reason. */
+  reason?: string;
+  ran?: boolean;
+  model?: string | null;
+  original?: string;
 }
 
 // --- Wire payloads (exactly what the Rust backend emits) --------------------
@@ -65,7 +73,7 @@ export type PillMachinePhase =
   | { phase: "streaming"; message: string }
   | { phase: "done"; message: string }
   | { phase: "error"; message: string }
-  | { phase: "result"; raw: string; polished: string; ms: number; card?: number };
+  | { phase: "result"; raw: string; polished: string; ms: number; card?: number; profile?: string; reason?: string; ran?: boolean; model?: string | null; original?: string };
 
 export type PillPhaseName = PillMachinePhase["phase"];
 
@@ -415,6 +423,11 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
           polished: a.payload.polished,
           ms: a.payload.ms,
           card: a.payload.card,
+          profile: a.payload.profile,
+          reason: a.payload.reason,
+          ran: a.payload.ran,
+          model: a.payload.model,
+          original: a.payload.original,
         },
         skipMessage: null,
         micFailure: false,

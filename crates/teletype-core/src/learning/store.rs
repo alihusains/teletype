@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::dictionary::DictionaryWord;
+use crate::profile::PolishProfile;
 
 /// Errors from the learning store.
 #[derive(Debug, Error)]
@@ -32,14 +33,15 @@ pub struct LearningStore {
 
 /// Schema version. Bump and add a `PRAGMA user_version`-gated migration
 /// step below when the on-disk schema changes in place.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS dictation (
   id INTEGER PRIMARY KEY, ts INTEGER, app_id TEXT, app_category TEXT, engine TEXT, lang TEXT,
   audio_path TEXT NULL, raw_asr TEXT, words_json TEXT,
   pasted TEXT, observed TEXT NULL, edit_ops_json TEXT NULL, polish_model TEXT NULL, polish_skipped INTEGER,
-  settle_edits TEXT NULL, settle_status INTEGER NOT NULL DEFAULT 0
+  settle_edits TEXT NULL, settle_status INTEGER NOT NULL DEFAULT 0,
+  polish_profile TEXT NULL, screen_terms_json TEXT NULL
 );
 CREATE TABLE IF NOT EXISTS lexicon (
   term TEXT PRIMARY KEY, aliases_json TEXT, source TEXT CHECK(source IN ('manual','learned','contacts','import','pack')),
@@ -111,6 +113,19 @@ impl LearningStore {
                 "ALTER TABLE dictation ADD COLUMN settle_status INTEGER NOT NULL DEFAULT 0;",
             )?;
         }
+        // T5: the profile that produced the take, needed by the settle sweep
+        // to attribute a kept/undone signal to the right `(app, profile)`
+        // tally. Appended after `settle_status` so its column index matches a
+        // freshly created schema; legacy rows read back as Natural.
+        if !column_exists(&conn, "dictation", "polish_profile")? {
+            conn.execute_batch("ALTER TABLE dictation ADD COLUMN polish_profile TEXT NULL;")?;
+        }
+        // Screen-confirmed personalization: terms visible on screen when the
+        // take's edit was observed. Appended last so its column index matches
+        // a freshly created schema; legacy rows read back as an empty list.
+        if !column_exists(&conn, "dictation", "screen_terms_json")? {
+            conn.execute_batch("ALTER TABLE dictation ADD COLUMN screen_terms_json TEXT NULL;")?;
+        }
         for (col, default) in [
             ("accepted", "INTEGER NOT NULL DEFAULT 0"),
             ("rejected", "INTEGER NOT NULL DEFAULT 0"),
@@ -153,6 +168,16 @@ pub struct DictationRow {
     pub edit_ops_json: Option<String>,
     pub polish_model: Option<String>,
     pub polish_skipped: bool,
+    /// The polish contract that ran on this take. Serde-defaulted so older
+    /// JSON payloads load as `Natural`.
+    #[serde(default)]
+    pub polish_profile: PolishProfile,
+    /// Terms visible on screen when this take's edit was observed. A target
+    /// matching one of these is screen-confirmed by the judge and the
+    /// dictionary-write guard. Serde-defaulted so older JSON payloads load
+    /// as an empty list.
+    #[serde(default)]
+    pub screen_terms: Vec<String>,
 }
 
 /// One lexicon entry (manual/learned/contacts/import/pack term).
@@ -244,8 +269,9 @@ impl LearningStore {
     pub fn record_dictation(&self, r: &DictationRow) -> StoreResult<i64> {
         self.conn.execute(
             "INSERT INTO dictation (ts, app_id, app_category, engine, lang, audio_path, raw_asr,
-              words_json, pasted, observed, edit_ops_json, polish_model, polish_skipped)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+              words_json, pasted, observed, edit_ops_json, polish_model, polish_skipped,
+              polish_profile, screen_terms_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 r.ts as i64,
                 r.app_id,
@@ -260,6 +286,8 @@ impl LearningStore {
                 r.edit_ops_json,
                 r.polish_model,
                 r.polish_skipped,
+                r.polish_profile.key(),
+                serde_json::to_string(&r.screen_terms)?,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -313,7 +341,31 @@ fn row_to_dictation(row: &Row<'_>) -> rusqlite::Result<DictationRow> {
         edit_ops_json: row.get(11)?,
         polish_model: row.get(12)?,
         polish_skipped: row.get::<_, i64>(13)? != 0,
+        polish_profile: profile_from_text(row.get::<_, Option<String>>(16)?.as_deref()),
+        screen_terms: screen_terms_from_text(row.get::<_, Option<String>>(17)?.as_deref()),
     })
+}
+
+/// Reads the persisted profile key. `NULL` (a legacy row) or an unrecognized
+/// value fails closed to the default contract rather than bricking the sweep.
+/// Reads the screen terms from their JSON column. `NULL` (a legacy row),
+/// malformed JSON, or a non-string-list payload all fail closed to an empty
+/// list rather than breaking the read.
+fn screen_terms_from_text(value: Option<&str>) -> Vec<String> {
+    value
+        .and_then(|v| serde_json::from_str::<Vec<String>>(v).ok())
+        .unwrap_or_default()
+}
+
+fn profile_from_text(value: Option<&str>) -> PolishProfile {
+    match value {
+        Some("clean") => PolishProfile::Clean,
+        Some("natural") => PolishProfile::Natural,
+        Some("structured") => PolishProfile::Structured,
+        Some("transform") => PolishProfile::Transform,
+        Some("off") => PolishProfile::Off,
+        _ => PolishProfile::Natural,
+    }
 }
 
 // ── Lexicon ──────────────────────────────────────────────────────────────────
@@ -665,6 +717,10 @@ pub struct CandidateTally {
 pub struct UnsettledRow {
     pub id: i64,
     pub ts: u64,
+    /// The app that produced the take, for attributing the settle signal.
+    pub app_id: String,
+    /// The profile that produced the take, for attributing the settle signal.
+    pub polish_profile: PolishProfile,
     pub observed: Option<String>,
     pub settle_edits: String,
 }
@@ -1000,7 +1056,7 @@ impl LearningStore {
         limit: i64,
     ) -> StoreResult<Vec<UnsettledRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, ts, observed, settle_edits FROM dictation
+            "SELECT id, ts, app_id, polish_profile, observed, settle_edits FROM dictation
              WHERE settle_status = 0 AND settle_edits IS NOT NULL AND ts <= ?1
              ORDER BY ts ASC, id ASC LIMIT ?2",
         )?;
@@ -1009,8 +1065,10 @@ impl LearningStore {
                 Ok(UnsettledRow {
                     id: r.get(0)?,
                     ts: r.get::<_, i64>(1)? as u64,
-                    observed: r.get(2)?,
-                    settle_edits: r.get(3)?,
+                    app_id: r.get(2)?,
+                    polish_profile: profile_from_text(r.get::<_, Option<String>>(3)?.as_deref()),
+                    observed: r.get(4)?,
+                    settle_edits: r.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1223,6 +1281,8 @@ mod tests {
             edit_ops_json: None,
             polish_model: None,
             polish_skipped: true,
+            polish_profile: PolishProfile::Natural,
+            screen_terms: Vec::new(),
         }
     }
 
@@ -1313,6 +1373,118 @@ mod tests {
         assert_eq!(recent[1].id, id1);
         // limit is honored.
         assert_eq!(store.recent_dictations(1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn polish_profile_roundtrips_and_legacy_rows_load_as_natural() {
+        let (_dir, store) = tmp_store();
+        let mut row = dictation(0, 100);
+        row.polish_profile = PolishProfile::Structured;
+        let id = store.record_dictation(&row).unwrap();
+        assert_eq!(
+            store.dictation_by_id(id).unwrap().unwrap().polish_profile,
+            PolishProfile::Structured
+        );
+
+        // A row written before the column existed has NULL, which must load as
+        // the default contract rather than fail the read.
+        store.set_settle_edits(id, "[]").unwrap();
+        let unsettled = store.unsettled_settled_edits(200, 10).unwrap();
+        assert_eq!(unsettled.len(), 1);
+        assert_eq!(unsettled[0].app_id, "slack");
+        assert_eq!(unsettled[0].polish_profile, PolishProfile::Structured);
+
+        store
+            .conn
+            .execute(
+                "UPDATE dictation SET polish_profile = NULL WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+        assert_eq!(
+            store.dictation_by_id(id).unwrap().unwrap().polish_profile,
+            PolishProfile::Natural
+        );
+    }
+
+    #[test]
+    fn screen_terms_roundtrip_and_null_or_bad_json_load_empty() {
+        let (_dir, store) = tmp_store();
+        let mut row = dictation(0, 100);
+        row.screen_terms = vec!["Sarah".into(), "PyTorch".into()];
+        let id = store.record_dictation(&row).unwrap();
+        assert_eq!(
+            store.dictation_by_id(id).unwrap().unwrap().screen_terms,
+            vec!["Sarah".to_string(), "PyTorch".to_string()]
+        );
+
+        // A legacy NULL row and a malformed payload both fail closed.
+        store
+            .conn
+            .execute(
+                "UPDATE dictation SET screen_terms_json = NULL WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+        assert!(store
+            .dictation_by_id(id)
+            .unwrap()
+            .unwrap()
+            .screen_terms
+            .is_empty());
+        store
+            .conn
+            .execute(
+                "UPDATE dictation SET screen_terms_json = ?2 WHERE id = ?1",
+                params![id, "not json"],
+            )
+            .unwrap();
+        assert!(store
+            .dictation_by_id(id)
+            .unwrap()
+            .unwrap()
+            .screen_terms
+            .is_empty());
+    }
+
+    #[test]
+    fn old_store_gets_screen_terms_column_on_reopen() {
+        use rusqlite::Connection;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("learning.sqlite");
+        // Pre-screen-terms schema: `polish_profile` is the last column.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "PRAGMA user_version = 2;
+                 CREATE TABLE dictation (
+                   id INTEGER PRIMARY KEY, ts INTEGER, app_id TEXT, app_category TEXT, engine TEXT, lang TEXT,
+                   audio_path TEXT NULL, raw_asr TEXT, words_json TEXT,
+                   pasted TEXT, observed TEXT NULL, edit_ops_json TEXT NULL, polish_model TEXT NULL, polish_skipped INTEGER,
+                   settle_edits TEXT NULL, settle_status INTEGER NOT NULL DEFAULT 0,
+                   polish_profile TEXT NULL
+                 );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO dictation (ts, app_id, app_category, engine, lang, raw_asr, words_json, pasted, polish_skipped)
+                 VALUES (10, 'slack', 'chat', 'whisper', 'en', 'hey team', '[]', 'hey team', 1)",
+                [],
+            )
+            .unwrap();
+        }
+        let store = LearningStore::open(&path).unwrap();
+        let rows = store.recent_dictations(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].screen_terms.is_empty());
+        // The migrated column is writable end-to-end.
+        let mut row = rows[0].clone();
+        row.screen_terms = vec!["Sarah".into()];
+        let id = store.record_dictation(&row).unwrap();
+        assert_eq!(
+            store.dictation_by_id(id).unwrap().unwrap().screen_terms,
+            vec!["Sarah".to_string()]
+        );
     }
 
     #[test]

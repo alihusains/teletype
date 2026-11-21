@@ -14,19 +14,14 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 /// How the text in a note got there.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NoteSource {
     /// A dictation routed to the note while the Teletype window was focused.
     Dictated,
     /// Typed or edited by hand in the Notetaker.
+    #[default]
     Typed,
-}
-
-impl Default for NoteSource {
-    fn default() -> Self {
-        Self::Typed
-    }
 }
 
 /// One note.

@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { openExternal } from "../lib/dialogs";
 import { errorMessage } from "../lib/errors";
+import { useHotkeyStatus } from "../lib/permissions";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -72,6 +73,21 @@ export function PermissionsSection(props: {
   // fetches them itself and keeps them fresh while the window is focused.
   void props;
   const [permissions, setPermissions] = useState<Permission[] | null>(null);
+  const hotkey = useHotkeyStatus();
+  const [reregistering, setReregistering] = useState(false);
+  const [reregisterError, setReregisterError] = useState<string | null>(null);
+
+  const reregister = async () => {
+    setReregistering(true);
+    setReregisterError(null);
+    try {
+      await invoke("reregister_hotkey");
+    } catch (e) {
+      setReregisterError(errorMessage(e));
+    } finally {
+      setReregistering(false);
+    }
+  };
 
   const refresh = useCallback(() => {
     invoke<Permission[]>("get_permissions")
@@ -166,6 +182,32 @@ export function PermissionsSection(props: {
           </Row>
         );
       })}
+      <Row
+        label="Hotkey"
+        hint="Whether the dictation hotkey is currently registered and listening."
+      >
+        {hotkey === null ? (
+          <Chip tone="neutral">Checking…</Chip>
+        ) : hotkey.active === null ? (
+          <Chip tone="neutral">Not checkable for this binding</Chip>
+        ) : hotkey.active ? (
+          <Chip tone="success">Active</Chip>
+        ) : (
+          <Chip tone="danger">Inactive — re-register</Chip>
+        )}
+        {hotkey?.active === false && (
+          <SecondaryButton onClick={() => void reregister()} disabled={reregistering}>
+            {reregistering ? "Re-registering…" : "Re-register"}
+          </SecondaryButton>
+        )}
+      </Row>
+      {(hotkey?.reason || reregisterError) && (
+        <Row label="Hotkey recovery" hint="The last reason re-registering the dictation hotkey failed.">
+          <span role="alert" style={{ fontSize: "var(--text-xs)", color: "var(--danger)" }}>
+            {hotkey?.reason || reregisterError}
+          </span>
+        </Row>
+      )}
     </Section>
   );
 }

@@ -60,6 +60,10 @@ pub mod fault_inject;
 #[cfg(target_os = "macos")]
 mod fn_tap;
 #[cfg(target_os = "macos")]
+mod hotkey_latch;
+#[cfg(target_os = "macos")]
+mod hotkey_liveness;
+#[cfg(target_os = "macos")]
 pub mod input_engine;
 #[cfg(target_os = "macos")]
 pub mod mic_selection;
@@ -88,8 +92,10 @@ mod tray;
 mod typing;
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+use teletype_core::learning::profile_bandit::{BanditState, BanditStore};
 
 use tauri::{Emitter, Manager};
 
@@ -246,6 +252,10 @@ pub struct AppState {
     /// personalization loop can diff it against what the user changed it into.
     /// See `edit_watch::EditWatch`.
     pub edit_watch: Mutex<crate::edit_watch::EditWatch>,
+    /// Local profile-choice bandit for the Polish learning loop. Loaded from
+    /// `<data_dir>/polish_bandit.json` at startup; all writers go through
+    /// [`Self::update_bandit`] so the in-memory state and the file cannot drift.
+    pub bandit: Mutex<BanditState>,
     /// Serializes concurrent save_settings calls so a read-modify-write
     /// cycle (BUG-018) cannot lose fields when two tabs save at once.
     pub save_lock: Mutex<()>,
@@ -405,6 +415,7 @@ impl AppState {
             data_dir: dir.join("data"),
             recordings_dir: crate::recordings::dir(&dir.join("data")),
             edit_watch: Mutex::new(Default::default()),
+            bandit: Mutex::new(BanditState::default()),
             save_lock: Mutex::new(()),
             download_cancel: Mutex::new(Default::default()),
             download_cancel_hard: Mutex::new(Default::default()),
@@ -426,6 +437,23 @@ impl AppState {
             *s = settings;
         })?;
         Ok(())
+    }
+
+    /// Where the local profile bandit is persisted.
+    pub(crate) fn bandit_path(data_dir: &Path) -> PathBuf {
+        data_dir.join("polish_bandit.json")
+    }
+
+    /// The single write path for [`Self::bandit`]: lock, mutate, save. Every
+    /// writer (feedback, settle sweep, undo) uses this so the file always
+    /// reflects the in-memory runtime source of truth.
+    pub(crate) fn update_bandit<F: FnOnce(&mut BanditState)>(&self, f: F) -> std::io::Result<()> {
+        let mut bandit = self
+            .bandit
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        f(&mut bandit);
+        BanditStore::new(Self::bandit_path(&self.data_dir)).save(&bandit)
     }
 
     /// Applies a partial settings update: reads the current snapshot under
@@ -937,6 +965,9 @@ pub fn run() {
             let autotext = Arc::new(Repo::new(autotext_store, autotext));
             typing::set_autotext_store(Arc::clone(&autotext));
 
+            let bandit = BanditStore::new(AppState::bandit_path(&data_dir))
+                .load()
+                .unwrap_or_default();
             let state = AppState {
                 settings: Repo::new(settings_store, settings),
                 autotext,
@@ -955,6 +986,7 @@ pub fn run() {
                 platform,
                 persist,
                 edit_watch: Mutex::new(Default::default()),
+                bandit: Mutex::new(bandit),
                 save_lock: Mutex::new(()),
                 download_cancel: Mutex::new(std::collections::HashMap::new()),
                 download_cancel_hard: Mutex::new(std::collections::HashSet::new()),
@@ -1316,6 +1348,11 @@ pub fn run() {
             commands::set_reduce_motion,
             commands::set_pill_size,
             commands::dismiss_pill_result,
+            commands::record_polish_feedback,
+            commands::undo_profile_learning,
+            commands::calibration_profile_options,
+            commands::generate_calibration_samples,
+            commands::record_calibration,
             commands::list_input_devices,
             commands::get_permissions,
             commands::request_permission,
@@ -1343,7 +1380,9 @@ pub fn run() {
             commands::test_transform,
             commands::transform_selection,
             commands::get_polish_prompt_info,
+            commands::get_polish_profile_info,
             commands::test_polish_prompt,
+            commands::rewrite_with_transform,
             // Personalization
             commands::get_profile,
             commands::add_preference,
@@ -1463,6 +1502,8 @@ pub fn run() {
             commands::stop_hotkey_capture,
             commands::get_captured_hotkey,
             commands::hotkey_conflict,
+            commands::hotkey_status,
+            commands::reregister_hotkey,
             // Developer tab
             commands::get_logs,
             commands::clear_logs,

@@ -649,6 +649,16 @@ const SETTINGS_WITHOUT_UI: &[(&str, &str)] = &[
         "P3.x placeholder, never read by the pipeline",
     ),
     ("restoreEmoji", "P3.2 shipped with no toggle"),
+    // T3a: backend contract + read-only info command are shipped here; the
+    // profile picker and per-app table are owned by T3b.
+    (
+        "polishProfile",
+        "T3a backend contract; the settings control is owned by T3b",
+    ),
+    (
+        "polishAppProfiles",
+        "T3a backend contract; the per-app table is owned by T3b",
+    ),
     ("polishGateEnabled", "P5.1 shipped with no toggle"),
     ("polishGateThresholdWords", "P5.1 shipped with no toggle"),
     // Composed into the transform instruction by the UI (TransformsScreen.tsx)

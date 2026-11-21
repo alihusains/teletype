@@ -1935,6 +1935,14 @@ pub fn mark_hotkey_up() {
     }
 }
 
+/// Whether a hotkey is currently physically held, per the timestamp stamped
+/// by [`mark_hotkey_down`]/[`mark_hotkey_up`]. An accessor (rather than a
+/// public atomic) keeps the latch's ownership here while letting the liveness
+/// module observe it. Does not change dictation behavior.
+pub(crate) fn hotkey_physically_down() -> bool {
+    HOTKEY_DOWN_AT_MS.load(std::sync::atomic::Ordering::Relaxed) != 0
+}
+
 /// The physical hold for the release just recorded, consumed so it is used
 /// at most once. `None` when the release did not come from an event tap
 /// (headless tests, e2e injection); callers then fall back to the enqueue
@@ -2315,6 +2323,17 @@ pub struct PipelinePayload {
     /// text first, then flashes the warning when either is lost. `None`
     /// on whole-take fallback paths (no committer, nothing to lose).
     pub losses: Option<crate::committer::CommitterFailureReport>,
+    /// The polish contract that actually ran this take, from `PipelineResult`.
+    pub polish_profile: teletype_core::profile::PolishProfile,
+    /// One-line fallback/advisory reason from the same result (empty on a
+    /// clean pass). Carried to the `polish-diff` card without rewriting it.
+    pub polish_profile_reason: String,
+    /// Whether the polish pass actually executed this take (no gate/model
+    /// skip). Derived from the trace marks on the pipeline worker and carried
+    /// to the `polish-diff` card so it can label a no-op honestly.
+    pub polish_ran: bool,
+    /// The loaded polish model id when available, for the `polish-diff` card.
+    pub polish_model: Option<String>,
 }
 
 /// What the post-insertion card shows: the transcript as ASR heard it, the
@@ -2325,6 +2344,23 @@ pub struct PolishDiff {
     pub raw: String,
     pub polished: String,
     pub ms: u64,
+    /// The raw ASR transcript after the same deterministic filler-removal pass
+    /// the pipeline ran (same core remover and take settings), so the UI shows
+    /// "Original after filler removal" rather than noisy ASR.
+    pub original: String,
+    /// Whether polish actually ran this take (trace marks / transform result
+    /// evidence), as opposed to being gated or skipped.
+    pub ran: bool,
+    /// The loaded polish model id when available; `null` otherwise.
+    pub model: Option<String>,
+    /// One-line fallback/advisory reason; `None` when the payload has no
+    /// reason (keeps the key out of the event).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The polish profile that ran (e.g. "structured"), when the payload
+    /// carries one. `None` keeps the key out of the event on older callers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 /// The `polish-diff` event payload: the diff plus the card id the pill hands
@@ -2342,10 +2378,16 @@ struct PolishDiffCard<'a> {
 /// Filler removal and AutoText also alter the text, but neither is polish, so
 /// they must not be presented as such. The polish marks are what separate the
 /// two: a skipped take carries a reason and no start/end pair.
+#[allow(clippy::too_many_arguments)]
 fn polish_diff(
     raw: &str,
     polished: &str,
     marks: &teletype_core::trace::TraceStageMarks,
+    reason: Option<&str>,
+    profile: Option<&str>,
+    ran: bool,
+    model: Option<String>,
+    original: String,
 ) -> Option<PolishDiff> {
     let raw = raw.trim();
     let polished = polished.trim();
@@ -2362,7 +2404,12 @@ fn polish_diff(
     Some(PolishDiff {
         raw: raw.to_string(),
         polished: polished.to_string(),
+        original,
+        ran,
+        model,
         ms,
+        reason: reason.filter(|r| !r.is_empty()).map(str::to_string),
+        profile: profile.filter(|p| !p.is_empty()).map(str::to_string),
     })
 }
 
@@ -2649,6 +2696,43 @@ fn rescore_or_keep(
 impl Session {
     fn state(&self) -> Option<tauri::State<'_, AppState>> {
         self.app.as_ref().map(|app| app.state::<AppState>())
+    }
+
+    /// The `polish-diff` card's "original" side: the take's raw ASR text after
+    /// the same deterministic filler-removal pass the pipeline ran. Mirrors
+    /// `pipeline.rs` (same core remover, dictionary terms and AutoText triggers
+    /// protected, take language and strength) so the UI compares like with
+    /// like. A store that cannot be read degrades to an empty list rather than
+    /// blocking the take; with no app handle (headless tests) the raw text is
+    /// returned unchanged.
+    fn original_after_filler_removal(&self, payload: &PipelinePayload) -> String {
+        let Some(state) = self.state() else {
+            return payload.raw_text.clone();
+        };
+        let settings = state.settings();
+        let dictionary_terms: Vec<String> = state
+            .dictionary
+            .get()
+            .known_words()
+            .into_iter()
+            .map(|w| w.to_lowercase())
+            .collect();
+        let autotext_triggers: Vec<String> = state
+            .autotext
+            .get()
+            .entries
+            .iter()
+            .map(|e| e.trigger.to_lowercase())
+            .collect();
+        let language = state.profile.get().language.clone();
+        teletype_core::fillers::remove_filler_words(
+            &payload.raw_text,
+            &settings.filler_words,
+            &dictionary_terms,
+            &autotext_triggers,
+            &language,
+            settings.filler_strength.to_core(),
+        )
     }
 
     /// P6.4: read the focused field's surroundings once at hotkey-down and
@@ -6226,11 +6310,33 @@ impl Session {
                 // appears on screen. Copied out before the worker spawn:
                 // the `move` closure below owns the rest of the take's
                 // context.
-                let screen_terms = self
+                //
+                // DUAL USE of this one field: the same terms feed the prompt,
+                // the polish guard and the screen-term rescore, so a word the
+                // user marked "Never change this" is protected by all three.
+                let screen_terms = {
+                    let state = app.state::<AppState>();
+                    let mut terms = self
+                        .screen_context
+                        .as_ref()
+                        .map(teletype_core::screen_context::ephemeral_terms)
+                        .unwrap_or_default();
+                    for term in
+                        crate::commands::polish_feedback::never_change_terms(&state.data_dir)
+                    {
+                        if !terms.contains(&term) {
+                            terms.push(term);
+                        }
+                    }
+                    terms
+                };
+                // Learned lexicon terms are also applied after decode, through
+                // the existing dictionary/pack correction tier. The category
+                // keeps app-scoped terms from leaking into other apps.
+                let post_asr_app_category = self
                     .screen_context
                     .as_ref()
-                    .map(teletype_core::screen_context::ephemeral_terms)
-                    .unwrap_or_default();
+                    .map(|ctx| ctx.app_category.as_str());
                 let worker = thread::Builder::new()
                     .name("teletype-pipeline".into())
                     .spawn(move || {
@@ -6392,6 +6498,13 @@ impl Session {
                                 let user_terms = state.user_packs.get().terms_for();
                                 pack_terms.extend(user_terms);
                             }
+                            // Learned terms bias the final text after ASR, not
+                            // the decode itself (D029). They use the same
+                            // low-priority fuzzy tier as vocabulary packs.
+                            pack_terms.extend(Self::learned_terms_for_post_asr(
+                                &state.data_dir,
+                                post_asr_app_category,
+                            ));
                             // Dictionary strictness is a real dial, so the floor
                             // has to reach the checker. "standard" resolves to
                             // None and keeps the pipeline's own default rather than
@@ -6435,12 +6548,59 @@ impl Session {
                             let mut decider_ms: Option<u32> = None;
                             let mut tool_label: Option<String> = None;
                             let mut args_source: Option<String> = None;
+                            // Resolve the take's polish profile before the
+                            // pipeline reads the instruction channel. An
+                            // explicit per-app override always wins; only when
+                            // there is none may the local bandit choose a
+                            // learned profile. The global default is NOT an
+                            // explicit override.
+                            let raw_word_count = input.text.split_whitespace().count();
+                            let recommended_profile = teletype_core::profile::resolve_profile(
+                                &app_ctx,
+                                &settings.polish_app_profiles,
+                                settings.polish_profile,
+                                raw_word_count,
+                            );
+                            let app_key = if app_ctx.application_id.is_empty() {
+                                app_ctx.application_name.clone()
+                            } else {
+                                app_ctx.application_id.clone()
+                            };
+                            let has_explicit_override = [
+                                app_ctx.application_id.as_str(),
+                                app_ctx.application_name.as_str(),
+                                teletype_core::profile::category_key(app_ctx.application_type),
+                            ]
+                            .iter()
+                            .any(|k| {
+                                settings
+                                    .polish_app_profiles
+                                    .contains_key(&teletype_core::profile::normalize_key(k))
+                            });
+                            let take_profile = if has_explicit_override {
+                                recommended_profile
+                            } else {
+                                state
+                                    .bandit
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .choose(
+                                        &app_key,
+                                        recommended_profile,
+                                        teletype_core::storage::now_ms(),
+                                    )
+                            };
+                            let polish_prompt_override =
+                                teletype_core::profile::encode_instruction(
+                                    take_profile,
+                                    settings.polish_prompt_override.as_deref(),
+                                );
                             let mut pipeline = Pipeline {
                                 platform,
                                 autotext: &autotext,
                                 transforms: &transforms,
                                 profile: &profile,
-                                polish_prompt_override: None,
+                                polish_prompt_override,
                                 inference: inference.as_deref(),
                                 decision: decision.as_deref(),
                                 force_command: take_kind == TakeKind::Command,
@@ -6596,6 +6756,15 @@ impl Session {
                                         None
                                     }
                                 });
+                            // `polish_skipped_reason` is None exactly when a
+                            // transform ran without a gate/model skip, so it
+                            // is the honest "polish actually ran" evidence for
+                            // the post-insertion card. The id comes from the
+                            // engine Arc snapshotted for this take.
+                            let polish_ran = polish_skipped_reason.is_none();
+                            let polish_model = inference
+                                .as_deref()
+                                .map(|p| p.model_id().to_string());
                             let mut trace_marks = TraceStageMarks {
                                 t_polish_start: Some(t_polish_start_us),
                                 t_polish_first_token: match first_token {
@@ -7037,6 +7206,10 @@ impl Session {
                                         tool: tool_label.clone(),
                                         args_source: args_source.clone(),
                                         losses: None,
+                                        polish_profile: result.polish_profile,
+                                        polish_profile_reason: result.polish_profile_reason,
+                                        polish_ran,
+                                        polish_model: polish_model.clone(),
                                     },
                                 });
                             } else {
@@ -7057,6 +7230,10 @@ impl Session {
                                         tool: tool_label,
                                         args_source,
                                         losses,
+                                        polish_profile: result.polish_profile,
+                                        polish_profile_reason: result.polish_profile_reason,
+                                        polish_ran,
+                                        polish_model,
                                     },
                                 });
                             }
@@ -7201,6 +7378,20 @@ impl Session {
         };
         let app_ctx = state.platform.active_application().unwrap_or_default();
 
+        // The pending take's row carries the terms that were on screen when
+        // it was recorded — the only trustworthy confirmation available when
+        // we observe this edit (a new take's context may have moved on).
+        // No row, no id or no terms leaves the empty slice, so every judge
+        // and dictionary guard keeps its strict behaviour.
+        let screen_terms: Vec<String> = pending
+            .dictation_id
+            .and_then(|id| {
+                self.learning_store()
+                    .and_then(|store| store.dictation_by_id(id).ok().flatten())
+            })
+            .map(|row| row.screen_terms)
+            .unwrap_or_default();
+
         // Phase 7.4: the same observed edit feeds the learning store's
         // lexicon, which the per-take boost list reads back (inert while
         // boosting is off; `commands::record_dictation_edit` is the D006
@@ -7220,6 +7411,7 @@ impl Session {
                         &user_text,
                         &teletype_core::learning::judge::JudgeContext {
                             allow_lowercase_terms: true,
+                            screen_terms: screen_terms.clone(),
                             ..Default::default()
                         },
                         teletype_core::storage::now_ms(),
@@ -7264,11 +7456,13 @@ impl Session {
                     .as_ref()
                     .map(|ctx| ctx.app_category.as_str())
                     .unwrap_or("other");
-                let signals = teletype_core::personalization::learn::extract_signals(
-                    &pending.inserted,
-                    &user_text,
-                    &app_ctx,
-                );
+                let signals =
+                    teletype_core::personalization::learn::extract_signals_with_screen_terms(
+                        &pending.inserted,
+                        &user_text,
+                        &app_ctx,
+                        &screen_terms,
+                    );
                 for obs in teletype_core::personalization::learn::style_observations(&signals) {
                     if let Some(store) = self.learning_store() {
                         if let Err(e) = teletype_core::learning::promote::consider_style(
@@ -7329,7 +7523,11 @@ impl Session {
                     if let Some((from, to)) = learned {
                         // Same judge guard the command path applies: a style
                         // or structural edit must not become a learned word.
-                        if !commands::is_learnable_terminology(from, to) {
+                        if !teletype_core::personalization::is_learnable_terminology_with_screen_terms(
+                            from,
+                            to,
+                            &screen_terms,
+                        ) {
                             continue;
                         }
                         // F-20: a pair the user said "no" to twice is not
@@ -7373,26 +7571,69 @@ impl Session {
                 .collect::<Vec<_>>();
             (changed, dictionary_changes)
         };
-        if !changed.is_empty() {
-            crate::log_entry(
-                crate::LogLevel::Info,
-                format!("edit watch: learned {} preference(s)", changed.len()),
-            );
+        // A dictionary word or lexicon term can be learned without any
+        // preference changing (the Phase 7 path). It still deserves a visible
+        // notice and an undo offer; preference offers keep their exact
+        // message and ids.
+        let learned_something =
+            !changed.is_empty() || !dictionary_changes.is_empty() || !lexicon_terms.is_empty();
+        if learned_something {
+            if !changed.is_empty() {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!("edit watch: learned {} preference(s)", changed.len()),
+                );
+            } else {
+                crate::log_entry(
+                    crate::LogLevel::Info,
+                    format!(
+                        "edit watch: learned {} word(s) and {} term(s) without a preference",
+                        dictionary_changes.len(),
+                        lexicon_terms.len()
+                    ),
+                );
+            }
             // Undo offer: the tray menu gains an Undo item and the main
             // window toasts with an Undo button. The pill stays out of it:
             // it is click-through outside recordings and its fixed sizes
             // leave no room for a button without resizing surgery.
-            let first = changed
-                .first()
-                .map(|(_, d)| d.as_str())
-                .unwrap_or("a writing preference");
-            let message = if changed.len() == 1 {
-                format!("Learned: {first}")
+            let (message, ids) = if !changed.is_empty() {
+                let first = changed
+                    .first()
+                    .map(|(_, d)| d.as_str())
+                    .unwrap_or("a writing preference");
+                let message = if changed.len() == 1 {
+                    format!("Learned: {first}")
+                } else {
+                    format!("Learned {} preferences (latest: {first})", changed.len())
+                };
+                let ids: Vec<String> = changed.into_iter().map(|(id, _)| id).collect();
+                (message, ids)
             } else {
-                format!("Learned {} preferences (latest: {first})", changed.len())
+                // No preference changed, so there are no ids to carry; the
+                // learned term itself is the honest, human-readable message.
+                let first = lexicon_terms.first().cloned().unwrap_or_else(|| {
+                    dictionary_changes
+                        .first()
+                        .map(|change| match change {
+                            LearnedChange::Backfilled { from, .. }
+                            | LearnedChange::AliasAdded { from, .. } => from.clone(),
+                            LearnedChange::Created { .. } | LearnedChange::Unchanged => {
+                                "a word".to_string()
+                            }
+                        })
+                        .unwrap_or_else(|| "a word".to_string())
+                });
+                (format!("Learned: {first}"), Vec::new())
             };
-            let ids: Vec<String> = changed.into_iter().map(|(id, _)| id).collect();
             let offer_id = teletype_core::storage::now_ms();
+            // Word-only offers have no preference ids; the UI toast carries
+            // an offer-id sentinel so a stale toast cannot undo newer learning.
+            let event_ids = if ids.is_empty() {
+                vec![format!("offer:{offer_id}")]
+            } else {
+                ids.clone()
+            };
             *state
                 .last_learned
                 .lock()
@@ -7417,12 +7658,59 @@ impl Session {
                 .ok();
             let _ = app.emit(
                 "learned-preference",
-                &serde_json::json!({ "message": message, "ids": ids }),
+                &serde_json::json!({ "message": message, "ids": event_ids }),
             );
         }
     }
 
     // ── P7.2: learning-store recording + anchored observation ──────────
+
+    /// Maximum learned terms injected into the post-ASR correction paths.
+    /// Native ASR boost stays off (D029); this is the measured-safe way for
+    /// personalization to affect output after decode.
+    const MAX_LEARNED_POST_ASR_TERMS: usize = 64;
+
+    /// Builds `PackTerm`s from the ranked lexicon for post-ASR correction.
+    /// Only learned rows are included; manual words already live in the
+    /// dictionary and contacts/packs have their own paths. App-scoped rows
+    /// only apply in their own category, and every failure yields an empty
+    /// list because correction is an optimization, never a blocker.
+    fn learned_terms_for_post_asr(
+        data_dir: &std::path::Path,
+        app_category: Option<&str>,
+    ) -> Vec<teletype_core::vocab::PackTerm> {
+        use teletype_core::learning::store::LearningStore;
+        use teletype_core::vocab::PackTerm;
+
+        let path = data_dir.join("learning").join("learning.sqlite");
+        let Ok(store) = LearningStore::open(&path) else {
+            return Vec::new();
+        };
+        let Ok(rows) = store.lexicon_terms_for_boost(Self::MAX_LEARNED_POST_ASR_TERMS as i64)
+        else {
+            return Vec::new();
+        };
+        rows.into_iter()
+            .filter(|row| row.source == "learned" && !row.tombstoned)
+            .filter(|row| match row.app_scope.as_deref() {
+                Some(scope) => Some(scope) == app_category,
+                None => true,
+            })
+            .flat_map(|row| {
+                let aliases = row.aliases.clone();
+                let canonical = row.term.clone();
+                aliases
+                    .into_iter()
+                    .take(2)
+                    .map(move |alias| PackTerm {
+                        canonical: canonical.clone(),
+                        alias,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .take(Self::MAX_LEARNED_POST_ASR_TERMS)
+            .collect()
+    }
 
     /// P7.5: builds the take's per-engine boost list from the lexicon scored
     /// for the focused app category plus the terms on screen. The one-entry
@@ -7553,6 +7841,14 @@ impl Session {
         } else {
             Some(settings.selected_llm_model.clone())
         };
+        // Captured before the mutable store borrow below. These are the terms
+        // the judge and the dictionary guard will need when this take's edit
+        // is observed on the next dictation.
+        let screen_terms = self
+            .screen_context
+            .as_ref()
+            .map(teletype_core::screen_context::ephemeral_terms)
+            .unwrap_or_default();
         let store = self.learning_store()?;
         // `raw_asr`: the transcript exactly as ASR produced it, carried on the
         // payload since the polish-diff card needed the pre-pipeline text.
@@ -7574,6 +7870,8 @@ impl Session {
             observed: None,
             edit_ops_json: None,
             polish_model,
+            polish_profile: payload.polish_profile,
+            screen_terms,
             // The controller does not know whether polish ran (that
             // knowledge stays on the worker's `PipelineResult`); the
             // `polish_skipped_reason` trace mark carries the truth for the
@@ -7691,8 +7989,13 @@ impl Session {
         }
         // The settle sweep rides this same lazy moment: rows recorded more
         // than 30 minutes ago are judged against what the field held, once.
+        // The bandit is locked only for the sweep + save, never across the
+        // long transcription/polish work above.
         if let Some(sink) = sink {
-            sink.settle_sweep(crate::edit_watch::now_ms().max(0) as u64);
+            let now_ms = crate::edit_watch::now_ms().max(0) as u64;
+            let _ = state.update_bandit(|bandit| {
+                sink.settle_sweep(now_ms, bandit);
+            });
         }
     }
 
@@ -8248,9 +8551,19 @@ impl Session {
             // own message, and a diff card there would describe text the user
             // never received.
             if !delivery_held && delivery_refused.is_none() {
-                self.pending_polish_diff =
-                    polish_diff(&payload.raw_text, &payload.final_text, &payload.trace_marks)
-                        .map(|diff| (session, diff));
+                let original = self.original_after_filler_removal(&payload);
+                self.pending_polish_diff = polish_diff(
+                    &payload.raw_text,
+                    &payload.final_text,
+                    &payload.trace_marks,
+                    (!payload.polish_profile_reason.is_empty())
+                        .then_some(payload.polish_profile_reason.as_str()),
+                    Some(payload.polish_profile.key()),
+                    payload.polish_ran,
+                    payload.polish_model.clone(),
+                    original,
+                )
+                .map(|diff| (session, diff));
             }
             // P8.4: store the last final text for Paste-Last. Every
             // successful AND failed delivery updates it; only a cancelled
@@ -8480,6 +8793,18 @@ impl Session {
         let mut pack_terms = teletype_core::vocab::terms_for(&settings.enabled_packs);
         let user_packs = state.user_packs.get();
         pack_terms.extend(user_packs.terms_for());
+        // Same learned-term tier as the text-only correction path: after ASR,
+        // never inside decode (D029). Respect the dictionary-enabled dial.
+        if settings.dictionary_enabled {
+            let app_category = self
+                .screen_context
+                .as_ref()
+                .map(|ctx| ctx.app_category.as_str());
+            pack_terms.extend(Self::learned_terms_for_post_asr(
+                &state.data_dir,
+                app_category,
+            ));
+        }
 
         let terms: Vec<teletype_core::rescoring::RescoreTerm> = dictionary
             .words
@@ -10004,7 +10329,6 @@ mod tests {
                 "asrhall regression: neither recording present in {:?}; skipping",
                 dir
             );
-            return;
         }
     }
 
@@ -10547,6 +10871,49 @@ mod tests {
     }
 
     #[test]
+    fn learned_terms_for_post_asr_filters_source_scope_and_tombstones() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path();
+        let learning_dir = data_dir.join("learning");
+        std::fs::create_dir_all(&learning_dir).unwrap();
+        let store = teletype_core::learning::store::LearningStore::open(
+            &learning_dir.join("learning.sqlite"),
+        )
+        .unwrap();
+
+        let row = |term: &str, source: &str, scope: Option<&str>, tombstoned: bool| {
+            teletype_core::learning::store::LexiconRow {
+                term: term.into(),
+                aliases: vec![format!("{} heard", term.to_lowercase())],
+                source: source.into(),
+                weight: 1.0,
+                hits: 0,
+                false_alarms: 0,
+                created: 1,
+                last_used: Some(1_000),
+                tombstoned,
+                app_scope: scope.map(str::to_string),
+                learned_from: None,
+            }
+        };
+        store
+            .upsert_lexicon(&row("Siobhan", "learned", Some("chat"), false))
+            .unwrap();
+        store
+            .upsert_lexicon(&row("Manual", "manual", None, false))
+            .unwrap();
+        store
+            .upsert_lexicon(&row("Dead", "learned", None, true))
+            .unwrap();
+
+        let chat = Session::learned_terms_for_post_asr(data_dir, Some("chat"));
+        assert_eq!(chat.len(), 1, "{chat:?}");
+        assert_eq!(chat[0].canonical, "Siobhan");
+        assert_eq!(chat[0].alias, "siobhan heard");
+        assert!(Session::learned_terms_for_post_asr(data_dir, Some("email")).is_empty());
+    }
+
+    #[test]
     fn boost_terms_for_respects_the_cap_and_excludes_tombstones() {
         let dead = teletype_core::learning::store::LexiconRow {
             term: "Dead".into(),
@@ -10935,30 +11302,106 @@ mod tests {
 
         // No polish marks: still emits (the card shows "0 changes"), just no
         // duration.
-        let diff = polish_diff("hello there", "Hello, there.", &marks).expect("card");
+        let diff = polish_diff(
+            "hello there",
+            "Hello, there.",
+            &marks,
+            None,
+            None,
+            false,
+            None,
+            "hello there".into(),
+        )
+        .expect("card");
         assert_eq!(diff.raw, "hello there");
         assert_eq!(diff.polished, "Hello, there.");
         assert_eq!(diff.ms, 0);
+        assert!(!diff.ran);
+        assert_eq!(diff.model, None);
+        assert_eq!(diff.original, "hello there");
+        assert_eq!(diff.reason, None);
+        assert_eq!(diff.profile, None);
 
         // With marks: the duration is reported.
         marks.t_polish_start = Some(1_000);
         marks.t_polish_end = Some(1_640);
-        let diff = polish_diff("hello there", "Hello, there.", &marks).expect("card");
+        let diff = polish_diff(
+            "hello there",
+            "Hello, there.",
+            &marks,
+            Some("an advisory reason"),
+            Some("structured"),
+            true,
+            Some("s1-mini".into()),
+            "hello there".into(),
+        )
+        .expect("card");
         assert_eq!(diff.raw, "hello there");
         assert_eq!(diff.polished, "Hello, there.");
         assert_eq!(diff.ms, 640);
+        assert!(diff.ran);
+        assert_eq!(diff.model.as_deref(), Some("s1-mini"));
+        assert_eq!(diff.original, "hello there");
+        assert_eq!(diff.reason.as_deref(), Some("an advisory reason"));
+        assert_eq!(diff.profile.as_deref(), Some("structured"));
 
         // Polish changed nothing: still emits, so the card shows "0 changes".
-        let same = polish_diff("same words", "same words", &marks).expect("card");
+        let same = polish_diff(
+            "same words",
+            "same words",
+            &marks,
+            None,
+            None,
+            true,
+            None,
+            "same words".into(),
+        )
+        .expect("card");
         assert_eq!(same.raw, "same words");
         assert_eq!(same.polished, "same words");
 
+        // Empty reason is normalized to None.
+        let no_reason = polish_diff(
+            "hello there",
+            "Hello, there.",
+            &marks,
+            Some(""),
+            None,
+            false,
+            None,
+            "hello there".into(),
+        )
+        .expect("card");
+        assert_eq!(no_reason.reason, None);
+
         // Empty text: no card.
-        assert_eq!(polish_diff("  ", "anything", &marks), None);
+        assert_eq!(
+            polish_diff(
+                "  ",
+                "anything",
+                &marks,
+                None,
+                None,
+                false,
+                None,
+                "anything".into()
+            ),
+            None
+        );
 
         // Polish skipped: still emits (raw == polished -> "0 changes").
         marks.polish_skipped_reason = Some("no polish model".into());
-        let skipped = polish_diff("hello there", "Hello, there.", &marks).expect("card");
+        let skipped = polish_diff(
+            "hello there",
+            "Hello, there.",
+            &marks,
+            None,
+            None,
+            false,
+            None,
+            "hello there".into(),
+        )
+        .expect("card");
         assert_eq!(skipped.polished, "Hello, there.");
     }
 
@@ -10978,6 +11421,10 @@ mod tests {
             tool: None,
             args_source: None,
             losses: None,
+            polish_profile: teletype_core::profile::PolishProfile::default(),
+            polish_profile_reason: String::new(),
+            polish_ran: false,
+            polish_model: None,
         }
     }
 

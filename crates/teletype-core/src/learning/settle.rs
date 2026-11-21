@@ -14,7 +14,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::profile_bandit::Outcome;
 use super::store::{LearningStore, StoreResult};
+use crate::profile::PolishProfile;
 
 /// A proposed correction carried on a dictation row, judged later by
 /// survival. `pattern` is the original text (lowercased); `replacement` is
@@ -104,6 +106,43 @@ pub fn judge(edit: &SettleEdit, observed: Option<&str>, reverted: bool) -> Verdi
     }
 }
 
+/// Take-level signal for the T5 profile bandit from the settle verdicts of
+/// one row's corrections. Ambiguous rows learn nothing: a row with no
+/// corrections (settled-none), or one where every span was unlocatable,
+/// returns `None`. Any undo makes the whole take an undone signal — a take the
+/// user had to partially revert was not cleanly kept.
+pub fn profile_signal(verdicts: &[Verdict]) -> Option<super::profile_bandit::Outcome> {
+    use super::profile_bandit::Outcome;
+    let mut kept = false;
+    let mut undone = false;
+    for verdict in verdicts {
+        match verdict {
+            Verdict::Kept => kept = true,
+            Verdict::Undone => undone = true,
+            Verdict::Unlocatable => {}
+        }
+    }
+    if undone {
+        Some(Outcome::Undone)
+    } else if kept {
+        Some(Outcome::Kept)
+    } else {
+        None
+    }
+}
+
+/// Feeds one settled row's verdicts into the local profile bandit. The
+/// caller supplies the `(app, profile)` that produced the take; ambiguous
+/// verdicts are a no-op inside [`BanditState::record_outcome`].
+pub fn feed_bandit(
+    state: &mut super::profile_bandit::BanditState,
+    app_key: &str,
+    profile: crate::profile::PolishProfile,
+    verdicts: &[Verdict],
+) {
+    state.record_outcome(app_key, profile, profile_signal(verdicts));
+}
+
 /// Whole-word, case-insensitive substring match: does `haystack` contain
 /// `needle` as a sequence of whole words, allowing punctuation between
 /// words? Ported from Vocs `pipeline/grammar/learned.rs::contains_phrase`.
@@ -185,10 +224,15 @@ pub fn should_auto_apply(accepted: i64, rejected: i64, manual: bool, manual_auto
 }
 
 /// The result of settling one dictation row's corrections.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SettleResult {
     pub settled: usize,
     pub unlocatable: usize,
+    /// Take-level signals for the profile bandit: `(app, profile, outcome)`.
+    /// One entry per settled row whose verdicts were unambiguous; the caller
+    /// owns deciding whether and when to fold them into the bandit state.
+    #[serde(default)]
+    pub bandit_signals: Vec<(String, PolishProfile, Outcome)>,
 }
 
 /// Rows judged per sweep. The sweep runs on the observation flush, which is
@@ -234,8 +278,10 @@ pub fn sweep(store: &LearningStore, now_ms: u64) -> StoreResult<SettleResult> {
         // A row that reaches its deadline is closed even when its payload is
         // empty or unreadable: it is judged at most once.
         let mut tallies: Vec<super::store::CandidateTally> = Vec::new();
+        let mut verdicts: Vec<Verdict> = Vec::new();
         for edit in decode_edits(&row.settle_edits) {
             let verdict = judge(&edit, row.observed.as_deref(), false);
+            verdicts.push(verdict);
             let (accepted_delta, rejected_delta) = match verdict {
                 Verdict::Kept => (1, 0),
                 Verdict::Undone => (0, 1),
@@ -258,6 +304,12 @@ pub fn sweep(store: &LearningStore, now_ms: u64) -> StoreResult<SettleResult> {
         // twice on the next sweep.
         store.settle_dictation_row(row.id, &tallies, now_ms, should_auto_apply)?;
         out.settled += 1;
+        // Only a row the transaction actually closed produces a signal, so a
+        // settled take can never feed the bandit twice.
+        if let Some(outcome) = profile_signal(&verdicts) {
+            out.bandit_signals
+                .push((row.app_id.clone(), row.polish_profile, outcome));
+        }
     }
     Ok(out)
 }
@@ -480,6 +532,8 @@ mod tests {
             edit_ops_json: None,
             polish_model: None,
             polish_skipped: false,
+            polish_profile: PolishProfile::Natural,
+            screen_terms: Vec::new(),
         }
     }
 
@@ -546,6 +600,42 @@ mod tests {
         );
         sweep(&store, NOW).unwrap();
         assert_eq!(survival(&store, "he go", "He goes").unwrap(), (0, 1));
+    }
+
+    #[test]
+    fn sweep_reports_bandit_signals_only_for_unambiguous_settled_rows() {
+        use super::super::profile_bandit::Outcome;
+        let (_dir, store) = tmp_store();
+
+        let mut r = row(NOW - 31 * 60 * 1000, "he go home", "He goes home");
+        r.app_id = "gmail".into();
+        r.polish_profile = PolishProfile::Structured;
+        r.observed = Some("He goes home now.".into());
+        let id = store.record_dictation(&r).unwrap();
+        let edits = edits_from_change("he go home", "He goes home");
+        store.set_settle_edits(id, &encode_edits(&edits)).unwrap();
+
+        // Ambiguous: the span was never located, so it produces no signal.
+        record(
+            &store,
+            NOW - 32 * 60 * 1000,
+            "he go home",
+            "He goes home",
+            None,
+        );
+
+        let out = sweep(&store, NOW).unwrap();
+        assert_eq!(out.settled, 2);
+        assert_eq!(out.unlocatable, 1);
+        assert_eq!(
+            out.bandit_signals,
+            vec![("gmail".into(), PolishProfile::Structured, Outcome::Kept)]
+        );
+
+        // A second sweep finds no rows, so no signal is emitted twice.
+        let out2 = sweep(&store, NOW + 1).unwrap();
+        assert_eq!(out2.settled, 0);
+        assert!(out2.bandit_signals.is_empty());
     }
 
     #[test]
@@ -823,5 +913,50 @@ mod tests {
         ];
         assert_eq!(decode_edits(&encode_edits(&edits)), edits);
         assert!(decode_edits("null").is_empty());
+    }
+
+    #[test]
+    fn profile_signal_from_settle_verdicts() {
+        use super::super::profile_bandit::Outcome;
+        assert_eq!(profile_signal(&[]), None, "settled-none learns nothing");
+        assert_eq!(profile_signal(&[Verdict::Unlocatable]), None);
+        assert_eq!(
+            profile_signal(&[Verdict::Unlocatable, Verdict::Unlocatable]),
+            None
+        );
+        assert_eq!(profile_signal(&[Verdict::Kept]), Some(Outcome::Kept));
+        assert_eq!(
+            profile_signal(&[Verdict::Kept, Verdict::Kept]),
+            Some(Outcome::Kept)
+        );
+        assert_eq!(
+            profile_signal(&[Verdict::Kept, Verdict::Undone]),
+            Some(Outcome::Undone),
+            "one undo makes the whole take undone"
+        );
+        assert_eq!(profile_signal(&[Verdict::Undone]), Some(Outcome::Undone));
+    }
+
+    #[test]
+    fn ambiguous_settle_rows_do_not_move_the_bandit_tally() {
+        use super::super::profile_bandit::BanditState;
+        use crate::profile::PolishProfile;
+        let mut state = BanditState::default();
+        let e = edit("he go", "he goes");
+
+        // Unlocatable span: ambiguous, no tally.
+        let verdicts = vec![judge(&e, None, false)];
+        feed_bandit(&mut state, "gmail", PolishProfile::Natural, &verdicts);
+        assert!(state.tallies.is_empty());
+
+        // No corrections at all: settled-none, no tally.
+        feed_bandit(&mut state, "gmail", PolishProfile::Natural, &[]);
+        assert!(state.tallies.is_empty());
+
+        // A real verdict does move the tally.
+        let verdicts = vec![judge(&e, Some("He goes home."), false)];
+        feed_bandit(&mut state, "gmail", PolishProfile::Natural, &verdicts);
+        let tally = state.tally("gmail", PolishProfile::Natural);
+        assert_eq!((tally.settled, tally.kept, tally.undone), (1, 1, 0));
     }
 }

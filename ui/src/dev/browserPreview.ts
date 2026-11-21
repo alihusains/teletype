@@ -86,7 +86,7 @@ const BASE_SETTINGS: Settings = {
   commandWakePhrase: false,
   pendingNotice: null,
   polishWholeTextAtEnd: false,
-  polishSkipWhenClean: true,
+  polishSkipWhenClean: false,
   instantStart: "always",
   preferBuiltinMicWithBt: false,
   audioConditioning: false,
@@ -593,6 +593,10 @@ const RESPONSES: Record<string, unknown> = {
     { kind: "microphone", state: "granted" },
     { kind: "accessibility", state: "granted" },
   ],
+  // Mirrors the desktop HotkeyStatus wire shape: active=true live, null for a
+  // string combo with no tap-level liveness signal, reason=last recovery error.
+  hotkey_status: { active: true, binding: "Cmd+Shift+Space", reason: null },
+  reregister_hotkey: null,
   get_usage_stats: { autotextCounts: {} },
   list_notes: [],
   get_open_note: null,
@@ -1283,7 +1287,7 @@ export function installBrowserPreview(): void {
         if (!cmdArgs?.shortlist) return clone(withHost);
         const ids = cpuHost
           ? ["s1-mini", "speakoflow-mini", "qwen3.5-0.8b"]
-          : ["s1-mini", "qwen3.5-2b"];
+          : ["qwen3.5-2b", "s1-mini"];
         const picked = String(settings.selectedLlmModel ?? "");
         const byId = (id: string) => withHost.find((r) => r.id === id);
         const out = ids.map(byId).filter(Boolean);

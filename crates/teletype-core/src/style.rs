@@ -322,6 +322,14 @@ pub fn model_style(model_id: &str) -> ModelStyle {
     }
 }
 
+/// The 2B general editor (the "Best" engine of §6.5 of the polish strategy).
+/// It is the only model a Clean/Natural contract must not use; the 0.8B is the
+/// Balanced cleanup/editor hybrid and is allowed for Natural. Kept here next
+/// to [`model_style`] so model capability has one source of truth.
+pub fn is_editor_model(model_id: &str) -> bool {
+    matches!(model_id, "qwen3.5-2b")
+}
+
 impl ModelStyle {
     /// Whether the styles list can change what the model writes. A control-line
     /// model that runs nothing but Polish cannot: its prompt never carries the
@@ -638,6 +646,15 @@ mod tests {
         assert!(model_style("qwen3.5-0.8b").styles_apply());
         assert!(model_style("quality").styles_apply());
         assert!(model_style("gemma2-2b").styles_apply());
+    }
+
+    #[test]
+    fn only_the_2b_is_the_editor_model() {
+        assert!(is_editor_model("qwen3.5-2b"));
+        assert!(!is_editor_model("qwen3.5-0.8b"));
+        assert!(!is_editor_model("s1-mini"));
+        assert!(!is_editor_model("speakoflow-mini"));
+        assert!(!is_editor_model(""));
     }
 
     #[test]

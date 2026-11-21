@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.19 head=66fe309 updated=2026-11-19 -->
+<!-- brain-freshness: version=v0.2.19 head=e1fd01f updated=2026-11-20 -->
 
 This file is the durable working memory for this project.
 
@@ -2617,6 +2617,122 @@ light-theme contrast failures — see the audit report for details.)
 2026-11-09; `ui/index.html` token block vs `DESIGN.md` frontmatter.
 
 ---
+
+### Decision D046
+
+**Title:** "Wow" model pair is the accelerated default; Windows gets Parakeet Ultra via sherpa-onnx
+
+**Date:** 2026-11-20
+
+**Status:** accepted (implemented; catalog + shortlist defaults, uncommitted in main tree)
+
+**Decision:**
+On macOS 14+ Apple Silicon builds with the FluidAudio bridge, the default pair
+is **Parakeet Ultra 0.6B CoreML** for ASR and **Qwen3.5 2B IQ4_XS** for polish.
+Qwen3.5 2B leads the accelerated polish shortlist; S1-mini remains the measured
+CPU cleanup default and SpeakoFlow Mini/Qwen3.5 0.8B remain low-end options.
+Windows and other non-Apple hosts use **Parakeet Ultra int8 via sherpa-onnx**
+(official `sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8` asset, SHA-256
+`d216b71d7f628b3f2f2a20ee7ead39ff0b075984959eb4bf6ddf8dc8da737c09`); v3 stays
+as fallback. Windows hosts with a GPU can also run Qwen3.5 2B GGUF; CPU-only
+Windows stays on the cleanup shortlist.
+
+Qwen3.5 2B **Core ML / Core AI ports exist** (`mlboydaisuke/qwen3.5-2B-CoreML`,
+`mlboydaisuke/qwen3.5-2B-CoreAI`), but are not adopted: the Core AI `.aimodel`
+needs macOS/iOS 27 APIs, the chunked CoreML port is ~2.8 GB and ~27 tok/s on
+iPhone, and on macOS 26.3 `computeUnits=ALL` routes to GPU, not ANE. The shipped
+GGUF/llama.cpp path is simpler, portable and faster on Apple GPU.
+
+**Alternatives considered:**
+Keep S1-mini as the accelerated lead (rejected: cleanup-only, cannot honor
+Natural/Structured/Transform); adopt Qwen CoreML now (rejected: new runtime and
+slower than existing GGUF/Metal path); leave Windows on Parakeet v3 (rejected:
+Ultra has better published WER and an official pinned artifact).
+
+**Evidence / source:**
+`cargo test -p teletype-inference` (131 passed), `teletype-speech` (81 passed),
+`teletype-desktop` (624 passed), tsc clean, vitest 599 passed. Parakeet Ultra
+local benchmark in `evals/runs/bench-2026-10-28/SUMMARY.md`;
+https://huggingface.co/moondream/parakeet-ultra;
+https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models;
+https://huggingface.co/Qwen/Qwen3.5-2B;
+https://huggingface.co/mlboydaisuke/qwen3.5-2B-CoreML;
+https://huggingface.co/mlboydaisuke/qwen3.5-2B-CoreAI.
+
+### Decision D047
+
+**Title:** Screen-confirmed terms are the safe path for learning names; polished words are never auto-added blindly
+
+**Date:** 2026-11-20
+
+**Status:** accepted (implemented in the main working tree, uncommitted)
+
+**Decision:**
+A correction is promoted immediately to the lexicon/dictionary when the corrected term exactly matches a term captured from the focused app at hotkey-down (`screen_context::ephemeral_terms`). Screen confirmation waives the common-first-name skip and lowers the phonetic floor to 0.45; all other edits keep the strict ≥0.6 path, two-observation rule, and tombstone/learn-memory guards. Screen terms are persisted on each dictation row so the later observation moment can confirm them.
+
+Polish-originated words are **not** added just because the model wrote them. They are learned only when screen-confirmed, already known, or explicitly protected through “Never change this”, which now feeds the polish guard as a protected term via `screen_terms`. Word-only learning now emits its own “Learned: …” notice with a working Undo (offer-id sentinel for stale-toast safety), Insights learning no longer depends on the language-coach switch, and “Ready to apply” candidates are shown but never applied automatically.
+
+**Alternatives considered:**
+Auto-add every kept polished word (rejected: teaches hallucinations); persist raw screen text (rejected: privacy contract keeps only extracted terms and counts); keep word-only learning silent (rejected: the feature was invisible to users).
+
+**Evidence / source:**
+`cargo test -p teletype-core` (1390), `cargo test -p teletype-desktop` (627), tsc clean, vitest 58 files / 601 tests. `crates/teletype-core/src/screen_context.rs`, `learning/{store,judge,promote}.rs`, `personalization/{mod,learn}.rs`, `crates/teletype-desktop/src/{dictation.rs,commands/history.rs,commands/polish_feedback.rs,commands/personalization.rs,tray.rs}`, `ui/src/screens/InsightsScreen.tsx`.
+
+### Decision D048
+
+**Title:** Personalized vocabulary biases the post-ASR text, not the ASR decode
+
+**Date:** 2026-11-20
+
+**Status:** accepted (implemented; D029 remains in force for native boost)
+
+**Decision:**
+`boost_capacity` stays 0 for every engine. Instead, learned lexicon rows (`source = learned`, non-tombstoned, max 64, app-scoped terms only in their own category) are converted into `PackTerm`s and fed to the existing post-ASR correction tiers: `correct_with_dictionary` in the text-only path and `rescore_with_confidence` when the engine reports word confidences. Manual words still come from the dictionary, screen terms and “Never change this” terms still use the separate `screen_terms` path, and `dictionary_enabled` gates the confidence-aware path.
+
+**Context:**
+D029's measured bakeoff showed native boosting hurts Core ML WER/entity accuracy and latency, is a no-op for ggml Parakeet, and harms Whisper entity accuracy. The user chose the post-ASR-only path instead of a new bakeoff or a default-off toggle. This closes the practical personalization gap without re-arming the measured regression.
+
+**Alternatives considered:**
+Re-enable native boost (rejected: D029 has no measured win); add an opt-in toggle (rejected: dead control with known harm); do nothing (rejected: learned terms had no output effect).
+
+**Evidence / source:**
+`cargo test -p teletype-core` (1390), `cargo test -p teletype-desktop` (628), tsc clean, vitest 58 files / 601 tests. `crates/teletype-desktop/src/dictation.rs` (`learned_terms_for_post_asr` and its filter test), `crates/teletype-core/src/{pipeline.rs,rescoring.rs}`. See ADR-018 and D029 for the native-boost evidence.
+
+### Decision D049
+
+**Title:** Model mirroring will be manifest-driven, GitHub-hosted, and permissive-only
+
+**Date:** 2026-11-21
+
+**Status:** planned (roadmap §29A; not implemented)
+
+**Decision:**
+When model mirroring is implemented, `models/manifest.json` in this repo will be the source of truth. A reviewed manifest merge runs `sync-model-mirrors.yml`, which pulls pinned upstream artifacts, verifies sha256 and exact bytes, and uploads them to `alihusains/teletype-models@models-v1`. Use a dedicated non-`v*` tag; never publish `latest.json` or mark a model release latest, because the Tauri updater reads `releases/latest/download/latest.json`. Mirror only permissive, pinned assets under 2 GiB; Qwen3-ASR 1.7B, Gemma/Llama/OpenMDW, and unverified-license models stay upstream. Existing release assets are immutable; new models can be added to `models-v1`, but changed bytes require a new tag. The app consumes generated static catalog constants, not a runtime manifest.
+
+**Alternatives considered:**
+Same repo (rejected in favor of the existing `teletype-models` repo precedent); rolling `models-latest` with clobber (rejected: breaks pinning/reproducibility); runtime manifest fetch (rejected: catalogs are `&'static` and this adds a startup dependency); include all models (rejected: license and 2 GiB limits).
+
+**Evidence / source:**
+GitHub Releases docs: 1,000 assets/release, <2 GiB per asset, no total bandwidth cap. Existing NeuDecide release precedent in `alihusains/teletype-models`. Roadmap `teletype_complete_roadmap.md` §29A.
+
+### Decision D050
+
+**Title:** Polish always runs by default; zero-change takes are explained, not faked
+
+**Date:** 2026-11-21
+
+**Status:** accepted (implemented in the main working tree, uncommitted)
+
+**Decision:**
+`Settings.polish_skip_when_clean` now defaults to `false`, including legacy settings that omit the key. The clean-skip behavior remains available as an explicit Advanced toggle. Every take therefore reaches the polish path unless a different gate (short take, intent, no model) legitimately skips it.
+
+The result card now carries honest proof: `ran`, `model`, and `original` (raw ASR with filler words removed). When polish ran but changed nothing, the card says "Polish ran · 0 changes · already clean" instead of silently looking like no polish happened. A "View original" control shows the filler-cleaned original, and a "Rewrite stronger" button calls `rewrite_with_transform` with the Transform profile; the returned text is display-and-copy only, never injected and never overwritten over the delivered text.
+
+**Alternatives considered:**
+Force a rewrite on every take (rejected: over-editing and fabricated changes); keep the silent zero-change card (rejected: users cannot tell polish ran); auto-inject the stronger rewrite (rejected: focus/undo safety). This supersedes only the default of the clean-skip gate, not the Clean profile's byte-identical contract when a user explicitly chooses it.
+
+**Evidence / source:**
+`cargo test -p teletype-core` (1390), `cargo test -p teletype-desktop` (630), tsc clean, vitest 58 files / 610 tests, eval self-test PASS. `crates/teletype-desktop/src/{dictation.rs,commands/models.rs,commands.rs}`, `ui/src/{pill.tsx,pillMachine.ts,settings/DictationPolishSections.tsx}`.
 
 ## 8. Known constraints
 

@@ -461,6 +461,8 @@ mod tests {
             edit_ops_json: None,
             polish_model: None,
             polish_skipped: true,
+            polish_profile: crate::profile::PolishProfile::Natural,
+            screen_terms: Vec::new(),
         }
     }
 

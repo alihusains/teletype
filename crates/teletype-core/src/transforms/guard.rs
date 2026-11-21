@@ -3,15 +3,20 @@
 //! Belt-and-braces protection for the LLM polish path. After the model
 //! produces a rewrite, the guard verifies that protected tokens (lexicon
 //! terms, boost terms, numbers, URLs, emails, code identifiers) survived
-//! the round-trip. Changed or removed protected tokens are restored in
-//! place; if more than three were changed, the entire model output is
-//! rejected and the rules-only input is returned.
+//! the round-trip. Changed protected tokens are restored in place; a removed
+//! protected token rejects the entire model output and the rules-only input is
+//! returned. Reinsertion was tried and removed: an unmatched polished word
+//! near the gap is indistinguishable from a genuine substitution, so
+//! reinserting either duplicated it or stole an inserted word. If more than
+//! three were changed, the entire model output is rejected as before.
+//!
+//! The word-level diff is a hand-rolled O(n·m) LCS over word vectors,
+//! comparing words case-insensitively (punctuation-stripped) so that a
+//! capitalization-only change is never treated as a substitution. No new
+//! dependency.
 //!
 //! A hallucination guard rejects output that is substantially longer than
 //! the input or contains a long phrase absent from the input.
-//!
-//! The word-level diff is a hand-rolled O(n·m) LCS over word vectors — no
-//! new dependency.
 
 // ── Protected span collection ────────────────────────────────────────────────
 
@@ -166,8 +171,17 @@ fn is_code_identifier(w: &str) -> bool {
 
 // ── LCS diff ─────────────────────────────────────────────────────────────────
 
-/// Hand-rolled O(n·m) LCS over word vectors. Returns the LCS length and the
-/// mapping of polished-word indices to input-word indices for matched words.
+/// Normalise a word for diff/alignment: strip surrounding punctuation and
+/// lowercase. A capitalization-only change is not a protected change.
+fn bare_lower(w: &str) -> String {
+    w.trim_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase()
+}
+
+/// Hand-rolled O(n·m) LCS over word vectors, comparing words by their
+/// [`bare_lower`] form so that case-only differences do not create spurious
+/// substitutions. Returns the LCS length and the mapping of polished-word
+/// indices to input-word indices for matched words.
 ///
 /// `matched_polished[i]` is `Some(input_idx)` when polished word `i` matches
 /// an input word; `None` when it is an insertion.
@@ -178,11 +192,15 @@ fn lcs_word_diff(input: &[&str], polished: &[&str]) -> (usize, Vec<Option<usize>
         return (0, vec![None; m]);
     }
 
+    // Pre-compute bare forms for both vectors.
+    let input_bare: Vec<String> = input.iter().map(|w| bare_lower(w)).collect();
+    let polished_bare: Vec<String> = polished.iter().map(|w| bare_lower(w)).collect();
+
     // dp[i][j] = LCS length of input[i..] and polished[j..].
     let mut dp = vec![vec![0usize; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
-            if input[i] == polished[j] {
+            if input_bare[i] == polished_bare[j] {
                 dp[i][j] = dp[i + 1][j + 1] + 1;
             } else {
                 dp[i][j] = dp[i + 1][j].max(dp[i][j + 1]);
@@ -195,7 +213,7 @@ fn lcs_word_diff(input: &[&str], polished: &[&str]) -> (usize, Vec<Option<usize>
     let mut i = 0;
     let mut j = 0;
     while i < n && j < m {
-        if input[i] == polished[j] {
+        if input_bare[i] == polished_bare[j] {
             matched[j] = Some(i);
             i += 1;
             j += 1;
@@ -322,11 +340,12 @@ pub fn restore_or_reject(input: &str, polished: &str, protected: &[ProtectedSpan
     let (_lcs_len, matched) = lcs_word_diff(&input_words, &polished_words);
 
     // For each protected span, find the polished token that maps to it.
-    // A protected token is "changed" when a polished token maps to its input
-    // position but differs (case/punctuation-insensitive), or when the LCS
-    // failed to match it (the polished token at that position is a
-    // substitution). "Removed" means no polished token maps to it AND no
-    // unmatched polished token is near the span's position.
+    // A protected token is "changed" when an unmatched polished token sits
+    // exactly at the span's input position (a substitution). It is "removed"
+    // when no polished token maps to it at all. Changed tokens are restored in
+    // place; a removed token rejects the whole output, because the model had
+    // no word at that position to restore and reinsertion would either
+    // duplicate a word or steal an adjacent insertion.
     let mut changes = 0usize;
     let mut restored: Vec<String> = polished_words.iter().map(|w| w.to_string()).collect();
 
@@ -342,9 +361,7 @@ pub fn restore_or_reject(input: &str, polished: &str, protected: &[ProtectedSpan
             Some(pj) => {
                 let polished_token = polished_words[pj];
                 let original = span.word.as_str();
-                let p_bare = polished_token.trim_matches(|c: char| !c.is_alphanumeric());
-                let o_bare = original.trim_matches(|c: char| !c.is_alphanumeric());
-                if !p_bare.eq_ignore_ascii_case(o_bare) {
+                if !bare_lower(polished_token).eq(&bare_lower(original)) {
                     let leading_punct: String = polished_token
                         .chars()
                         .take_while(|c| !c.is_alphanumeric())
@@ -370,20 +387,18 @@ pub fn restore_or_reject(input: &str, polished: &str, protected: &[ProtectedSpan
                 for (pj, &mapped_i) in matched.iter().enumerate() {
                     if mapped_i.is_none() {
                         // This polished token is an insertion/substitution.
-                        // Check if it's near the span's input position.
-                        // Heuristic: if the number of matched input tokens
-                        // before pj is close to span.start, it's a substitution.
+                        // It is a substitution only when it sits exactly at
+                        // the protected span's input position. A word one
+                        // position early is an insertion before the span
+                        // ("Please definitely ask ..."), not a replacement
+                        // for the missing token; treating it as one steals
+                        // the inserted word and loses it.
                         let matched_before: usize =
                             matched[..pj].iter().filter(|m| m.is_some()).count();
-                        if matched_before == span.start
-                            || matched_before == span.start.saturating_sub(1)
-                        {
+                        if matched_before == span.start {
                             let polished_token = polished_words[pj];
                             let original = span.word.as_str();
-                            let p_bare =
-                                polished_token.trim_matches(|c: char| !c.is_alphanumeric());
-                            let o_bare = original.trim_matches(|c: char| !c.is_alphanumeric());
-                            if !p_bare.eq_ignore_ascii_case(o_bare) {
+                            if !bare_lower(polished_token).eq(&bare_lower(original)) {
                                 let leading_punct: String = polished_token
                                     .chars()
                                     .take_while(|c| !c.is_alphanumeric())
@@ -405,8 +420,15 @@ pub fn restore_or_reject(input: &str, polished: &str, protected: &[ProtectedSpan
                     }
                 }
                 if !substituted {
-                    // Removed: count as a change.
-                    changes += 1;
+                    // Removed: reject. The polished output has no word at
+                    // this position, so there is nothing safe to restore
+                    // into; reinserting was tried and could duplicate the
+                    // word or steal an adjacent insertion. Rejecting returns
+                    // the rules-only input, which still contains the
+                    // protected token exactly.
+                    return GuardResult::Reject {
+                        reason: format!("protected token removed: {}", span.word),
+                    };
                 }
             }
         }
@@ -414,9 +436,7 @@ pub fn restore_or_reject(input: &str, polished: &str, protected: &[ProtectedSpan
 
     if changes > MAX_PROTECTED_CHANGES {
         return GuardResult::Reject {
-            reason: format!(
-                "protected: {changes} tokens changed/removed > {MAX_PROTECTED_CHANGES}"
-            ),
+            reason: format!("protected: {changes} tokens changed > {MAX_PROTECTED_CHANGES}"),
         };
     }
 
@@ -584,8 +604,9 @@ mod tests {
             "Kubernetes".to_string(),
         ];
         let input = "Siobhan Teletype CherryPick Kubernetes";
-        // The model changes all four.
-        let polished = "Shivon Telltype Cherrypick Kuber";
+        // The model changes all four to genuinely different words (not
+        // case-only variants).
+        let polished = "Shivon Telltype CherryPicked Kuber";
         let protected = collect_protected(input, &terms, &[]);
         let result = restore_or_reject(input, polished, &protected);
         assert!(
@@ -731,6 +752,89 @@ mod tests {
                 "benign paraphrase must pass: input={input:?} polished={polished:?} got {result:?}"
             );
         }
+    }
+
+    #[test]
+    fn case_only_change_is_not_a_protected_change() {
+        // Sentence-initial lowercase word + a protected name. The polished
+        // version capitalises the first word and keeps the name. The
+        // capitalisation-only change must not be counted as a protected
+        // change, and both words must be present in the output.
+        let terms = vec!["Siobhan".to_string()];
+        let input = "ask Siobhan to review the plan";
+        let polished = "Ask Siobhan to review the plan.";
+        let protected = collect_protected(input, &terms, &[]);
+        let result = restore_or_reject(input, polished, &protected);
+        match result {
+            GuardResult::Accept(text) => {
+                assert!(text.contains("Siobhan"), "name must be present: {text}");
+                assert!(
+                    text.to_lowercase().contains("ask"),
+                    "verb must be present: {text}"
+                );
+            }
+            other => panic!("case-only change must be accepted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn removed_name_rejects() {
+        // Stable lowercase prefix, name deleted.
+        let terms = vec!["Siobhan".to_string()];
+        let input = "please ask Siobhan to review the plan";
+        let polished = "Please ask to review the plan.";
+        let protected = collect_protected(input, &terms, &[]);
+        let result = restore_or_reject(input, polished, &protected);
+        assert!(
+            matches!(result, GuardResult::Reject { .. }),
+            "a removed protected name must reject, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn removed_number_rejects() {
+        // Stable prefix, number deleted.
+        let input = "call 42 now";
+        let polished = "Call now.";
+        let protected = collect_protected(input, &[], &[]);
+        let result = restore_or_reject(input, polished, &protected);
+        assert!(
+            matches!(result, GuardResult::Reject { .. }),
+            "a removed protected number must reject, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn sentence_initial_case_plus_removed_name_does_not_displace() {
+        // The exact G9 case: input `ask Siobhan to review the plan` →
+        // `Ask to review the plan.`. The result must NOT be
+        // `Siobhan to review the plan.` (which drops the verb). A removed
+        // token has no safe output position, so reject.
+        let terms = vec!["Siobhan".to_string()];
+        let input = "ask Siobhan to review the plan";
+        let polished = "Ask to review the plan.";
+        let protected = collect_protected(input, &terms, &[]);
+        let result = restore_or_reject(input, polished, &protected);
+        assert!(
+            matches!(result, GuardResult::Reject { .. }),
+            "removed name after case-only change must reject, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn removed_name_after_insertion_rejects_instead_of_stealing_it() {
+        // The model inserts "definitely" before the verb and drops the name.
+        // "definitely" must not be treated as a substitution for "Siobhan":
+        // doing that loses the inserted word and corrupts the sentence.
+        let terms = vec!["Siobhan".to_string()];
+        let input = "please ask Siobhan to review the plan";
+        let polished = "Please definitely ask to review the plan.";
+        let protected = collect_protected(input, &terms, &[]);
+        let result = restore_or_reject(input, polished, &protected);
+        assert!(
+            matches!(result, GuardResult::Reject { .. }),
+            "removed name after an insertion must reject, got {result:?}"
+        );
     }
 
     #[test]

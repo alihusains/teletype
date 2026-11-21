@@ -364,7 +364,7 @@ fn qwen08_polish_postprocess(cleaned: &str, ctx: &PromptContext) -> String {
         deechoed
     };
     let capped = capitalize_leads(&shaped);
-    if wants_british_spelling(ctx.user_override.as_deref()) {
+    if wants_british_spelling(ctx.clean_user_override()) {
         apply_british_spelling(&capped)
     } else {
         capped
@@ -378,7 +378,7 @@ fn qwen08_polish_postprocess(cleaned: &str, ctx: &PromptContext) -> String {
 /// Runs on model output only, never on the raw input.
 fn qwen08_generic_postprocess(text: &str, ctx: &PromptContext) -> String {
     let capped = capitalize_leads(&strip_single_leading_bullet(text));
-    if wants_british_spelling(ctx.user_override.as_deref()) {
+    if wants_british_spelling(ctx.clean_user_override()) {
         apply_british_spelling(&capped)
     } else {
         capped
@@ -489,7 +489,7 @@ fn run_qwen_polish(
     ctx: &PromptContext,
     on_token: &mut Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, String> {
-    let system = qwen_polish_system_prompt_with_override(ctx.user_override.as_deref());
+    let system = qwen_polish_system_prompt_with_override(ctx.clean_user_override());
     let user = format!("{}\n{}", ctx.s1_control.control_line(), protected_input);
     run_fixed_messages(
         provider,
@@ -520,11 +520,8 @@ fn run_qwen08_polish(
     ctx: &PromptContext,
     on_token: &mut Option<&mut dyn FnMut(&str)>,
 ) -> Result<String, String> {
-    let (system, user) = build_qwen08_polish_messages(
-        protected_input,
-        &ctx.s1_control,
-        ctx.user_override.as_deref(),
-    );
+    let (system, user) =
+        build_qwen08_polish_messages(protected_input, &ctx.s1_control, ctx.clean_user_override());
     run_fixed_messages(
         provider,
         protected_input,
@@ -605,50 +602,94 @@ pub fn run_transform_blocking(
     ctx: &PromptContext,
     on_token: &mut Option<&mut dyn FnMut(&str)>,
 ) -> TransformResult {
-    let chunks = super::splitter::split_for_polish(protected_input);
-    if chunks.len() == 1 {
-        return run_single_chunk(provider, transform, protected_input, ctx, on_token);
-    }
+    // T3a: resolve the contract once per run. A context with no profile marker
+    // (every pre-T3a caller) keeps the legacy path byte-for-byte.
+    let decision = ctx.profile().map(|p| {
+        crate::profile::decide_profile(p, provider.model_id(), ctx.polish_max_change_percent)
+    });
+    let effective_ctx;
+    let ctx = if let Some(d) = decision.as_ref() {
+        if d.effective.is_off() {
+            // Off bypasses inference entirely. No skip reason: this is the
+            // user's chosen contract, not a failure the pill must explain.
+            // The resolved profile and any fallback reason travel on
+            // `PipelineResult` / `PolishProfileInfo` instead.
+            tracing::info!(profile = d.requested.key(), "polish_profile_off_bypass");
+            return TransformResult {
+                text: protected_input.to_string(),
+                transformed: false,
+                metrics: TransformMetrics {
+                    latency_ms: 0,
+                    fell_back: true,
+                    failure: None,
+                    skip_reason: None,
+                },
+                input_text: Some(protected_input.to_string()),
+            };
+        }
+        effective_ctx = PromptContext {
+            polish_max_change_percent: d.budget_percent,
+            ..ctx.clone()
+        };
+        &effective_ctx
+    } else {
+        ctx
+    };
 
-    let mut full = String::new();
-    let mut any_transformed = false;
-    let mut total_latency = 0u128;
-    for chunk in &chunks {
-        let r = run_single_chunk(provider, transform, chunk, ctx, on_token);
-        if !full.is_empty() {
-            full.push(' ');
+    let chunks = super::splitter::split_for_polish(protected_input);
+    let result = if chunks.len() == 1 {
+        run_single_chunk(provider, transform, protected_input, ctx, on_token)
+    } else {
+        let mut full = String::new();
+        let mut any_transformed = false;
+        let mut total_latency = 0u128;
+        for chunk in &chunks {
+            let r = run_single_chunk(provider, transform, chunk, ctx, on_token);
+            if !full.is_empty() {
+                full.push(' ');
+            }
+            // Partial-echo guard (BUG-005): the validator treats a model that
+            // returns the chunk plus extra text (it re-states the chunk, then adds a
+            // polished version) as a valid transform, because the output covers
+            // >=90% of the input. Re-joining such an output duplicates the
+            // re-stated section. When the output is notably longer than the chunk
+            // AND mostly overlaps it, the model re-stated the chunk: use the input.
+            let overlap = validator::longest_common_substring(chunk, &r.text);
+            if r.text.len() > chunk.len() / 10 && overlap.len() > chunk.len() * 7 / 10 {
+                tracing::warn!(
+                    chunk_len = chunk.len(),
+                    out_len = r.text.len(),
+                    "partial echo detected in split chunk; using input for this chunk"
+                );
+                full.push_str(chunk);
+            } else {
+                full.push_str(&r.text);
+            }
+            any_transformed |= r.transformed;
+            total_latency += r.metrics.latency_ms;
         }
-        // Partial-echo guard (BUG-005): the validator treats a model that
-        // returns the chunk plus extra text (it re-states the chunk, then adds a
-        // polished version) as a valid transform, because the output covers
-        // >=90% of the input. Re-joining such an output duplicates the
-        // re-stated section. When the output is notably longer than the chunk
-        // AND mostly overlaps it, the model re-stated the chunk: use the input.
-        let overlap = validator::longest_common_substring(chunk, &r.text);
-        if r.text.len() > chunk.len() / 10 && overlap.len() > chunk.len() * 7 / 10 {
-            tracing::warn!(
-                chunk_len = chunk.len(),
-                out_len = r.text.len(),
-                "partial echo detected in split chunk; using input for this chunk"
+        TransformResult {
+            text: full,
+            transformed: any_transformed,
+            metrics: TransformMetrics {
+                latency_ms: total_latency,
+                fell_back: !any_transformed,
+                failure: None,
+                skip_reason: None,
+            },
+            input_text: None,
+        }
+    };
+    if let Some(d) = decision.as_ref() {
+        if d.fell_back() {
+            tracing::info!(
+                requested = d.requested.key(),
+                effective = d.effective.key(),
+                "polish_profile_model_fallback"
             );
-            full.push_str(chunk);
-        } else {
-            full.push_str(&r.text);
         }
-        any_transformed |= r.transformed;
-        total_latency += r.metrics.latency_ms;
     }
-    TransformResult {
-        text: full,
-        transformed: any_transformed,
-        metrics: TransformMetrics {
-            latency_ms: total_latency,
-            fell_back: !any_transformed,
-            failure: None,
-            skip_reason: None,
-        },
-        input_text: None,
-    }
+    result
 }
 
 /// Transforms a single (already <= [`super::splitter::MAX_CHUNK_WORDS`] word)
@@ -768,9 +809,7 @@ fn run_single_chunk(
         } else if is_qwen2b_polish {
             (
                 run_qwen_polish(provider, protected_input, ctx, on_token),
-                super::prompt::qwen_polish_system_prompt_with_override(
-                    ctx.user_override.as_deref(),
-                ),
+                super::prompt::qwen_polish_system_prompt_with_override(ctx.clean_user_override()),
             )
         } else if is_qwen08_polish {
             (
@@ -3485,6 +3524,107 @@ mod tests {
                     d.reason, input
                 );
             }
+        }
+
+        // ---- T3a: profile contract on the model path ----
+
+        struct CountingProvider {
+            calls: std::sync::atomic::AtomicUsize,
+        }
+        impl crate::llm::InferenceProvider for CountingProvider {
+            fn model_id(&self) -> &str {
+                "mock"
+            }
+            fn model_name(&self) -> &str {
+                "mock"
+            }
+            fn generate(
+                &self,
+                _prompt: &str,
+                _params: crate::llm::GenerationParams,
+            ) -> Result<String, String> {
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok("The meeting is at three in the afternoon.".into())
+            }
+        }
+
+        #[test]
+        fn off_profile_bypasses_inference_and_leaves_text_byte_identical() {
+            use crate::profile::PolishProfile;
+            let provider = CountingProvider {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            };
+            let ctx = PromptContext {
+                user_override: crate::profile::encode_instruction(PolishProfile::Off, None),
+                ..Default::default()
+            };
+            let input = "the meeting is at three in the afternoon";
+            let result = run_transform_blocking(&provider, &polish(), input, &ctx, &mut None);
+            assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(result.text, input, "Off must not change a single byte");
+            assert!(!result.transformed);
+        }
+
+        struct PromptRecorder(std::sync::Mutex<Option<String>>);
+        impl crate::llm::InferenceProvider for PromptRecorder {
+            fn model_id(&self) -> &str {
+                "mock"
+            }
+            fn model_name(&self) -> &str {
+                "mock"
+            }
+            fn generate(
+                &self,
+                prompt: &str,
+                _params: crate::llm::GenerationParams,
+            ) -> Result<String, String> {
+                *self.0.lock().unwrap() = Some(prompt.to_string());
+                Ok("The meeting is at three in the afternoon.".into())
+            }
+        }
+
+        #[test]
+        fn profile_line_reaches_an_instruction_capable_model_only() {
+            use crate::profile::PolishProfile;
+            let recorder = PromptRecorder(std::sync::Mutex::new(None));
+            let ctx = PromptContext {
+                user_override: crate::profile::encode_instruction(PolishProfile::Structured, None),
+                language: "en".into(),
+                ..Default::default()
+            };
+            let input = "the meeting is at three in the afternoon and we should prepare";
+            let _ = run_transform_blocking(&recorder, &polish(), input, &ctx, &mut None);
+            let prompt = recorder.0.lock().unwrap().clone().unwrap_or_default();
+            assert!(
+                prompt.contains(PolishProfile::Structured.instruction_line().unwrap()),
+                "the structured profile line must reach the generic prompt"
+            );
+            assert!(
+                !prompt.contains("[polish-profile:"),
+                "the marker must be stripped"
+            );
+
+            // The same profile on a cleanup-only card model never sees the
+            // line: its fixed prompt is a contract with the model card.
+            let speako = SpeakoRecorder(std::sync::Mutex::new((None, None)));
+            let _ = run_transform_blocking(&speako, &polish(), input, &ctx, &mut None);
+            let (_, user) = speako.0.lock().unwrap().clone();
+            let user = user.unwrap_or_default();
+            assert!(!user.contains("[Profile:"), "card model got a profile line");
+            assert!(
+                !user.contains("[polish-profile:"),
+                "card model got the marker"
+            );
+        }
+
+        #[test]
+        fn cleanup_only_fallback_reason_names_the_model_limitation() {
+            use crate::profile::{decide_profile, PolishProfile};
+            let decision = decide_profile(PolishProfile::Structured, "s1-mini", 40);
+            assert_eq!(decision.effective, PolishProfile::Clean);
+            assert!(decision.reason.contains("s1-mini"));
+            assert!(decision.reason.contains("can only fix errors"));
+            assert_eq!(decision.budget_percent, 15);
         }
     }
 }

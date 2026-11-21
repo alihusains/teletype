@@ -46,7 +46,7 @@ fn to_item(n: &Note) -> NoteListItem {
 pub async fn list_notes(state: State<'_, AppState>) -> CommandResult<Vec<NoteListItem>> {
     let notes = state.scratchpad.get();
     let mut items: Vec<NoteListItem> = notes.notes.iter().map(to_item).collect();
-    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    items.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
     Ok(items)
 }
 

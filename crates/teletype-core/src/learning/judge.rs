@@ -71,6 +71,12 @@ pub struct JudgeContext {
     /// "tauri" or "webhook"). Restricted to spans of one or two words by the
     /// judge so a lowercase rewrite cannot become a term.
     pub allow_lowercase_terms: bool,
+    /// Terms visible on screen when the edit was observed. A target that
+    /// matches one of these (case-insensitively) is screen-confirmed: the
+    /// judge waives the single-word word-list skip for that target and
+    /// lowers the mishearing floor to [`SCREEN_CONFIRMED_PHON_SIM`]. Empty by
+    /// default, so every existing caller keeps the strict behaviour.
+    pub screen_terms: Vec<String>,
 }
 
 // ── Data files ─────────────────────────────────────────────────────────────
@@ -99,6 +105,11 @@ fn parse_words(raw: &str) -> HashSet<String> {
 }
 
 // ── Phonetic similarity ────────────────────────────────────────────────────
+
+/// Lowered mishearing floor when the corrected term is visible on screen.
+/// A term the user can actually see is strong evidence even when its spelling
+/// is novel; without that signal the floor stays at `0.6`.
+pub const SCREEN_CONFIRMED_PHON_SIM: f32 = 0.45;
 
 /// Combined phonetic + orthographic similarity in `0.0..=1.0`.
 ///
@@ -139,7 +150,20 @@ pub fn phon_sim(a: &str, b: &str) -> f32 {
 /// Structural patterns (paths, URLs, code, numbers, …) are checked
 /// first so they always win; the word lists (acronyms, first names,
 /// everyday words) only apply when neither side is structural.
+#[cfg(test)]
 fn skip_reason(from: &str, to: &str) -> Option<SkipReason> {
+    skip_reason_with_screen_confirmation(from, to, false)
+}
+
+/// Same checks as `skip_reason`, except that a screen-confirmed `to` is
+/// exempt from the word-list checks (acronyms, first names, everyday words).
+/// Structural checks are never waived — a path or URL is not a term even when
+/// it is visible on screen. The `from` side keeps every check.
+fn skip_reason_with_screen_confirmation(
+    from: &str,
+    to: &str,
+    screen_confirmed_to: bool,
+) -> Option<SkipReason> {
     for w in [to, from] {
         if let Some(r) = structural_skip(w) {
             return Some(r);
@@ -148,17 +172,33 @@ fn skip_reason(from: &str, to: &str) -> Option<SkipReason> {
     // Category-major over both sides: an acronym on either side beats a
     // first name, which beats an everyday word ("URL" → "URLS" is an
     // acronym edit, not an everyday word, even though "urls" is a word).
-    let lows: [String; 2] = [to.to_lowercase(), from.to_lowercase()];
-    if lows.iter().any(|l| acronyms().contains(l)) {
+    let (to_lower, from_lower) = (to.to_lowercase(), from.to_lowercase());
+    if !screen_confirmed_to && acronyms().contains(&to_lower) {
         return Some(SkipReason::EverydayAcronym);
     }
-    if lows.iter().any(|l| first_names().contains(l)) {
+    if acronyms().contains(&from_lower) {
+        return Some(SkipReason::EverydayAcronym);
+    }
+    if !screen_confirmed_to && first_names().contains(&to_lower) {
         return Some(SkipReason::CommonFirstName);
     }
-    if lows.iter().any(|l| common_words().contains(l)) {
+    if first_names().contains(&from_lower) {
+        return Some(SkipReason::CommonFirstName);
+    }
+    if !screen_confirmed_to && common_words().contains(&to_lower) {
+        return Some(SkipReason::EverydayWord);
+    }
+    if common_words().contains(&from_lower) {
         return Some(SkipReason::EverydayWord);
     }
     None
+}
+
+/// True when `w` is a common first name (the same list the judge's word-list
+/// skip uses). Shared with the personalization dictionary-write guard so a
+/// name visible on screen can be treated as a learnable term there too.
+pub fn is_common_first_name(w: &str) -> bool {
+    first_names().contains(&w.to_lowercase())
 }
 
 /// Word-list skip only (no structural checks). Used for mishearing
@@ -812,6 +852,9 @@ fn join(words: &[String]) -> String {
 pub fn judge_replace(from: &str, to: &str, ctx: &JudgeContext) -> Judgement {
     let from_words: Vec<String> = from.split_whitespace().map(String::from).collect();
     let to_words: Vec<String> = to.split_whitespace().map(String::from).collect();
+    // Screen confirmation is about the corrected term as it appears in the
+    // observed text, compared case-insensitively against the captured terms.
+    let screen_confirmed = ctx.screen_terms.iter().any(|t| t.eq_ignore_ascii_case(to));
 
     // Number formatting first: "two" → "2" is a style preference, never a
     // mishearing to learn (port of `numberWordReadings`, commit faad17d1).
@@ -848,7 +891,7 @@ pub fn judge_replace(from: &str, to: &str, ctx: &JudgeContext) -> Judgement {
     // to single-word spans: a multi-word span is a rewrite or ambiguous,
     // not a skip based on individual words being everyday.
     if from_words.len() == 1 && to_words.len() == 1 {
-        if let Some(reason) = skip_reason(from, to) {
+        if let Some(reason) = skip_reason_with_screen_confirmation(from, to, screen_confirmed) {
             return Judgement::Skip { reason };
         }
     }
@@ -863,7 +906,13 @@ pub fn judge_replace(from: &str, to: &str, ctx: &JudgeContext) -> Judgement {
     // Restrict lowercase-term learning to spans of 1–2 words on the
     // correction side so a lowercase rewrite cannot become a term.
     let lowercase_ok = ctx.allow_lowercase_terms && to_words.len() <= 2;
-    if sim >= 0.6 && (low_conf || proper || lowercase_ok) && word_list_skip(to).is_none() {
+    let floor = if screen_confirmed {
+        SCREEN_CONFIRMED_PHON_SIM
+    } else {
+        0.6
+    };
+    let to_word_list_ok = screen_confirmed || word_list_skip(to).is_none();
+    if sim >= floor && (low_conf || proper || lowercase_ok) && to_word_list_ok {
         return Judgement::Mishearing {
             term: join(&to_words),
             alias: join(&from_words),
@@ -1374,6 +1423,101 @@ mod tests {
                 "unexpected word-list skip for {w:?}"
             );
         }
+    }
+
+    #[test]
+    fn screen_confirmed_common_first_name_is_mishearing() {
+        // "sevan" → "Sarah" scores ~0.47 and `to` is a common first name:
+        // without screen confirmation it is a skip, with it a mishearing.
+        let sim = phon_sim("sevan", "Sarah");
+        assert!(
+            (SCREEN_CONFIRMED_PHON_SIM..0.6).contains(&sim),
+            "sim = {sim}"
+        );
+        assert_eq!(
+            judge_replace("sevan", "Sarah", &ctx()),
+            Judgement::Skip {
+                reason: SkipReason::CommonFirstName
+            }
+        );
+        let screen = JudgeContext {
+            screen_terms: vec!["Sarah".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            judge_replace("sevan", "Sarah", &screen),
+            Judgement::Mishearing {
+                term: "Sarah".into(),
+                alias: "sevan".into()
+            }
+        );
+        // Matching is case-insensitive.
+        let lower = JudgeContext {
+            screen_terms: vec!["sarah".into()],
+            ..Default::default()
+        };
+        assert!(matches!(
+            judge_replace("sevan", "Sarah", &lower),
+            Judgement::Mishearing { .. }
+        ));
+    }
+
+    #[test]
+    fn screen_confirmed_lowers_the_mishearing_floor() {
+        // A novel spelling at ~0.55 with no word-list issue: the strict floor
+        // leaves it ambiguous; screen confirmation promotes it.
+        let sim = phon_sim("siobhan", "Shivon");
+        assert!(
+            (SCREEN_CONFIRMED_PHON_SIM..0.6).contains(&sim),
+            "sim = {sim}"
+        );
+        assert_eq!(
+            judge_replace("siobhan", "Shivon", &ctx()),
+            Judgement::Ambiguous
+        );
+        let screen = JudgeContext {
+            screen_terms: vec!["Shivon".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            judge_replace("siobhan", "Shivon", &screen),
+            Judgement::Mishearing {
+                term: "Shivon".into(),
+                alias: "siobhan".into()
+            }
+        );
+    }
+
+    #[test]
+    fn screen_confirmation_keeps_other_guards_intact() {
+        let screen = JudgeContext {
+            screen_terms: vec!["src/main2.rs".into(), "Apple".into()],
+            ..Default::default()
+        };
+        // Structural skips and style edits are never waived.
+        assert_eq!(
+            judge_replace("src/main.rs", "src/main2.rs", &screen),
+            Judgement::Skip {
+                reason: SkipReason::FilePathLike
+            }
+        );
+        assert_eq!(
+            judge_replace("apple", "Apple", &screen),
+            Judgement::Style {
+                kind: StyleKind::Casing
+            }
+        );
+        // An unrelated screen term waives nothing.
+        let unrelated = JudgeContext {
+            screen_terms: vec!["PyTorch".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            judge_replace("sevan", "Sarah", &unrelated),
+            Judgement::Skip {
+                reason: SkipReason::CommonFirstName
+            }
+        );
     }
 
     proptest::proptest! {

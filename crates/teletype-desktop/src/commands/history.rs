@@ -353,48 +353,64 @@ pub async fn get_insights(
     // top-fix pass runs a phonetic similarity over every changed span, and
     // this command re-runs whenever the Insights window regains focus.
     let learning_path = state.data_dir.join("learning").join("learning.sqlite");
-    // The strong-language coach is private by design: the summary is only
-    // computed when the user has the card switched on, so the raw-ASR pass
-    // never runs for a user who turned the coach off.
+    // Learning is always computed when the store exists: the learned-terms
+    // card is not the language coach and must not disappear with it. The
+    // strong-language coach is private by design: only its raw-ASR pass is
+    // gated on the switch, so turning the coach off never runs that pass.
     let language_enabled = state.settings().show_language_coach;
-    if language_enabled && learning_path.exists() {
+    if learning_path.exists() {
         match teletype_core::learning::store::LearningStore::open(&learning_path) {
             Ok(store) => {
                 let dictations = store.recent_dictations(300).unwrap_or_default();
                 let lexicon = store.lexicon_all().unwrap_or_default();
                 let accuracy = store.personal_accuracy_history(10).unwrap_or_default();
                 let candidates = store.candidate_all().unwrap_or_default();
-                insights.learning =
-                    insights::compute_learning(&dictations, &accuracy, &lexicon, &candidates, now);
+                let bandit_snapshot = state
+                    .bandit
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                insights.learning = insights::compute_learning_with_bandit(
+                    &dictations,
+                    &accuracy,
+                    &lexicon,
+                    &candidates,
+                    &bandit_snapshot,
+                    now,
+                );
 
                 // The strong-language coach counts what the user SAID (raw
-                // ASR), not the polished text. The store rows are capped at
-                // 300 for the learning pass; the same rows cover the
-                // selected window when it fits, and the prior equal window
-                // for the trend when it fits. A window wider than the
-                // 300-row cap sees only what the store holds.
-                let takes: Vec<teletype_core::language_habits::LanguageTake<'_>> = dictations
-                    .iter()
-                    .filter(|r| in_window(r.ts))
-                    .map(Into::into)
-                    .collect();
-                let prior_takes: Vec<teletype_core::language_habits::LanguageTake<'_>> = window
-                    .map(|(from, to)| {
-                        let span = to.saturating_sub(from);
-                        let prior_from = from.saturating_sub(span);
-                        dictations
-                            .iter()
-                            .filter(|r| r.ts >= prior_from && r.ts < from)
-                            .map(Into::into)
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                insights.language = teletype_core::language_habits::compute_language_summary(
-                    &takes,
-                    &prior_takes,
-                    now,
-                    "spoken",
-                );
+                // ASR), not the polished text. Only this pass is behind the
+                // coach switch; the learning numbers above are not.
+                if language_enabled {
+                    // The store rows are capped at 300 for the learning pass;
+                    // the same rows cover the selected window when it fits,
+                    // and the prior equal window for the trend when it fits.
+                    // A window wider than the 300-row cap sees only what the
+                    // store holds.
+                    let takes: Vec<teletype_core::language_habits::LanguageTake<'_>> = dictations
+                        .iter()
+                        .filter(|r| in_window(r.ts))
+                        .map(Into::into)
+                        .collect();
+                    let prior_takes: Vec<teletype_core::language_habits::LanguageTake<'_>> = window
+                        .map(|(from, to)| {
+                            let span = to.saturating_sub(from);
+                            let prior_from = from.saturating_sub(span);
+                            dictations
+                                .iter()
+                                .filter(|r| r.ts >= prior_from && r.ts < from)
+                                .map(Into::into)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    insights.language = teletype_core::language_habits::compute_language_summary(
+                        &takes,
+                        &prior_takes,
+                        now,
+                        "spoken",
+                    );
+                }
             }
             Err(e) => crate::log_entry(
                 crate::LogLevel::Warn,

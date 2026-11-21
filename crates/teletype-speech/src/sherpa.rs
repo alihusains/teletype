@@ -45,6 +45,8 @@ use crate::{BoostTerm, SpeechError, SpeechProvider, Transcript};
 
 /// The NeMo Parakeet TDT 0.6B v3 int8 transducer (multilingual).
 pub const SHERPA_V3: &str = "sherpa-parakeet-v3-int8";
+/// Moondream's Parakeet Ultra fine-tune, exported to sherpa-onnx int8.
+pub const SHERPA_ULTRA: &str = "sherpa-parakeet-ultra-int8";
 /// The NeMo Parakeet TDT 0.6B v2 int8 transducer (English only).
 pub const SHERPA_V2: &str = "sherpa-parakeet-v2-int8";
 
@@ -93,11 +95,12 @@ impl std::fmt::Debug for SherpaParakeetProvider {
 }
 
 impl SherpaParakeetProvider {
-    /// Create an unloaded provider for `model` (one of [`SHERPA_V3`] /
-    /// [`SHERPA_V2`]). Returns `None` for unknown ids so a catalog typo
-    /// fails at construction, not at `load`.
+    /// Create an unloaded provider for `model` (one of [`SHERPA_ULTRA`] /
+    /// [`SHERPA_V3`] / [`SHERPA_V2`]). Returns `None` for unknown ids so a
+    /// catalog typo fails at construction, not at `load`.
     pub fn new(model: &str) -> Option<Self> {
         let model: &'static str = match model {
+            m if m == SHERPA_ULTRA => SHERPA_ULTRA,
             m if m == SHERPA_V3 => SHERPA_V3,
             m if m == SHERPA_V2 => SHERPA_V2,
             _ => return None,
@@ -277,6 +280,8 @@ mod tests {
         let v3 = SherpaParakeetProvider::new(SHERPA_V3).expect("v3 is a known family");
         assert_eq!(v3.model(), SHERPA_V3);
         assert!(!v3.is_loaded());
+        let ultra = SherpaParakeetProvider::new(SHERPA_ULTRA).expect("Ultra is a known family");
+        assert_eq!(ultra.model(), SHERPA_ULTRA);
     }
 
     #[test]

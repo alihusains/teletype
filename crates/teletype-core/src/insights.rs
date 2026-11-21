@@ -414,6 +414,84 @@ pub struct LearningSummary {
     /// itself. Nothing rewrites text from this list yet; it is the evidence
     /// the auto-apply decision needs before such a stage exists.
     pub auto_apply_fixes: Vec<TrackedFix>,
+    /// Zero-edit rate over the last 7 days: `100 * zero_edit_takes_7d /
+    /// settled_takes_7d`, rounded to 1 decimal. `None` when no settled
+    /// takes (polish ran, `observed` is `Some`) were recorded in the
+    /// window.
+    ///
+    /// A **settled take** is a dictation in the last 7 days where
+    /// `polish_skipped == false` and `observed.is_some()`.
+    /// A **zero-edit take** is a settled take where
+    /// `changed_word_count(pasted, observed) == 0` — the user kept the
+    /// polished text without edits.
+    #[serde(default)]
+    pub zero_edit_rate_7d: Option<f64>,
+    /// Number of zero-edit takes in the last 7 days (numerator of ZER).
+    #[serde(default)]
+    pub zero_edit_takes_7d: u32,
+    /// Number of settled takes in the last 7 days (denominator of ZER).
+    #[serde(default)]
+    pub settled_takes_7d: u32,
+    /// Per-app zero-edit breakdown for the top 3 apps by settled-take
+    /// count in the last 7 days. Empty when no app context is available.
+    #[serde(default)]
+    pub zero_edit_by_app: Vec<ZeroEditApp>,
+    /// Automatic per-app profile changes Teletype learned (T5), each with an
+    /// undo action. Populated from the local bandit state; the default (empty)
+    /// is what the UI sees before any profile is learned.
+    #[serde(default)]
+    pub profile_learnings: Vec<ProfileLearningRow>,
+}
+
+/// One app's zero-edit contribution in the last 7 days.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ZeroEditApp {
+    /// The app identifier (e.g. "com.google.gmail").
+    pub app_id: String,
+    /// Zero-edit takes for this app in the window.
+    pub zero_edit: u32,
+    /// Settled takes for this app in the window.
+    pub settled: u32,
+    /// `100 * zero_edit / settled`, 1 decimal; `None` when `settled == 0`.
+    pub rate: Option<f64>,
+}
+
+/// The undo action carried with a learned-profile row. The UI uses it to
+/// restore the profile the app used before Teletype learned the new one, so
+/// the change is always visible and reversible. Local only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileUndoAction {
+    /// Normalized app key the change applies to.
+    pub app_key: String,
+    /// Per-app settings key an undo writes to restore the previous profile.
+    #[serde(default)]
+    pub scope_key: String,
+    /// Profile to restore when the user undoes the learned change.
+    pub restore_profile: String,
+    /// User-facing label, e.g. "Restore Natural".
+    pub label: String,
+}
+
+/// One automatic profile change Teletype learned for an app (T5). The row is
+/// the explanation ("Gmail: Structured learned from 12 takes") and the undo
+/// action is the reversal, both carried in the existing Learning payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileLearningRow {
+    pub app_id: String,
+    /// Display label, e.g. "Gmail" (never the raw bundle id in the sentence).
+    pub app_label: String,
+    /// The recommended profile the app started from.
+    pub from_profile: String,
+    /// The adjacent profile the bandit selected.
+    pub learned_profile: String,
+    /// Settled takes on the learned profile backing the change.
+    pub takes: u64,
+    pub learned_at: u64,
+    /// Undo action: restoring `from_profile` reverses the automatic change.
+    pub undo: ProfileUndoAction,
 }
 
 /// Words the user changed in a pasted→observed edit: the **to-side** word
@@ -436,6 +514,11 @@ fn changed_word_count(pasted: &str, observed: &str) -> i64 {
 
 /// Computes the Learning summary from stored learning rows.
 ///
+/// The 5-argument entry point used by the desktop layer. The profile-learning
+/// rows need the local bandit state, which lives beside the feedback store;
+/// until that store is threaded through by the caller, `profile_learnings` is
+/// empty. Call [`compute_learning_with_bandit`] to include the learned rows.
+///
 /// `dictations` may be in any order (newest first, as the store returns
 /// them); `accuracy` may be in any order (the store returns newest first).
 pub fn compute_learning(
@@ -443,6 +526,69 @@ pub fn compute_learning(
     accuracy: &[PersonalAccuracyRow],
     lexicon: &[LexiconRow],
     candidates: &[crate::learning::store::CandidateRow],
+    now_ms: u64,
+) -> LearningSummary {
+    compute_learning_with_bandit(
+        dictations,
+        accuracy,
+        lexicon,
+        candidates,
+        &crate::learning::profile_bandit::BanditState::default(),
+        now_ms,
+    )
+}
+
+/// Builds the Insights rows for automatic profile changes from the local
+/// bandit's active changes. Each row is the visible explanation plus an undo
+/// action that names the profile to restore.
+pub fn compute_profile_learnings(
+    bandit: &crate::learning::profile_bandit::BanditState,
+    now_ms: u64,
+) -> Vec<ProfileLearningRow> {
+    use crate::learning::profile_bandit::app_label;
+
+    let mut rows: Vec<ProfileLearningRow> = bandit
+        .changes
+        .iter()
+        .filter(|change| {
+            !change.undone
+                && !change.app_key.is_empty()
+                && now_ms.saturating_sub(change.at_ms) <= 30 * DAY_MS
+        })
+        .map(|change| {
+            let takes = bandit.tally(&change.app_key, change.to).settled;
+            ProfileLearningRow {
+                app_id: change.app_key.clone(),
+                app_label: app_label(&change.app_key),
+                from_profile: change.from.key().to_string(),
+                learned_profile: change.to.key().to_string(),
+                takes,
+                learned_at: change.at_ms,
+                undo: ProfileUndoAction {
+                    app_key: change.app_key.clone(),
+                    scope_key: crate::learning::profile_bandit::scope_key_for_app(&change.app_key),
+                    restore_profile: change.from.key().to_string(),
+                    label: format!("Restore {}", change.from.label()),
+                },
+            }
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        b.learned_at
+            .cmp(&a.learned_at)
+            .then(a.app_id.cmp(&b.app_id))
+    });
+    rows
+}
+
+/// Full Learning-summary computation, including the local profile-learning
+/// rows from `bandit`.
+pub fn compute_learning_with_bandit(
+    dictations: &[DictationRow],
+    accuracy: &[PersonalAccuracyRow],
+    lexicon: &[LexiconRow],
+    candidates: &[crate::learning::store::CandidateRow],
+    bandit: &crate::learning::profile_bandit::BanditState,
     now_ms: u64,
 ) -> LearningSummary {
     let today_start = crate::stats::day_start_ms(now_ms);
@@ -454,6 +600,10 @@ pub fn compute_learning(
     let week_start = today_start.saturating_sub(6 * DAY_MS);
     let mut words_7d: i64 = 0;
     let mut edited_7d: i64 = 0;
+    // 7-day zero-edit-rate numerator/denominator, plus per-app tallies.
+    let mut settled_7d: u32 = 0;
+    let mut zero_edit_7d: u32 = 0;
+    let mut app_tallies: HashMap<String, (u32, u32)> = HashMap::new();
 
     for row in dictations {
         let day = crate::stats::day_start_ms(row.ts);
@@ -472,6 +622,19 @@ pub fn compute_learning(
         if day >= week_start {
             words_7d += words;
             edited_7d += edited;
+            // ZER: only count rows where polish ran and the watch settled.
+            if !row.polish_skipped && row.observed.is_some() {
+                settled_7d += 1;
+                let zero = edited == 0;
+                if zero {
+                    zero_edit_7d += 1;
+                }
+                let entry = app_tallies.entry(row.app_id.clone()).or_insert((0, 0));
+                entry.1 += 1;
+                if zero {
+                    entry.0 += 1;
+                }
+            }
         }
     }
     let daily: Vec<LearningDay> = {
@@ -570,6 +733,24 @@ pub fn compute_learning(
     });
     auto_apply_fixes.truncate(5);
 
+    // Zero-edit rate: 1 decimal, None when no settled takes.
+    let zero_edit_rate_7d = (settled_7d > 0)
+        .then(|| (100.0 * zero_edit_7d as f64 / settled_7d as f64 * 10.0).round() / 10.0);
+
+    // Per-app breakdown: top 3 apps by settled-take count.
+    let mut zero_edit_by_app: Vec<ZeroEditApp> = app_tallies
+        .into_iter()
+        .map(|(app_id, (zero_edit, settled))| ZeroEditApp {
+            rate: (settled > 0)
+                .then(|| (100.0 * zero_edit as f64 / settled as f64 * 10.0).round() / 10.0),
+            app_id,
+            zero_edit,
+            settled,
+        })
+        .collect();
+    zero_edit_by_app.sort_by(|a, b| b.settled.cmp(&a.settled).then(a.app_id.cmp(&b.app_id)));
+    zero_edit_by_app.truncate(3);
+
     LearningSummary {
         edit_rate_7d,
         daily,
@@ -579,6 +760,11 @@ pub fn compute_learning(
         kept_corrections,
         undone_corrections,
         auto_apply_fixes,
+        zero_edit_rate_7d,
+        zero_edit_takes_7d: zero_edit_7d,
+        settled_takes_7d: settled_7d,
+        zero_edit_by_app,
+        profile_learnings: compute_profile_learnings(bandit, now_ms),
     }
 }
 
@@ -763,8 +949,44 @@ pub fn compute_for_window(
     now_ms: u64,
 ) -> Insights {
     let today_start = crate::stats::day_start_ms(now_ms);
+    let week_start = today_start.saturating_sub(6 * DAY_MS);
 
-    // ── All-time pass: habit views, records, milestones, streaks. ─────────
+    struct Cached<'a> {
+        entry: &'a crate::history::DictationEntry,
+        wc: u32,
+        tokens: Vec<String>,
+    }
+
+    let cached: Vec<Cached<'_>> = all
+        .entries
+        .iter()
+        .map(|entry| {
+            let tokens: Vec<String> = entry
+                .text
+                .split_whitespace()
+                .map(|w| {
+                    w.trim_matches(|c: char| !c.is_alphanumeric())
+                        .to_lowercase()
+                })
+                .collect();
+            Cached {
+                entry,
+                wc: tokens.len() as u32,
+                tokens,
+            }
+        })
+        .collect();
+
+    let mut daily: Vec<DayStat> = (0..14)
+        .map(|i| today_start - (13 - i) * DAY_MS)
+        .map(|d| DayStat {
+            label: day_label(d),
+            date: d,
+            words: 0,
+            dictations: 0,
+        })
+        .collect();
+
     let mut day_words: HashMap<u64, u32> = HashMap::new();
     let mut day_dictations: HashMap<u64, u32> = HashMap::new();
     let mut rate = RateSample::default();
@@ -772,20 +994,141 @@ pub fn compute_for_window(
     let mut all_time_dictations: u32 = 0;
     let mut longest_words: u32 = 0;
     let mut first_activity_at: Option<u64> = None;
+    let mut words_today: u32 = 0;
+    let mut words_last_7: u32 = 0;
+    let mut ngram_counts: HashMap<(usize, String), u32> = HashMap::new();
+    let mut app_counts: HashMap<String, u32> = HashMap::new();
+    let mut app_category_counts: HashMap<String, u32> = HashMap::new();
+    let mut hour_counts: [u32; 24] = [0; 24];
+    let mut band_counts: [u32; 5] = [0; 5];
+    let mut weekday_counts: [u32; 7] = [0; 7];
+    let mut word_counts: HashMap<String, u32> = HashMap::new();
+    let mut habit_counts: HashMap<String, u32> = HashMap::new();
+    let mut total_words: u32 = 0;
+    let mut dictations: u32 = 0;
+    let mut vocab: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut window_rate = RateSample::default();
+    let mut prior_window_sum: u32 = 0;
+    let mut prior_trend_words: u32 = 0;
+    let mut prior_trend_habit: u32 = 0;
 
-    for entry in &all.entries {
+    let in_window = |at: u64| window.is_none_or(|(from, to)| at >= from && at <= to);
+    let prior_bounds = window.map(|(from, to)| {
+        let span = to.saturating_sub(from);
+        (from, from.saturating_sub(span))
+    });
+
+    for c in &cached {
+        let entry = c.entry;
+        let wc = c.wc;
+        let tokens = &c.tokens;
+        let at = entry.created_at;
+        let day = crate::stats::day_start_ms(at);
+
         all_time_dictations += 1;
-        let wc = crate::stats::word_count(&entry.text);
         all_time_words += wc;
         longest_words = longest_words.max(wc);
         rate.add(wc, entry.duration_ms);
-        first_activity_at =
-            Some(first_activity_at.map_or(entry.created_at, |f| f.min(entry.created_at)));
-
-        let day = crate::stats::day_start_ms(entry.created_at);
+        first_activity_at = Some(first_activity_at.map_or(at, |f| f.min(at)));
         *day_words.entry(day).or_insert(0) += wc;
         *day_dictations.entry(day).or_insert(0) += 1;
+
+        if day == today_start {
+            words_today += wc;
+        }
+        if day >= week_start {
+            words_last_7 += wc;
+        }
+        if let Some(slot) = daily.iter_mut().find(|s| s.date == day) {
+            slot.words += wc;
+            slot.dictations += 1;
+        }
+
+        if in_window(at) {
+            dictations += 1;
+            total_words += wc;
+            window_rate.add(wc, entry.duration_ms);
+
+            for bare in tokens {
+                if !bare.is_empty() {
+                    vocab.insert(bare.clone());
+                }
+            }
+            for &n in &NGRAM_SIZES {
+                if tokens.len() >= n {
+                    for ngram in tokens.windows(n) {
+                        let phrase = ngram.join(" ");
+                        if phrase.is_empty() {
+                            continue;
+                        }
+                        if phrase.chars().filter(|c| c.is_alphanumeric()).count() < n {
+                            continue;
+                        }
+                        *ngram_counts.entry((n, phrase)).or_insert(0) += 1;
+                    }
+                }
+            }
+            if let Some(ctx) = &entry.context {
+                // Count any dictation whose app name was captured, even when the
+                // app's category is Unknown — the user still dictated into it.
+                let name = ctx.application_name.trim();
+                if !name.is_empty() {
+                    *app_counts.entry(name.to_string()).or_insert(0) += 1;
+                }
+                // App category for the work-mix view.
+                let cat = match ctx.application_type {
+                    crate::context::AppType::Email => "Email",
+                    crate::context::AppType::Chat => "Chat",
+                    crate::context::AppType::Social => "Social",
+                    crate::context::AppType::Coding => "Code",
+                    crate::context::AppType::Document => "Docs",
+                    crate::context::AppType::Browser => "Web",
+                    crate::context::AppType::Terminal => "Terminal",
+                    crate::context::AppType::Unknown => "Other",
+                };
+                *app_category_counts.entry(cat.to_string()).or_insert(0) += 1;
+            }
+            let secs = at / 1000;
+            let hour = (secs % 86_400) as usize / 3600;
+            hour_counts[hour] += 1;
+            band_counts[hour_band(hour as u32)] += wc;
+
+            // Weekday: same UTC basis as day_start_ms / day_labels.
+            let days_since_epoch = at / DAY_MS;
+            let weekday = weekday_index(days_since_epoch);
+            weekday_counts[weekday] += wc;
+
+            for bare in tokens {
+                if bare.len() < 3 {
+                    continue;
+                }
+                if is_habit_word(bare) {
+                    *habit_counts.entry(bare.clone()).or_insert(0) += 1;
+                }
+                if is_stopword(bare) {
+                    continue;
+                }
+                *word_counts.entry(bare.clone()).or_insert(0) += 1;
+            }
+        }
+
+        if let Some((from, prior_from)) = prior_bounds {
+            if at >= prior_from && at < from {
+                prior_window_sum += wc;
+                prior_trend_words += wc;
+                for bare in tokens {
+                    if bare.len() >= 3 && is_habit_word(bare) {
+                        prior_trend_habit += 1;
+                    }
+                }
+            }
+        }
     }
+
+    let last7: &[DayStat] = &daily[daily.len().saturating_sub(7)..];
+    let active_days: u32 = last7.iter().filter(|d| d.dictations > 0).count() as u32;
+    let active_days_last_7 = active_days;
+    let avg_words_per_day = words_last_7 / active_days.max(1);
 
     // Personal records (all-time).
     let most_words_day = day_words.values().copied().max().unwrap_or(0);
@@ -840,142 +1183,6 @@ pub fn compute_for_window(
 
     // Heatmap: last 26 weeks ending this week, oldest first.
     let heatmap = build_heatmap(&day_words, today_start);
-
-    // 14-day activity series (oldest first) + today / last-7-day totals.
-    let week_start = today_start.saturating_sub(6 * DAY_MS);
-    let mut daily: Vec<DayStat> = (0..14)
-        .map(|i| today_start - (13 - i) * DAY_MS)
-        .map(|d| DayStat {
-            label: day_label(d),
-            date: d,
-            words: 0,
-            dictations: 0,
-        })
-        .collect();
-    let mut words_today: u32 = 0;
-    let mut words_last_7: u32 = 0;
-    for entry in &all.entries {
-        let wc = crate::stats::word_count(&entry.text);
-        let day = crate::stats::day_start_ms(entry.created_at);
-        if day == today_start {
-            words_today += wc;
-        }
-        if day >= week_start {
-            words_last_7 += wc;
-        }
-        if let Some(slot) = daily.iter_mut().find(|s| s.date == day) {
-            slot.words += wc;
-            slot.dictations += 1;
-        }
-    }
-    let last7: &[DayStat] = &daily[daily.len().saturating_sub(7)..];
-    let active_days: u32 = last7.iter().filter(|d| d.dictations > 0).count() as u32;
-    let active_days_last_7 = active_days;
-    let avg_words_per_day = words_last_7 / active_days.max(1);
-
-    // ── Window-scoped pass: totals, phrases, apps, hours, vocabulary, impact ─
-    let in_window = |at: u64| window.is_none_or(|(from, to)| at >= from && at <= to);
-
-    let mut ngram_counts: HashMap<(usize, String), u32> = HashMap::new();
-    let mut app_counts: HashMap<String, u32> = HashMap::new();
-    let mut app_category_counts: HashMap<String, u32> = HashMap::new();
-    let mut hour_counts: [u32; 24] = [0; 24];
-    let mut band_counts: [u32; 5] = [0; 5];
-    let mut weekday_counts: [u32; 7] = [0; 7];
-    let mut word_counts: HashMap<String, u32> = HashMap::new();
-    let mut habit_counts: HashMap<String, u32> = HashMap::new();
-    let mut total_words: u32 = 0;
-    let mut dictations: u32 = 0;
-    let mut vocab: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut window_rate = RateSample::default();
-
-    for entry in &all.entries {
-        if !in_window(entry.created_at) {
-            continue;
-        }
-        dictations += 1;
-        let words: Vec<&str> = entry.text.split_whitespace().collect();
-        let wc = words.len() as u32;
-        total_words += wc;
-        window_rate.add(wc, entry.duration_ms);
-
-        for w in &words {
-            let bare = w
-                .trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase();
-            if !bare.is_empty() {
-                vocab.insert(bare);
-            }
-        }
-        for &n in &NGRAM_SIZES {
-            if words.len() >= n {
-                for window in words.windows(n) {
-                    let phrase = window
-                        .iter()
-                        .map(|w| {
-                            w.trim_matches(|c: char| !c.is_alphanumeric())
-                                .to_lowercase()
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    if phrase.is_empty() {
-                        continue;
-                    }
-                    if phrase.chars().filter(|c| c.is_alphanumeric()).count() < n {
-                        continue;
-                    }
-                    *ngram_counts.entry((n, phrase)).or_insert(0) += 1;
-                }
-            }
-        }
-        if let Some(ctx) = &entry.context {
-            // Count any dictation whose app name was captured, even when the
-            // app's category is Unknown — the user still dictated into it.
-            let name = ctx.application_name.trim();
-            if !name.is_empty() {
-                *app_counts.entry(name.to_string()).or_insert(0) += 1;
-            }
-            // App category for the work-mix view.
-            let cat = match ctx.application_type {
-                crate::context::AppType::Email => "Email",
-                crate::context::AppType::Chat => "Chat",
-                crate::context::AppType::Social => "Social",
-                crate::context::AppType::Coding => "Code",
-                crate::context::AppType::Document => "Docs",
-                crate::context::AppType::Browser => "Web",
-                crate::context::AppType::Terminal => "Terminal",
-                crate::context::AppType::Unknown => "Other",
-            };
-            *app_category_counts.entry(cat.to_string()).or_insert(0) += 1;
-        }
-        let secs = entry.created_at / 1000;
-        let hour = (secs % 86_400) as usize / 3600;
-        hour_counts[hour] += 1;
-        band_counts[hour_band(hour as u32)] += wc;
-
-        // Weekday: same UTC basis as day_start_ms / day_labels.
-        let days_since_epoch = entry.created_at / DAY_MS;
-        let weekday = weekday_index(days_since_epoch);
-        weekday_counts[weekday] += wc;
-
-        // Tokenize for top-words and habit-words (reuse the same lowercase
-        // alnum normalization as the n-gram pass).
-        for w in &words {
-            let bare = w
-                .trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase();
-            if bare.len() < 3 {
-                continue;
-            }
-            if is_habit_word(&bare) {
-                *habit_counts.entry(bare.clone()).or_insert(0) += 1;
-            }
-            if is_stopword(&bare) {
-                continue;
-            }
-            *word_counts.entry(bare).or_insert(0) += 1;
-        }
-    }
 
     // Top phrases (drop 2-grams subsumed by an equal-count 3-gram, checked
     // at word boundaries: a 3-gram "a b c" subsumes "a b" and "b c" only
@@ -1140,22 +1347,15 @@ pub fn compute_for_window(
     }
 
     // Prior window words and percent change.
-    let (prior_window_words, words_change_pct) = if let Some((from, to)) = window {
-        let span = to.saturating_sub(from);
-        let prior_from = from.saturating_sub(span);
-        let mut prior_sum: u32 = 0;
-        for entry in &all.entries {
-            if entry.created_at >= prior_from && entry.created_at < from {
-                prior_sum += crate::stats::word_count(&entry.text);
-            }
-        }
-        let pct = if prior_sum > 0 {
-            let raw = (total_words as f32 - prior_sum as f32) / prior_sum as f32 * 100.0;
+    let (prior_window_words, words_change_pct) = if window.is_some() {
+        let pct = if prior_window_sum > 0 {
+            let raw =
+                (total_words as f32 - prior_window_sum as f32) / prior_window_sum as f32 * 100.0;
             Some((raw * 10.0).round() / 10.0)
         } else {
             None
         };
-        (Some(prior_sum), pct)
+        (Some(prior_window_sum), pct)
     } else {
         (None, None)
     };
@@ -1166,28 +1366,8 @@ pub fn compute_for_window(
         if window_ms == 0 {
             0
         } else {
-            let prior_from = from.saturating_sub(window_ms);
-            // Count habit words in the prior window.
-            let prior_in_window = |at: u64| at >= prior_from && at < from;
-            let mut prior_words: u32 = 0;
-            let mut prior_habit: u32 = 0;
-            for entry in &all.entries {
-                if !prior_in_window(entry.created_at) {
-                    continue;
-                }
-                let words: Vec<&str> = entry.text.split_whitespace().collect();
-                prior_words += words.len() as u32;
-                for w in &words {
-                    let bare = w
-                        .trim_matches(|c: char| !c.is_alphanumeric())
-                        .to_lowercase();
-                    if bare.len() >= 3 && is_habit_word(&bare) {
-                        prior_habit += 1;
-                    }
-                }
-            }
-            let prior_per_1k = if prior_words > 0 {
-                (prior_habit as f32 / prior_words as f32) * 1000.0
+            let prior_per_1k = if prior_trend_words > 0 {
+                (prior_trend_habit as f32 / prior_trend_words as f32) * 1000.0
             } else {
                 0.0
             };
@@ -1365,6 +1545,73 @@ mod tests {
     }
 
     const NOW: u64 = 20_000 * DAY_MS;
+
+    #[test]
+    fn learning_payload_carries_the_learned_row_and_undo_action() {
+        use crate::learning::profile_bandit::{BanditState, Outcome};
+        use crate::profile::PolishProfile;
+
+        let mut bandit = BanditState::default();
+        for _ in 0..12 {
+            bandit.record_outcome(
+                "com.google.gmail",
+                PolishProfile::Natural,
+                Some(Outcome::Kept),
+            );
+        }
+        for _ in 0..18 {
+            bandit.record_outcome(
+                "com.google.gmail",
+                PolishProfile::Structured,
+                Some(Outcome::Kept),
+            );
+        }
+        assert!(bandit.apply_change(
+            "com.google.gmail",
+            PolishProfile::Natural,
+            PolishProfile::Structured,
+            NOW,
+        ));
+
+        let summary = compute_learning_with_bandit(&[], &[], &[], &[], &bandit, NOW);
+        assert_eq!(summary.profile_learnings.len(), 1);
+        let row = &summary.profile_learnings[0];
+        assert_eq!(row.app_label, "Gmail");
+        assert_eq!(row.from_profile, "natural");
+        assert_eq!(row.learned_profile, "structured");
+        assert_eq!(row.takes, 18);
+        assert_eq!(row.undo.restore_profile, "natural");
+        assert_eq!(row.undo.scope_key, "email");
+
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json["profileLearnings"][0]["appLabel"], "Gmail");
+        assert_eq!(
+            json["profileLearnings"][0]["undo"]["restoreProfile"],
+            "natural"
+        );
+
+        // The existing 5-arg entry point keeps the field empty until the
+        // desktop layer threads the bandit store through.
+        let base = compute_learning(&[], &[], &[], &[], NOW);
+        assert!(base.profile_learnings.is_empty());
+    }
+
+    #[test]
+    fn undone_changes_are_not_reported_as_learned() {
+        use crate::learning::profile_bandit::BanditState;
+        use crate::profile::PolishProfile;
+
+        let mut bandit = BanditState::default();
+        assert!(bandit.apply_change(
+            "gmail",
+            PolishProfile::Natural,
+            PolishProfile::Structured,
+            NOW
+        ));
+        assert_eq!(bandit.undo_change("gmail"), Some(PolishProfile::Natural));
+        let rows = compute_profile_learnings(&bandit, NOW);
+        assert!(rows.is_empty(), "an undone change must not show as learned");
+    }
 
     #[test]
     fn repeated_phrases_are_ranked() {
@@ -2090,6 +2337,25 @@ mod tests {
             edit_ops_json: None,
             polish_model: None,
             polish_skipped: true,
+            polish_profile: crate::profile::PolishProfile::Natural,
+            screen_terms: Vec::new(),
+        }
+    }
+
+    /// A dictation row where polish ran (`polish_skipped = false`), for ZER tests.
+    fn ldictation_polished(ts: u64, pasted: &str, observed: Option<&str>) -> DictationRow {
+        DictationRow {
+            polish_skipped: false,
+            ..ldictation(ts, pasted, observed)
+        }
+    }
+
+    /// A dictation row with a specific app_id, for per-app ZER tests.
+    fn ldictation_app(ts: u64, app_id: &str, pasted: &str, observed: Option<&str>) -> DictationRow {
+        DictationRow {
+            app_id: app_id.into(),
+            polish_skipped: false,
+            ..ldictation(ts, pasted, observed)
         }
     }
 
@@ -2290,5 +2556,231 @@ mod tests {
         let a = compute_learning(&rows, &accuracy, &lexicon, &[], NOW);
         let b = compute_learning(&rows, &accuracy, &lexicon, &[], NOW);
         assert_eq!(a, b);
+    }
+
+    // ── Zero-edit rate (T2) ─────────────────────────────────────────────────
+
+    #[test]
+    fn zer_no_settled_rows_is_none() {
+        // No rows at all.
+        let s = compute_learning(&[], &[], &[], &[], NOW);
+        assert_eq!(s.zero_edit_rate_7d, None);
+        assert_eq!(s.zero_edit_takes_7d, 0);
+        assert_eq!(s.settled_takes_7d, 0);
+        assert!(s.zero_edit_by_app.is_empty());
+
+        // Rows exist but all are unsettled (observed = None).
+        let rows = vec![
+            ldictation_polished(NOW, "hello world", None),
+            ldictation_polished(NOW - DAY_MS, "foo bar", None),
+        ];
+        let s2 = compute_learning(&rows, &[], &[], &[], NOW);
+        assert_eq!(s2.zero_edit_rate_7d, None);
+        assert_eq!(s2.settled_takes_7d, 0);
+
+        // Rows exist but polish was skipped.
+        let rows3 = vec![
+            ldictation(NOW, "hello world", Some("hello world")),
+            ldictation(NOW - DAY_MS, "foo bar", Some("foo bar")),
+        ];
+        let s3 = compute_learning(&rows3, &[], &[], &[], NOW);
+        assert_eq!(s3.zero_edit_rate_7d, None);
+        assert_eq!(s3.settled_takes_7d, 0);
+    }
+
+    #[test]
+    fn zer_all_zero_edit_is_100() {
+        // Two settled takes, both kept without edits.
+        let rows = vec![
+            ldictation_polished(NOW - DAY_MS, "hello world", Some("hello world")),
+            ldictation_polished(NOW - 2 * DAY_MS, "foo bar baz", Some("foo bar baz")),
+        ];
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
+        assert_eq!(s.settled_takes_7d, 2);
+        assert_eq!(s.zero_edit_takes_7d, 2);
+        assert_eq!(s.zero_edit_rate_7d, Some(100.0));
+    }
+
+    #[test]
+    fn zer_mixed_rows_expected_percentage() {
+        // 4 settled takes: 3 zero-edit, 1 edited.
+        let rows = vec![
+            ldictation_polished(NOW, "hello world", Some("hello world")),
+            ldictation_polished(NOW - DAY_MS, "foo bar", Some("foo bar")),
+            ldictation_polished(NOW - 2 * DAY_MS, "baz qux", Some("baz qux")),
+            // "hello world" → "hello there world": 1 word replaced.
+            ldictation_polished(NOW - 3 * DAY_MS, "hello world", Some("hello there world")),
+        ];
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
+        assert_eq!(s.settled_takes_7d, 4);
+        assert_eq!(s.zero_edit_takes_7d, 3);
+        // 3/4 = 75.0
+        assert_eq!(s.zero_edit_rate_7d, Some(75.0));
+    }
+
+    #[test]
+    fn zer_edited_take_lowers_rate() {
+        // One take with an edit lowers the rate from 100.
+        let rows = vec![
+            ldictation_polished(NOW, "hello world", Some("hello world")),
+            ldictation_polished(NOW - DAY_MS, "hello world", Some("hello there")),
+        ];
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
+        assert_eq!(s.settled_takes_7d, 2);
+        assert_eq!(s.zero_edit_takes_7d, 1);
+        assert_eq!(s.zero_edit_rate_7d, Some(50.0));
+    }
+
+    #[test]
+    fn zer_unsettled_observed_none_excluded() {
+        // One settled zero-edit, one unsettled (observed = None).
+        let rows = vec![
+            ldictation_polished(NOW, "hello world", Some("hello world")),
+            ldictation_polished(NOW - DAY_MS, "foo bar", None),
+        ];
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
+        // Only the settled row counts.
+        assert_eq!(s.settled_takes_7d, 1);
+        assert_eq!(s.zero_edit_takes_7d, 1);
+        assert_eq!(s.zero_edit_rate_7d, Some(100.0));
+    }
+
+    #[test]
+    fn zer_rounds_to_one_decimal() {
+        // 1 zero-edit out of 3 settled: 100/3 = 33.333... → 33.3
+        let rows = vec![
+            ldictation_polished(NOW, "a b", Some("a b")),
+            ldictation_polished(NOW - DAY_MS, "c d", Some("c e")),
+            ldictation_polished(NOW - 2 * DAY_MS, "f g", Some("f h")),
+        ];
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
+        assert_eq!(s.settled_takes_7d, 3);
+        assert_eq!(s.zero_edit_takes_7d, 1);
+        assert_eq!(s.zero_edit_rate_7d, Some(33.3));
+    }
+
+    #[test]
+    fn zer_per_app_breakdown_top3() {
+        // 4 apps; top 3 by settled count are returned.
+        let rows = vec![
+            // slack: 2 settled, 2 zero-edit
+            ldictation_app(NOW, "slack", "a b", Some("a b")),
+            ldictation_app(NOW - DAY_MS, "slack", "c d", Some("c d")),
+            // gmail: 1 settled, 0 zero-edit
+            ldictation_app(NOW, "gmail", "e f", Some("e g")),
+            // codes: 1 settled, 1 zero-edit
+            ldictation_app(NOW, "codes", "h i", Some("h i")),
+            // safari: 1 settled, 1 zero-edit (4th, should be truncated)
+            ldictation_app(NOW, "safari", "j k", Some("j k")),
+        ];
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
+        assert_eq!(s.zero_edit_by_app.len(), 3);
+        // slack (2 settled) > gmail (1) = codes (1) = safari (1);
+        // tie broken by app_id asc: codes, gmail, safari.
+        assert_eq!(s.zero_edit_by_app[0].app_id, "slack");
+        assert_eq!(s.zero_edit_by_app[0].settled, 2);
+        assert_eq!(s.zero_edit_by_app[0].zero_edit, 2);
+        assert_eq!(s.zero_edit_by_app[0].rate, Some(100.0));
+        assert_eq!(s.zero_edit_by_app[1].app_id, "codes");
+        assert_eq!(s.zero_edit_by_app[1].settled, 1);
+        assert_eq!(s.zero_edit_by_app[1].zero_edit, 1);
+        assert_eq!(s.zero_edit_by_app[2].app_id, "gmail");
+        assert_eq!(s.zero_edit_by_app[2].settled, 1);
+        assert_eq!(s.zero_edit_by_app[2].zero_edit, 0);
+        assert_eq!(s.zero_edit_by_app[2].rate, Some(0.0));
+    }
+
+    #[test]
+    fn zer_rows_outside_7d_excluded() {
+        // A row 8 days old: outside the 7-day window.
+        let old = NOW - 8 * DAY_MS;
+        let rows = vec![
+            ldictation_polished(old, "hello world", Some("hello world")),
+            ldictation_polished(NOW, "foo bar", Some("foo bar")),
+        ];
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
+        assert_eq!(s.settled_takes_7d, 1);
+        assert_eq!(s.zero_edit_takes_7d, 1);
+        assert_eq!(s.zero_edit_rate_7d, Some(100.0));
+    }
+
+    #[test]
+    fn zer_reuses_edited_count_for_zero_edit_and_per_app() {
+        // A deletion has no to-side words, so edited == 0 and the take is a
+        // zero-edit even though the text differs. Insertions/replacements do
+        // have to-side words and are not zero-edits.
+        let rows = vec![
+            ldictation_app(NOW, "slack", "hello brave world", Some("hello world")),
+            ldictation_app(
+                NOW - DAY_MS,
+                "slack",
+                "hello world",
+                Some("hello there world"),
+            ),
+            ldictation_app(
+                NOW - 2 * DAY_MS,
+                "gmail",
+                "call pie torch",
+                Some("call PyTorch"),
+            ),
+        ];
+        let s = compute_learning(&rows, &[], &[], &[], NOW);
+        assert_eq!(s.settled_takes_7d, 3);
+        assert_eq!(s.zero_edit_takes_7d, 1, "only the deletion is zero-edit");
+        assert_eq!(s.zero_edit_rate_7d, Some(33.3));
+
+        // Daily edited_words stays the to-side count: delete=0, insert=1,
+        // replace=1 (oldest first).
+        assert_eq!(s.daily.len(), 3);
+        assert_eq!(s.daily[0].edited_words, 1);
+        assert_eq!(s.daily[1].edited_words, 1);
+        assert_eq!(s.daily[2].edited_words, 0);
+
+        assert_eq!(s.zero_edit_by_app.len(), 2);
+        assert_eq!(s.zero_edit_by_app[0].app_id, "slack");
+        assert_eq!(s.zero_edit_by_app[0].settled, 2);
+        assert_eq!(s.zero_edit_by_app[0].zero_edit, 1);
+        assert_eq!(s.zero_edit_by_app[0].rate, Some(50.0));
+        assert_eq!(s.zero_edit_by_app[1].app_id, "gmail");
+        assert_eq!(s.zero_edit_by_app[1].settled, 1);
+        assert_eq!(s.zero_edit_by_app[1].zero_edit, 0);
+        assert_eq!(s.zero_edit_by_app[1].rate, Some(0.0));
+    }
+
+    #[test]
+    fn single_pass_preserves_all_window_accumulators() {
+        let from = NOW - 2 * DAY_MS;
+        let to = NOW;
+        let mut h = DictationHistory::default();
+
+        let mut e = entry(NOW, "the quick brown fox jumps quickly");
+        e.context = Some(crate::context::normalize("com.google.gmail", "Gmail"));
+        h.push(e);
+        let mut e = entry(NOW - DAY_MS, "hate this stupid meeting");
+        e.context = Some(crate::context::normalize("slack", "Slack"));
+        h.push(e);
+        h.push(entry(NOW - 3 * DAY_MS, "annoying situation here today"));
+        h.push(entry(NOW - 10 * DAY_MS, "old forgotten words today here"));
+
+        let i = compute_for_window(&h, Some((from, to)), NOW);
+        assert_eq!(i.total_words, 10);
+        assert_eq!(i.total_dictations, 2);
+        assert_eq!(i.prior_window_words, Some(4));
+        assert_eq!(i.words_change_pct, Some(150.0));
+        assert_eq!(i.habit_words.total, 2);
+        assert_eq!(i.habit_words.trend, -1);
+        assert_eq!(i.vocabulary_size, 10);
+        assert_eq!(i.top_apps.len(), 2);
+        assert_eq!(i.top_apps[0].label, "Gmail");
+        assert_eq!(i.top_apps[1].label, "Slack");
+
+        // Habit views stay anchored to now across the whole history.
+        assert_eq!(i.words_today, 6);
+        assert_eq!(i.words_last_7_days, 14);
+        assert_eq!(i.active_days_last_7, 3);
+        let lifetime = compute(&h, NOW);
+        assert_eq!(i.words_today, lifetime.words_today);
+        assert_eq!(i.words_last_7_days, lifetime.words_last_7_days);
+        assert_eq!(i.heatmap, lifetime.heatmap);
     }
 }

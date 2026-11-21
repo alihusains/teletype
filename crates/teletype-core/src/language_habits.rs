@@ -605,6 +605,8 @@ mod tests {
             edit_ops_json: None,
             polish_model: None,
             polish_skipped: false,
+            polish_profile: crate::profile::PolishProfile::Natural,
+            screen_terms: Vec::new(),
         };
         let takes: Vec<LanguageTake<'_>> = vec![(&row).into()];
         let s = compute_language_summary(&takes, &[], NOW, "spoken");

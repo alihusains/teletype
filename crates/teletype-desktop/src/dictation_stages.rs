@@ -485,12 +485,51 @@ pub fn stage_transform(
         None => &EDIT_DISTANCE_CHECKER,
         Some(_) => &strictness_checker,
     };
+    // Same precedence as the live path: an explicit per-app override wins;
+    // only without one may the local bandit pick a learned profile. The global
+    // default is not an explicit override.
+    let raw_word_count = input.text.split_whitespace().count();
+    let recommended_profile = teletype_core::profile::resolve_profile(
+        &ctx.app_ctx,
+        &snapshots.settings.polish_app_profiles,
+        snapshots.settings.polish_profile,
+        raw_word_count,
+    );
+    let has_explicit_override = [
+        ctx.app_ctx.application_id.as_str(),
+        ctx.app_ctx.application_name.as_str(),
+        teletype_core::profile::category_key(ctx.app_ctx.application_type),
+    ]
+    .iter()
+    .any(|k| {
+        snapshots
+            .settings
+            .polish_app_profiles
+            .contains_key(&teletype_core::profile::normalize_key(k))
+    });
+    let take_profile = if has_explicit_override {
+        recommended_profile
+    } else {
+        ctx.state
+            .bandit
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .choose(
+                &ctx.app_key,
+                recommended_profile,
+                teletype_core::storage::now_ms(),
+            )
+    };
+    let polish_prompt_override = teletype_core::profile::encode_instruction(
+        take_profile,
+        snapshots.settings.polish_prompt_override.as_deref(),
+    );
     let mut pipeline = Pipeline {
         platform,
         autotext: &snapshots.autotext,
         transforms: &snapshots.transforms,
         profile: &snapshots.profile,
-        polish_prompt_override: None,
+        polish_prompt_override,
         inference: engine_ref,
         decision: None,
         force_command: false,

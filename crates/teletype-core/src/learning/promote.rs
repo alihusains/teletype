@@ -116,8 +116,9 @@ pub(crate) fn proper_noun_like(term: &str) -> bool {
 /// 2. Defensive re-judge with the caller's `ctx`: anything other than
 ///    `Mishearing` → `Refused { JudgeDisagrees }`, no candidate written.
 /// 3. `sim >= IMMEDIATE_PHON_SIM` and `term` proper-noun-like → promote
-///    immediately. Otherwise bump the candidate counter and promote once
-///    it reaches `OBSERVATIONS_TO_PROMOTE`.
+///    immediately. A `term` matching `ctx.screen_terms` is also immediate,
+///    even at the judge's lowered 0.45 floor. Otherwise bump the candidate
+///    counter and promote once it reaches `OBSERVATIONS_TO_PROMOTE`.
 ///
 /// Promotion upserts the lexicon row: a new row gets `source = "learned"`;
 /// an existing row keeps its `source`/`weight` and only gains the alias
@@ -158,9 +159,18 @@ pub fn consider_mishearing(
     }
 
     let sim = phon_sim(alias, term);
-    let immediate = proper_noun_like(term)
-        && (sim >= IMMEDIATE_PHON_SIM
-            || (sim >= KNOWN_TERM_PHON_SIM && is_known_term(store, term)?));
+    // A term the user can see on screen is strong evidence on its own: no
+    // observation count is needed even in the 0.45–0.6 band, and it need not
+    // be proper-noun-shaped. Tombstone and learn-memory guards above still win,
+    // as does the defensive re-judge (which enforces the lowered floor).
+    let screen_confirmed = ctx
+        .screen_terms
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case(term));
+    let immediate = screen_confirmed
+        || (proper_noun_like(term)
+            && (sim >= IMMEDIATE_PHON_SIM
+                || (sim >= KNOWN_TERM_PHON_SIM && is_known_term(store, term)?)));
 
     let already_promoted = store.lexicon_by_term(term)?.is_some();
     let (count, _total) = if immediate {
@@ -384,6 +394,43 @@ fn now_ms() -> u64 {
     crate::storage::now_ms()
 }
 
+/// Outcome of a T5 profile-choice promotion attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfilePromotion {
+    /// The bandit's rule fired and the adjacent profile was recorded.
+    Applied {
+        app_key: String,
+        from: crate::profile::PolishProfile,
+        to: crate::profile::PolishProfile,
+    },
+    /// Not enough evidence, not a clear win, or the weekly cap is in force.
+    KeptRecommended,
+}
+
+/// Applies the T5 promotion rule for one app: if the local bandit finds a
+/// clear, adjacent win over `recommended`, record the automatic change;
+/// otherwise keep the recommended default. This never rewrites text — it only
+/// chooses which existing profile the next take runs.
+pub fn promote_profile(
+    bandit: &mut super::profile_bandit::BanditState,
+    app_key: &str,
+    recommended: crate::profile::PolishProfile,
+    now_ms: u64,
+) -> ProfilePromotion {
+    let Some(to) = bandit.decide(app_key, recommended, now_ms) else {
+        return ProfilePromotion::KeptRecommended;
+    };
+    if bandit.apply_change(app_key, recommended, to, now_ms) {
+        ProfilePromotion::Applied {
+            app_key: crate::profile::normalize_key(app_key),
+            from: recommended,
+            to,
+        }
+    } else {
+        ProfilePromotion::KeptRecommended
+    }
+}
+
 /// `term` exactly matches a live lexicon row whose source is a
 /// user-imported vocabulary source (contacts or manual dictionary):
 /// the user is correcting a name they already know.
@@ -414,6 +461,62 @@ mod tests {
 
     fn ctx() -> JudgeContext {
         JudgeContext::default()
+    }
+
+    fn seed_profile(
+        state: &mut crate::learning::profile_bandit::BanditState,
+        app: &str,
+        profile: crate::profile::PolishProfile,
+        kept: u64,
+    ) {
+        use crate::learning::profile_bandit::Outcome;
+        for _ in 0..kept {
+            state.record_outcome(app, profile, Some(Outcome::Kept));
+        }
+    }
+
+    #[test]
+    fn profile_promotion_applies_a_clear_adjacent_win() {
+        use crate::profile::PolishProfile;
+        let mut bandit = crate::learning::profile_bandit::BanditState::default();
+        for _ in 0..8 {
+            bandit.record_outcome(
+                "gmail",
+                PolishProfile::Natural,
+                Some(crate::learning::profile_bandit::Outcome::Undone),
+            );
+        }
+        seed_profile(&mut bandit, "gmail", PolishProfile::Natural, 12);
+        seed_profile(&mut bandit, "gmail", PolishProfile::Structured, 18);
+        let p = promote_profile(&mut bandit, "gmail", PolishProfile::Natural, 1_000);
+        assert_eq!(
+            p,
+            ProfilePromotion::Applied {
+                app_key: "gmail".into(),
+                from: PolishProfile::Natural,
+                to: PolishProfile::Structured,
+            }
+        );
+        assert_eq!(
+            bandit.active_change("gmail").map(|c| c.to),
+            Some(PolishProfile::Structured)
+        );
+    }
+
+    #[test]
+    fn profile_promotion_keeps_recommended_without_evidence() {
+        use crate::profile::PolishProfile;
+        let mut bandit = crate::learning::profile_bandit::BanditState::default();
+        assert_eq!(
+            promote_profile(&mut bandit, "gmail", PolishProfile::Natural, 1_000),
+            ProfilePromotion::KeptRecommended
+        );
+        // Transform is never auto-selected even with overwhelming evidence.
+        seed_profile(&mut bandit, "gmail", PolishProfile::Transform, 100);
+        assert_eq!(
+            promote_profile(&mut bandit, "gmail", PolishProfile::Natural, 1_000),
+            ProfilePromotion::KeptRecommended
+        );
     }
 
     #[test]
@@ -632,6 +735,124 @@ mod tests {
             .learn_candidate_get("mishearing", "pie torch", "PyTorch", "")
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn screen_confirmed_term_promotes_immediately_in_low_similarity_band() {
+        let (_dir, store) = tmp_store();
+        // "sevan" → "Sarah" scores ~0.47 and is a common first name. With
+        // "Sarah" on screen the judge returns Mishearing and promotion is
+        // immediate; without it the pair is refused outright.
+        let sim = phon_sim("sevan", "Sarah");
+        assert!((0.45..0.6).contains(&sim), "sim = {sim}");
+        let plain = ctx();
+        assert_eq!(
+            consider_mishearing(&store, "sevan", "Sarah", &plain, 1000).unwrap(),
+            Promotion::Refused {
+                reason: RefusalReason::JudgeDisagrees
+            }
+        );
+        assert!(store.lexicon_all().unwrap().is_empty());
+
+        let screen = JudgeContext {
+            screen_terms: vec!["sarah".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            consider_mishearing(&store, "sevan", "Sarah", &screen, 1000).unwrap(),
+            Promotion::Promoted {
+                term: "Sarah".into(),
+                alias: "sevan".into(),
+                immediate: true
+            }
+        );
+        assert!(store.lexicon_by_term("Sarah").unwrap().is_some());
+        assert!(store
+            .learn_candidate_get("mishearing", "sevan", "Sarah", "")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn screen_confirmed_term_skips_the_two_observation_wait() {
+        let (_dir, store) = tmp_store();
+        // Without screen confirmation this pair needs two observations (the
+        // existing `unknown_name_still_needs_two_observations...` test).
+        let screen = JudgeContext {
+            screen_terms: vec!["Zephyrine".into()],
+            ..Default::default()
+        };
+        let p = consider_mishearing(&store, "zeph", "Zephyrine", &screen, 1000).unwrap();
+        assert_eq!(
+            p,
+            Promotion::Promoted {
+                term: "Zephyrine".into(),
+                alias: "zeph".into(),
+                immediate: true
+            }
+        );
+        assert_eq!(
+            store.lexicon_by_term("Zephyrine").unwrap().unwrap().aliases,
+            vec!["zeph".to_string()]
+        );
+    }
+
+    #[test]
+    fn screen_confirmation_respects_tombstone_and_refusal_guards() {
+        let (_dir, store) = tmp_store();
+        let screen = JudgeContext {
+            screen_terms: vec!["PyTorch".into()],
+            ..Default::default()
+        };
+        consider_mishearing(&store, "pie torch", "PyTorch", &screen, 1000).unwrap();
+        undo(&store, "PyTorch").unwrap();
+        assert_eq!(
+            consider_mishearing(&store, "pie torch", "PyTorch", &screen, 2000).unwrap(),
+            Promotion::Refused {
+                reason: RefusalReason::Tombstoned
+            }
+        );
+
+        // Two explicit refusals also block a screen-confirmed pair.
+        let screen_name = JudgeContext {
+            screen_terms: vec!["Sarah".into()],
+            ..Default::default()
+        };
+        learn_memory::record_refusal(&store, "sevan", "Sarah", 300).unwrap();
+        learn_memory::record_refusal(&store, "sevan", "Sarah", 400).unwrap();
+        assert_eq!(
+            consider_mishearing(&store, "sevan", "Sarah", &screen_name, 2000).unwrap(),
+            Promotion::Refused {
+                reason: RefusalReason::Tombstoned
+            }
+        );
+        assert!(store.lexicon_by_term("Sarah").unwrap().is_none());
+    }
+
+    #[test]
+    fn observed_edit_passes_screen_terms_through_unchanged() {
+        let (_dir, store) = tmp_store();
+        let screen = JudgeContext {
+            screen_terms: vec!["Sarah".into()],
+            ..Default::default()
+        };
+        let out = consider_observed_edit(
+            &store,
+            "I met sevan today",
+            "I met Sarah today",
+            &screen,
+            1000,
+        )
+        .unwrap();
+        assert_eq!(
+            out.promotions,
+            vec![Promotion::Promoted {
+                term: "Sarah".into(),
+                alias: "sevan".into(),
+                immediate: true
+            }]
+        );
+        assert_eq!(out.created_terms, vec!["Sarah".to_string()]);
     }
 
     #[test]

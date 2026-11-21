@@ -112,6 +112,51 @@ pub async fn hotkey_conflict(
     ))
 }
 
+/// Current observable liveness of the dictation hotkey, for the UI.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct HotkeyStatus {
+    /// `Some(true)` live, `Some(false)` dead, `None` for string combos with no
+    /// tap-level liveness signal ("not checkable").
+    pub active: Option<bool>,
+    /// The binding whose liveness was sampled.
+    pub binding: String,
+    /// Last re-registration failure, if any.
+    pub reason: Option<String>,
+}
+
+impl HotkeyStatus {
+    /// Builds a fresh status from the live app state.
+    pub(crate) fn current(state: &AppState) -> Self {
+        let binding = crate::permission_watch::liveness_binding(Some(state));
+        Self {
+            active: crate::permission_watch::sample_hotkey_live(&binding),
+            binding,
+            reason: crate::permission_watch::last_reregister_error(),
+        }
+    }
+}
+
+/// Returns the current hotkey liveness, binding, and last recovery error.
+#[tauri::command]
+pub async fn hotkey_status(state: State<'_, AppState>) -> CommandResult<HotkeyStatus> {
+    Ok(HotkeyStatus::current(&state))
+}
+
+/// Re-registers the dictation hotkey on demand. The shared helper guards
+/// against duplicate registrations and refuses while the key is held. A fresh
+/// `hotkey-status` is emitted even on failure so the UI sees the reason.
+#[tauri::command]
+pub async fn reregister_hotkey(app: AppHandle) -> CommandResult<()> {
+    let result = crate::permission_watch::reregister_hotkey_now(&app);
+    {
+        let state = app.state::<AppState>();
+        let status = HotkeyStatus::current(&state);
+        let _ = app.emit("hotkey-status", &status);
+    }
+    result?;
+    Ok(())
+}
+
 /// Plays one of the [`RECORDING_SOUND_NAMES`] cues so the user can hear it
 /// before choosing.
 ///
@@ -561,6 +606,41 @@ pub async fn open_permission_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hotkey_status_serializes_the_ui_fields() {
+        let status = HotkeyStatus {
+            active: Some(true),
+            binding: "Fn".into(),
+            reason: None,
+        };
+        let value = serde_json::to_value(&status).expect("status must serialize");
+        assert_eq!(value["active"], serde_json::json!(true));
+        assert_eq!(value["binding"], serde_json::json!("Fn"));
+        assert_eq!(value["reason"], serde_json::json!(null));
+
+        let dead = HotkeyStatus {
+            active: Some(false),
+            binding: "Ctrl".into(),
+            reason: Some("Hotkey is physically held".into()),
+        };
+        let value = serde_json::to_value(&dead).expect("status must serialize");
+        assert_eq!(value["active"], serde_json::json!(false));
+        assert_eq!(value["binding"], serde_json::json!("Ctrl"));
+        assert_eq!(
+            value["reason"],
+            serde_json::json!("Hotkey is physically held")
+        );
+
+        let combo = HotkeyStatus {
+            active: None,
+            binding: "Cmd+Space".into(),
+            reason: None,
+        };
+        let value = serde_json::to_value(&combo).expect("status must serialize");
+        assert_eq!(value["active"], serde_json::json!(null));
+        assert_eq!(value["binding"], serde_json::json!("Cmd+Space"));
+    }
 
     #[test]
     fn permission_state_decides_whether_asking_again_can_work() {

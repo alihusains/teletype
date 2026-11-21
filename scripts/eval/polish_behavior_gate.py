@@ -641,6 +641,10 @@ def grade_case(case: dict, output: str) -> list[dict]:
     # Number words count as preserved via spelled<->digit equivalence.
     out_tokens = set(tokens(out))
     input_toks = tokens(case["input"])
+    # A backtrack case authorizes removing the abandoned value and its cue;
+    # must_contain and forbidden grade whether the replacement survived.
+    if case.get("behavior") == "backtrack":
+        input_toks = []
     already_critical_terms = {norm(mc) for mc in must_contain}
     # An equivalent rendering is not content loss. Digits rendered from
     # spelled-out words ("five five five eight two..." -> "55582020"),
@@ -834,7 +838,7 @@ def self_test() -> int:
     #     0 criticals, 0 majors over the whole 17-case corpus. This is the
     #     acceptance test that the matcher no longer false-positives.
     real_cases = load_corpus(DEFAULT_CORPUS)
-    assert len(real_cases) == 17, f"expected 17 real cases, got {len(real_cases)}"
+    assert len(real_cases) >= 17, f"expected at least 17 real cases, got {len(real_cases)}"
     # The fixture must cover every case id in the corpus.
     missing = [c["id"] for c in real_cases if c["id"] not in correct_map]
     assert not missing, f"correct-outputs.json missing case id(s): {missing}"

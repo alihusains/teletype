@@ -7,6 +7,12 @@ import HotkeyRecorder, { displayHotkey } from "../components/HotkeyRecorder";
 import { Segmented, Slider } from "../settings/primitives";
 import { confirmDialog, messageDialog } from "../lib/dialogs";
 import { errorMessage } from "../lib/errors";
+import { navigateTo } from "../lib/useTauriEvent";
+import {
+  polishCustomizationFor,
+  supportedProfileList,
+  unsupportedProfileList,
+} from "../lib/profileLabels";
 import PolishPlayground from "../components/PolishPlayground";
 import { runWrite } from "../lib/writeGuard";
 import { WriteFailed } from "../components/StateRows";
@@ -215,22 +221,6 @@ function composeInstruction(t: Transform, instructions: PolishInstruction[]): st
   const parts = [CORE_RULES_PREVIEW, base];
   if (extra.length > 0) parts.push(`Additional instructions from the user:\n${extra.join("\n")}`);
   return parts.join("\n\n");
-}
-
-// Which polish controls the loaded model actually honours. Drives the scoping
-// of the rules / prompt / custom-instruction controls so a fixed-contract
-// model does not present dead controls.
-//   "none"     — S1-mini, SpeakoFlow Mini: card-faithful cleanup; ignores
-//                every user control (rules, override, custom instructions).
-//   "override" — Qwen3.5-2B: honours only the prompt override (appended to
-//                its fixed editor prompt); ignores the rules + instructions.
-//   "full"     — any other model (LFM3, remote/ollama): generic instruction
-//                path; rules, override, and custom instructions all apply.
-type PolishCustomization = "none" | "override" | "full";
-function polishCustomizationFor(modelId: string): PolishCustomization {
-  if (modelId === "s1-mini" || modelId === "speakoflow-mini") return "none";
-  if (modelId === "qwen3.5-2b" || modelId === "qwen3.5-0.8b") return "override";
-  return "full";
 }
 
 // ── Local band primitives ───────────────────────────────────────────────────
@@ -749,7 +739,7 @@ export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen:
     : enabledTransforms;
 const modelCapabilityNote =
   polishCustomization === "none"
-    ? ` ${runtime?.llm.label || "This model"} can only clean up transcripts and can't be customized.`
+    ? ` Cleanup-only model: ${runtime?.llm.label || "This model"} can honor ${supportedProfileList("cleanup-only")}; it cannot honor ${unsupportedProfileList("cleanup-only")}.`
     : polishCustomization === "override"
     ? ` ${runtime?.llm.label || "This model"} follows a fixed prompt; only the prompt override can steer it.`
     : "";
@@ -784,8 +774,17 @@ const statusLine =
           <h3 style={BAND_TITLE}>Choose a polish</h3>
           <p style={BAND_SUBTITLE}>Polish rewrites your text to sound clearer, in your voice.</p>
           {cleanupOnly && (
-            <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12.5, color: "var(--text-secondary)" }}>
-              {runtime?.llm.label || "This model"} can only run the Polish preset. The others are grayed out until you switch to a general model (Qwen3.5 2B or LFM3 Omni) in Models.
+            <div role="status" style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+              <strong style={{ color: "var(--text)" }}>Cleanup-only model.</strong>{" "}
+              {runtime?.llm.label || "This model"} can honor {supportedProfileList("cleanup-only")}; it cannot honor {unsupportedProfileList("cleanup-only")} — those fall back to Clean. The other presets are grayed out until you switch to a general model in{" "}
+              <button
+                type="button"
+                onClick={() => navigateTo("models")}
+                style={{ padding: 0, border: "none", background: "none", color: "var(--accent)", font: "inherit", fontWeight: 700, textDecoration: "underline", cursor: "pointer" }}
+              >
+                Models
+              </button>
+              .
             </div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(170px, 100%), 1fr))", gap: 10, marginTop: 12 }}>

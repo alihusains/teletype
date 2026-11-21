@@ -109,6 +109,51 @@ interface LearningSummary {
   keptCorrections?: number;
   /** The same corrections the user undid or wrote over. */
   undoneCorrections?: number;
+  /**
+   * Zero-edit rate over the last 7 days: 100 * zeroEditTakes7d /
+   * settledTakes7d, 1 decimal. null when no settled takes.
+   * A settled take is a dictation where polish ran and the edit watch
+   * settled (observed text is present).
+   */
+  zeroEditRate7d?: number | null;
+  /** Number of zero-edit takes in the last 7 days (numerator of ZER). */
+  zeroEditTakes7d?: number;
+  /** Number of settled takes in the last 7 days (denominator of ZER). */
+  settledTakes7d?: number;
+  /** Per-app zero-edit breakdown, top 3 by settled-take count. */
+  zeroEditByApp?: ZeroEditApp[];
+  /** Automatic per-app profile changes Teletype learned, each reversible. */
+  profileLearnings?: ProfileLearningRow[];
+  /** Candidates seen often enough to suggest; not changes Teletype applies automatically yet. */
+  autoApplyFixes?: TrackedFix[];
+}
+
+/** The undo action carried with a learned-profile row. */
+interface ProfileUndoAction {
+  appKey: string;
+  /** Per-app settings key to write to restore the previous profile. */
+  scopeKey: string;
+  restoreProfile: string;
+  label: string;
+}
+
+/** One automatic profile change, e.g. "Gmail: Structured learned from 12 takes". */
+interface ProfileLearningRow {
+  appId: string;
+  appLabel: string;
+  fromProfile: string;
+  learnedProfile: string;
+  takes: number;
+  learnedAt: number;
+  undo: ProfileUndoAction;
+}
+
+/** One app's zero-edit contribution in the last 7 days. */
+interface ZeroEditApp {
+  appId: string;
+  zeroEdit: number;
+  settled: number;
+  rate: number | null;
 }
 
 /** One context bucket of the Language summary (work / personal / other). */
@@ -1463,6 +1508,166 @@ function TrendCard({ data, range }: { data: Insights; range: Range }) {
   );
 }
 
+/** Compact "Zero-edit rate · this week" row inside the Quality card.
+    Shows `—` with a one-line explanation when there is no settled data. */
+function ZeroEditRateRow({ learning }: { learning?: LearningSummary | null }) {
+  const rate = learning?.zeroEditRate7d ?? null;
+  const settled = learning?.settledTakes7d ?? 0;
+  const zeroEdit = learning?.zeroEditTakes7d ?? 0;
+  const byApp = learning?.zeroEditByApp ?? [];
+
+  if (rate == null) {
+    return (
+      <MetricRow
+        icon="sparkles"
+        label="Zero-edit rate"
+        scope="This week"
+        value="—"
+        info={
+          settled === 0
+            ? "No polished takes have settled yet. A take settles 30 minutes after it lands, once the edit watch has confirmed the text is unchanged."
+            : "No settled takes in the last 7 days."
+        }
+      />
+    );
+  }
+
+  const appNote =
+    byApp.length > 0
+      ? byApp
+          .map((a) => `${a.appId}: ${a.rate?.toFixed(1) ?? "—"}% (${a.zeroEdit}/${a.settled})`)
+          .join(" · ")
+      : "";
+
+  return (
+    <MetricRow
+      icon="sparkles"
+      label="Zero-edit rate"
+      scope="This week"
+      value={`${rate.toFixed(1)}%`}
+      info={
+        `${zeroEdit} of ${settled} polished takes kept without edits over the last 7 days. ` +
+        (appNote ? `By app: ${appNote}. ` : "") +
+        `A take settles 30 minutes after it lands, once the edit watch confirms the text is unchanged.`
+      }
+    />
+  );
+}
+
+/** T5: automatic per-app profile changes, each with an Undo button. Undo calls
+    the backend's `undo_profile_learning`, which reverts the bandit change; the
+    row hides only once that command succeeds. */
+function ProfileLearningRows({ rows }: { rows: ProfileLearningRow[] }) {
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const undo = useCallback(async (row: ProfileLearningRow) => {
+    setBusy(row.appId);
+    setError(null);
+    try {
+      await invoke("undo_profile_learning", { appKey: row.undo.appKey });
+      setHidden((prev) => new Set(prev).add(row.appId));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  const visible = rows.filter((row) => !hidden.has(row.appId));
+  if (visible.length === 0) return null;
+
+  const pretty = (key: string) => (key ? key[0].toUpperCase() + key.slice(1) : key);
+  return (
+    <div style={{ marginTop: 12, minWidth: 0 }}>
+      <div className="tt-eyebrow" style={{ marginBottom: 4 }}>Polish learned</div>
+      {visible.map((row) => (
+        <div
+          key={row.appId}
+          data-testid="profile-learning-row"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "9px 0",
+            borderTop: "1px solid var(--border-subtle)",
+            minWidth: 0,
+          }}
+        >
+          <div style={{ flex: "1 1 0%", minWidth: 0 }}>
+            <div style={{ fontSize: "var(--text-sm)", color: "var(--text)", overflowWrap: "anywhere" }}>
+              {row.appLabel}: {pretty(row.learnedProfile)} learned from {row.takes} takes
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+              Was {pretty(row.fromProfile)} · local only
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={busy === row.appId}
+            onClick={() => void undo(row)}
+            title={row.undo.label}
+            style={{
+              padding: "4px 8px",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              background: "var(--surface-2)",
+              color: "var(--text)",
+              font: "inherit",
+              fontSize: "var(--text-xs)",
+              cursor: busy === row.appId ? "default" : "pointer",
+              flexShrink: 0,
+            }}
+          >
+            {busy === row.appId ? "Undoing…" : "Undo"}
+          </button>
+        </div>
+      ))}
+      {error ? (
+        <p role="alert" style={{ margin: "4px 0 0", fontSize: "var(--text-xs)", color: "var(--danger, #e06c75)" }}>
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Correction candidates Teletype has seen often enough to suggest, but does
+    not apply automatically yet. At most three are shown; nothing renders when
+    the list is empty. The text is fully visible and carries a native tooltip,
+    so it reads without needing hover or a screen-reader-only label. */
+function ReadyToApplyRows({ fixes }: { fixes: TrackedFix[] }) {
+  if (fixes.length === 0) return null;
+  return (
+    <div style={{ marginTop: 12, minWidth: 0 }}>
+      <div className="tt-eyebrow" style={{ marginBottom: 4 }}>Ready to apply</div>
+      {fixes.slice(0, 3).map((fix, i) => (
+        <div
+          key={`${fix.from}-${fix.to}-${i}`}
+          data-testid="ready-to-apply-row"
+          title={`Heard "${fix.from}", you wrote "${fix.to}", ${fix.count.toLocaleString()} ${plural(fix.count, "time", "times")}`}
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            gap: 8,
+            padding: "9px 0",
+            borderTop: "1px solid var(--border-subtle)",
+            minWidth: 0,
+          }}
+        >
+          <span style={{ color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{`${fix.from} `}</span>
+          <span aria-hidden="true" style={{ color: "var(--text-tertiary)", flexShrink: 0 }}>{"→ "}</span>
+          <span style={{ fontWeight: 650, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{`${fix.to} `}</span>
+          <span style={{ marginLeft: "auto", color: "var(--text-secondary)", fontWeight: 600, flexShrink: 0, ...NUMERIC }}>
+            {`· seen ${fix.count.toLocaleString()} ${plural(fix.count, "time", "times")}`}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function QualityCard({
   data,
   range,
@@ -1527,15 +1732,18 @@ function QualityCard({
             info="Words you changed per 100 dictated words over the last 7 days. Falling is improvement: the transcript needed less fixing."
           />
         )}
+        <ZeroEditRateRow learning={data.learning} />
         {graded > 0 && (
           <MetricRow
             icon="check"
             label="Corrections you kept"
             scope="All time"
             value={`${kept.toLocaleString()} of ${graded.toLocaleString()}`}
-            info="Changes AI Polish made that were still in the text 30 minutes later, out of all the changes it has had a chance to make. If you undo or rewrite one, it counts against Polish instead. Nothing is applied automatically from this yet."
+            info="Changes AI Polish made that were still in the text 30 minutes later, out of all the changes it has had a chance to make. If you undo or rewrite one, it counts against Polish instead. Nothing is applied automatically from this yet; the corrections seen most often are listed as suggestions under Ready to apply below."
           />
         )}
+        <ProfileLearningRows rows={data.learning?.profileLearnings ?? []} />
+        <ReadyToApplyRows fixes={data.learning?.autoApplyFixes ?? []} />
       </div>
 
       {accuracy && (

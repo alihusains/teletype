@@ -34,6 +34,7 @@ pub mod persist;
 pub mod personalization;
 pub mod pipeline;
 pub mod platform;
+pub mod profile;
 pub mod repo;
 pub mod rescoring;
 pub mod scratchpad;

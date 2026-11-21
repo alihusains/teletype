@@ -8,10 +8,12 @@ import {
 import { LoadFailed } from "../components/StateRows";
 import { useTauriEvent } from "../lib/useTauriEvent";
 import { errorMessage } from "../lib/errors";
+import { polishCustomizationFor } from "../lib/profileLabels";
 import { ShieldIcon } from "../lib/PrivacyBadge";
 import { Icon } from "../components/Icon";
 import OnboardingPermissionsStep from "./OnboardingPermissionsStep";
 import TryHotkeyCheck from "../components/TryHotkeyCheck";
+import CalibrationStep from "../components/CalibrationStep";
 
 interface SpeechModelStatus {
   id: string;
@@ -52,14 +54,23 @@ interface Settings {
   [key: string]: unknown;
 }
 
-const STEPS = ["Privacy", "Permissions", "Dictation", "Polish", "Hotkey", "Done"] as const;
+const STEPS = [
+  "Privacy",
+  "Permissions",
+  "Dictation",
+  "Polish",
+  "Hotkey",
+  "Calibration",
+  "Done",
+] as const;
 
 function sizeLabel(mb: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
 }
 
-// Step index of the standalone "Try it" check used by repair mode.
-const TRY_STEP = 6;
+// Step index of the standalone "Try it" check used by repair mode. It sits
+// past the normal "Done" step so a repair run never renders calibration.
+const TRY_STEP = 7;
 
 export default function OnboardingScreen({
   onCompleted,
@@ -82,6 +93,7 @@ export default function OnboardingScreen({
   const [readyMsg, setReadyMsg] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPolishAdvanced, setShowPolishAdvanced] = useState(false);
+  const [polishGoal, setPolishGoal] = useState<"cleanup" | "structured">("cleanup");
   const [polishChoice, setPolishChoice] = useState<"local" | "cloud" | "skip" | null>(null);
 
   // Ask the backend whether the selected speech model is loaded and usable.
@@ -234,6 +246,7 @@ export default function OnboardingScreen({
   const speechLead = speechModels.find((m) => m.recommended)?.id;
   const others = llmModels.filter((m) => m.id !== recommendedLlm?.id);
   const otherSpeech = speechModels.filter((m) => m.id !== recommendedModel?.id);
+  const capableLlm = llmModels.find((m) => polishCustomizationFor(m.id) !== "none");
 
   return (
     <div
@@ -478,11 +491,43 @@ export default function OnboardingScreen({
             <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
               Polish your writing (optional)
             </h3>
-            <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 16 }}>
-              Teletype can clean up filler words, fix punctuation, and tighten
-              your sentences. You can set this up now or add it later in
-              Settings.
+            <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>
+              Polish follows a contract you can change later in Settings. Clean
+              fixes only what is wrong and keeps your words. Natural makes it
+              correct and readable, still you. Structured makes an email or doc
+              ready to send. Transform rewrites what you ask. A Cleanup-only
+              model can honor Clean and Off; it cannot restructure a message, so
+              Natural and Structured fall back to Clean.
             </p>
+            <div role="radiogroup" aria-label="What should Polish do" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={polishGoal === "cleanup"}
+                onClick={() => setPolishGoal("cleanup")}
+                style={{ padding: "7px 11px", borderRadius: 999, border: `1px solid ${polishGoal === "cleanup" ? "var(--accent)" : "var(--border)"}`, background: "var(--surface)", color: "var(--text)", font: "inherit", fontSize: 12, cursor: "pointer" }}
+              >
+                Fix errors only (Clean)
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={polishGoal === "structured"}
+                onClick={() => setPolishGoal("structured")}
+                style={{ padding: "7px 11px", borderRadius: 999, border: `1px solid ${polishGoal === "structured" ? "var(--accent)" : "var(--border)"}`, background: "var(--surface)", color: "var(--text)", font: "inherit", fontSize: 12, cursor: "pointer" }}
+              >
+                Ready-to-send emails and docs (Structured)
+              </button>
+            </div>
+            {polishGoal === "structured" && (
+              <div role="status" style={{ marginBottom: 14, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                <strong style={{ color: "var(--text)" }}>Structured needs a model with full Polish.</strong>{" "}
+                {capableLlm
+                  ? `${capableLlm.name} in the list below can do it.`
+                  : "None of the models offered here can do it; pick a full-Polish model in Settings → Models."}{" "}
+                A Cleanup-only model falls back to Clean.
+              </div>
+            )}
 
             {/* Option 1: Local model. Named, because "Local model" alone does
                 not say what you are downloading, and the pick is the backend's
@@ -701,8 +746,21 @@ export default function OnboardingScreen({
           </div>
         )}
 
-        {/* Step 5: Done */}
+        {/* Step 5: First-run calibration. Skippable; saves the chosen profile
+            and per-app defaults through `record_calibration`, which returns the
+            fresh settings so `finish` cannot clobber them with a stale copy. */}
         {step === 5 && (
+          <CalibrationStep
+            onBack={() => setStep(4)}
+            onComplete={(updated) => {
+              if (updated && typeof updated === "object") setSettings(updated as Settings);
+              setStep(6);
+            }}
+          />
+        )}
+
+        {/* Step 6: Done */}
+        {step === 6 && (
           <div style={{ textAlign: "center", padding: "8px 0 4px" }}>
             <div
               style={{

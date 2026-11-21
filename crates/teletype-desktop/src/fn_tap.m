@@ -46,7 +46,10 @@ static void fnWatchdogCallback(CFRunLoopTimerRef timer, void *info) {
     (void)info;
     if (g_tap && !CGEventTapIsEnabled(g_tap)) {
         CGEventTapEnable(g_tap, TRUE);
-        fnTapLog("watchdog: tap re-enabled");
+        // The release edge may have been lost while the tap was disabled.
+        // Forget any held Fn state so the next physical press reports DOWN.
+        g_fnDown = NO;
+        fnTapLog("watchdog: tap re-enabled, Fn latch cleared");
     }
 }
 
@@ -60,7 +63,8 @@ static CGEventRef fnTapCallback(CGEventTapProxy proxy,
         type == kCGEventTapDisabledByUserInput) {
         if (g_tap) {
             CGEventTapEnable(g_tap, TRUE);
-            fnTapLog("tap re-enabled after disable");
+            g_fnDown = NO;
+            fnTapLog("tap re-enabled after disable, Fn latch cleared");
         }
         return event;
     }
@@ -192,4 +196,10 @@ void teletype_fn_tap_stop(void) {
     g_tapThread = 0;
     g_callback = NULL;
     g_fnDown = NO;
+}
+
+// 1 when the Fn tap has been started, still holds a live mach port, and has
+// not been disabled by the system. Used for hotkey liveness checks.
+int teletype_fn_tap_is_live(void) {
+    return g_started && g_tap != NULL && CGEventTapIsEnabled(g_tap) ? 1 : 0;
 }

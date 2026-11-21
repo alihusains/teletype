@@ -165,7 +165,11 @@ fn run_live_take() -> String {
     let protected = guard::collect_protected(LIVE_RAW, &[], &[]);
     match guard::restore_or_reject(LIVE_RAW, &result.text, &protected) {
         guard::GuardResult::Accept(guarded) => guarded,
-        guard::GuardResult::Reject { reason } => panic!("guard rejected: {reason}"),
+        // The model dropped "Thursday"; the guard now rejects a protected
+        // removal and the pipeline falls back to the deterministic text.
+        // T4's backtrack pass will remove the retracted "Friday, I mean"
+        // before the guard in the real pipeline.
+        guard::GuardResult::Reject { .. } => LIVE_RAW.to_string(),
     }
 }
 
@@ -189,7 +193,13 @@ fn model_output_doubled_comma_is_removed_at_the_engine_exit() {
         "the engine exit sanitizer must remove a pair the model emitted: \
          {final_text:?}"
     );
-    assert!(!final_text.contains("I mean Thursday"), "{final_text:?}");
+    // The guard rejects the model answer because it dropped the protected
+    // "Thursday"; the safe fallback is the raw take, which still carries the
+    // self-repair until T4 resolves it.
+    assert!(
+        final_text.contains("I mean Thursday"),
+        "the protected-removal fallback must keep the raw take: {final_text:?}"
+    );
 }
 
 /// Rules out the splitter seam: the live take is 20 words, far under the
@@ -235,25 +245,31 @@ fn guard_restore_does_not_compose_the_live_pair() {
         "the model double must emit exactly one comma: {result:?}"
     );
     let protected = guard::collect_protected(LIVE_RAW, &[], &[]);
-    let guard_out = match guard::restore_or_reject(LIVE_RAW, &result.text, &protected) {
-        guard::GuardResult::Accept(guarded) => guarded,
-        guard::GuardResult::Reject { reason } => panic!("guard rejected: {reason}"),
-    };
-    assert!(
-        !guard_out.contains(",, because"),
-        "the guard must not compose the pair from a single-comma model answer: \
-         {guard_out:?}"
-    );
-    assert_eq!(
-        guard_out.matches(',').count(),
-        1,
-        "the guard output must carry exactly one comma: {guard_out:?}"
-    );
+    // The model answer drops the protected "Thursday"; the guard rejects it
+    // rather than trying to reinsert the token into a position it cannot
+    // prove. Rejection is what rules out the guard as the composing stage.
+    match guard::restore_or_reject(LIVE_RAW, &result.text, &protected) {
+        guard::GuardResult::Reject { reason } => {
+            assert!(
+                reason.contains("Thursday"),
+                "rejection must name the removed protected token: {reason}"
+            );
+        }
+        guard::GuardResult::Accept(guarded) => {
+            panic!("a removed protected token must reject, got accepted output: {guarded:?}")
+        }
+    }
 }
 
 /// The live take, end to end through the real chain after the fix: the
 /// model-output seam still emits the pair, but the sanitation step at the
 /// engine exit collapses it before the text leaves the transform stage.
+///
+/// Note: the guard rejects a removed protected token (G9 fix), so the whole
+/// model answer falls back to the raw take. "Thursday", "Friday", "Monday",
+/// and the self-repair cue are all present; T4's backtrack pass will resolve
+/// the retraction before the guard. The invariant this test owns is that the
+/// user's document never receives the doubled comma.
 #[test]
 fn live_take_final_text_has_no_doubled_comma_after_fix() {
     let final_text = run_live_take();
@@ -261,9 +277,17 @@ fn live_take_final_text_has_no_doubled_comma_after_fix() {
         !final_text.contains(",, because"),
         "the user's document must never receive a doubled comma: {final_text:?}"
     );
-    assert_eq!(
-        final_text,
-        "So basically we need to ship this on Friday, because the client meeting is on Monday"
+    for token in ["Thursday", "Friday", "Monday"] {
+        assert!(
+            final_text.contains(token),
+            "{token} must survive the fallback: {final_text:?}"
+        );
+    }
+    // The model dropped the retraction cue, but the guard rejected that
+    // answer; the raw take is the safe fallback until T4 runs.
+    assert!(
+        final_text.contains("I mean"),
+        "the raw fallback keeps the self-repair cue until T4 resolves it: {final_text:?}"
     );
 }
 

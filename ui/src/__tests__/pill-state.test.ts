@@ -362,6 +362,23 @@ describe('polish diff card', () => {
     expect(s.pill).toEqual({ phase: 'result', ...payload })
   })
 
+  it('copies optional profile and reason into the result phase', () => {
+    const withMeta = pillReducer(state(), {
+      type: 'polish-diff',
+      payload: { ...payload, profile: 'structured', reason: 'gate fallback' },
+    })
+    expect(withMeta.pill).toEqual({
+      phase: 'result', ...payload, profile: 'structured', reason: 'gate fallback',
+    })
+
+    // Old payloads without the keys still produce a result phase; the copied
+    // fields stay undefined rather than being synthesized.
+    const withoutMeta = pillReducer(state(), { type: 'polish-diff', payload })
+    expect(withoutMeta.pill).toEqual({ phase: 'result', ...payload })
+    expect((withoutMeta.pill as { profile?: string }).profile).toBeUndefined()
+    expect((withoutMeta.pill as { reason?: string }).reason).toBeUndefined()
+  })
+
   it('is not a busy phase, so the processing body never renders it', () => {
     const s = pillReducer(state(), { type: 'polish-diff', payload })
     expect(isBusyPhase(s.pill.phase)).toBe(false)

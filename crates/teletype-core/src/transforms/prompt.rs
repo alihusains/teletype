@@ -284,6 +284,10 @@ pub struct PolishPromptInfo {
     pub default_prompt: String,
     /// Why the prompt is not editable ("" when it is).
     pub note: String,
+    /// T3a: active polish profile contract, attached by the IPC layer so a
+    /// single registered command serves both the prompt screen and the profile
+    /// badge. `None` on a direct core call with no settings/app context.
+    pub profile: Option<crate::profile::PolishProfileInfo>,
 }
 
 /// The prompt-info row for one model id. Unknown and empty ids are general
@@ -297,6 +301,7 @@ pub fn polish_prompt_info(model_id: &str) -> PolishPromptInfo {
                 PolishPromptInfo {
                     model_id: model_id.to_string(),
                     editable: false,
+                    profile: None,
                     default_prompt: S1_SYSTEM_PROMPT.to_string(),
                     note: "This polish model is fine-tuned on a fixed prompt and control line. \
                            Rewording them moves it off its training distribution, so the prompt \
@@ -312,6 +317,7 @@ pub fn polish_prompt_info(model_id: &str) -> PolishPromptInfo {
                 PolishPromptInfo {
                     model_id: model_id.to_string(),
                     editable: true,
+                    profile: None,
                     default_prompt: QWEN08_POLISH_SYSTEM_PROMPT.to_string(),
                     note: "This small model follows a lean fixed editor prompt. Anything you \
                            add here is appended to the message as extra instructions; the \
@@ -327,6 +333,7 @@ pub fn polish_prompt_info(model_id: &str) -> PolishPromptInfo {
                 PolishPromptInfo {
                     model_id: model_id.to_string(),
                     editable: true,
+                    profile: None,
                     default_prompt: QWEN_POLISH_SYSTEM_PROMPT.to_string(),
                     note: "This model follows a fixed editor prompt. Anything you add here is \
                            appended to it as extra instructions; the built-in rules still take \
@@ -339,6 +346,7 @@ pub fn polish_prompt_info(model_id: &str) -> PolishPromptInfo {
         StyleChannel::FixedBehaviour => PolishPromptInfo {
             model_id: model_id.to_string(),
             editable: false,
+            profile: None,
             default_prompt: SPEAKO_SYSTEM_PROMPT.to_string(),
             note: "This polish model uses a fixed prompt that is tuned to the model and \
                    cannot be customized. It cleans the transcript as-is; there is no \
@@ -348,6 +356,7 @@ pub fn polish_prompt_info(model_id: &str) -> PolishPromptInfo {
         StyleChannel::StylePhrases => PolishPromptInfo {
             model_id: model_id.to_string(),
             editable: true,
+            profile: None,
             default_prompt: rules_block().to_string(),
             note: String::new(),
         },
@@ -400,6 +409,22 @@ pub struct PromptContext {
     /// NEVER applied to the fixed-contract paths (S1-mini, SpeakoFlow
     /// Mini): those prompts are a contract with the model card.
     pub user_override: Option<String>,
+}
+
+impl PromptContext {
+    /// The profile encoded by the pipeline in the instruction channel, or
+    /// `None` for a context built before T3a. Callers that do not set a profile
+    /// keep byte-identical prompts.
+    pub fn profile(&self) -> Option<crate::profile::PolishProfile> {
+        crate::profile::decode_instruction(self.user_override.as_deref()).0
+    }
+
+    /// The user's own override with the profile marker removed. Always use
+    /// this instead of reading `user_override` directly on a model path: the
+    /// marker is plumbing, not text the model should see.
+    pub fn clean_user_override(&self) -> Option<&str> {
+        crate::profile::decode_instruction(self.user_override.as_deref()).1
+    }
 }
 
 impl Default for PromptContext {
@@ -528,7 +553,15 @@ fn build_prompt_with_rules(
         "Return ONLY the transformed text. No explanations, no preambles like \"Here is\", no markdown fences, no quotes around the result.\n\n",
     );
 
-    // Dynamic block last.
+    // Dynamic block last. The profile line is the first instruction the model
+    // sees after the cache-stable prefix (§6.3): one line, then the transcript
+    // data. It is emitted only for instruction-capable profiles, and only
+    // when the pipeline actually resolved one (no marker = legacy behavior).
+    if let Some(line) = ctx.profile().and_then(|p| p.instruction_line()) {
+        prompt.push_str(line);
+        prompt.push('\n');
+    }
+
     if let Some(app) = &ctx.app {
         if app.is_known() {
             prompt.push_str(&format!(
@@ -603,8 +636,7 @@ fn build_prompt_with_rules(
     // the task so it can steer the edit, but it is user data, so it is
     // explicitly marked as such and the safety rules above it still win.
     if let Some(override_text) = ctx
-        .user_override
-        .as_deref()
+        .clean_user_override()
         .map(str::trim)
         .filter(|t| !t.is_empty())
     {
@@ -1252,6 +1284,74 @@ mod tests {
             user.split('\n').next(),
             Some("[Styling: formal] [Structure: prose] [Context: email]")
         );
+    }
+
+    /// T3a: the profile line is emitted for instruction-capable profiles and
+    /// stays in the dynamic region, so the cache-stable prefix is untouched.
+    #[test]
+    fn profile_line_is_first_dynamic_instruction_for_capable_profiles() {
+        use crate::profile::PolishProfile;
+        let prefix = static_prefix();
+        for profile in [
+            PolishProfile::Clean,
+            PolishProfile::Natural,
+            PolishProfile::Structured,
+        ] {
+            let ctx = PromptContext {
+                user_override: crate::profile::encode_instruction(profile, None),
+                app: Some(ApplicationContext {
+                    application_id: "com.google.gmail".into(),
+                    application_type: crate::context::AppType::Email,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let prompt = build_prompt(&transform(), "hello there friend", &ctx);
+            assert!(prompt.starts_with(prefix.as_str()));
+            let line = profile.instruction_line().unwrap();
+            assert!(
+                prompt[prefix.len()..].starts_with(line),
+                "{:?} line must lead the dynamic block",
+                profile
+            );
+            assert!(!prompt.contains("[polish-profile:"));
+        }
+    }
+
+    #[test]
+    fn profile_line_absent_for_transform_off_and_legacy_contexts() {
+        use crate::profile::PolishProfile;
+        for profile in [PolishProfile::Transform, PolishProfile::Off] {
+            let ctx = PromptContext {
+                user_override: crate::profile::encode_instruction(profile, None),
+                ..Default::default()
+            };
+            let prompt = build_prompt(&transform(), "hello there friend", &ctx);
+            assert!(!prompt.contains("[Profile:"));
+        }
+        // A context built with no marker keeps the pre-T3a prompt exactly.
+        let plain = build_prompt(
+            &transform(),
+            "hello there friend",
+            &PromptContext::default(),
+        );
+        assert!(!plain.contains("[Profile:"));
+    }
+
+    #[test]
+    fn marker_is_stripped_but_the_users_override_still_reaches_the_prompt() {
+        use crate::profile::PolishProfile;
+        let ctx = PromptContext {
+            user_override: crate::profile::encode_instruction(
+                PolishProfile::Structured,
+                Some("Keep it short."),
+            ),
+            ..Default::default()
+        };
+        let prompt = build_prompt(&transform(), "hello there friend", &ctx);
+        assert!(prompt.contains("[Profile: Structured]"));
+        assert!(prompt.contains("Keep it short."));
+        assert!(!prompt.contains("[polish-profile:"));
     }
 
     #[test]

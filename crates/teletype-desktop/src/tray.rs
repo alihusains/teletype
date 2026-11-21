@@ -135,17 +135,7 @@ pub fn clear_undo_offer(app: &AppHandle) {
 /// caller reports the stale state (F-84).
 pub fn undo_offered(app: &AppHandle) -> crate::commands::personalization::UndoOutcomeKind {
     let state = app.state::<AppState>();
-    let ids: Vec<String> = state
-        .last_learned
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .as_ref()
-        .map(|offer| offer.preference_ids.clone())
-        .unwrap_or_default();
-    if ids.is_empty() {
-        return crate::commands::personalization::UndoOutcomeKind::None;
-    }
-    let kind = match crate::commands::personalization::undo_offer_from_state(&state, &ids) {
+    let kind = match crate::commands::personalization::undo_last_offer_from_state(&state) {
         Ok(Some(outcome)) => {
             clear_undo_offer(app);
             crate::log_entry(

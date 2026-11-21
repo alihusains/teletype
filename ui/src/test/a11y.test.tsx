@@ -180,7 +180,7 @@ const SETTINGS_MOCK = {
   commandWakePhrase: false,
   pendingNotice: null,
   polishWholeTextAtEnd: false,
-  polishSkipWhenClean: true,
+  polishSkipWhenClean: false,
   instantStart: "always",
   preferBuiltinMicWithBt: false,
   audioConditioning: false,

@@ -88,7 +88,7 @@ pub fn install(app_handle: AppHandle) {
         unsafe {
             let mut action: libc::sigaction = std::mem::zeroed();
             // SIGTERM (15): request an orderly Tauri exit.
-            action.sa_sigaction = signal_handler as usize;
+            action.sa_sigaction = signal_handler as *const () as usize;
             action.sa_flags = 0;
             libc::sigemptyset(&mut action.sa_mask);
             if libc::sigaction(15, &action, std::ptr::null_mut()) != 0 {

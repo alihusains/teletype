@@ -39,6 +39,15 @@ impl LearnedOffer {
     /// Whether `ids` names this offer (order-insensitive, exact set), so a
     /// stale toast cannot undo a newer take's learning.
     pub fn matches(&self, ids: &[String]) -> bool {
+        // Word-only offers carry no preference ids. The toast sends an
+        // `offer:<id>` sentinel so a stale toast cannot undo a newer learn.
+        if let Some(offer_id) = ids
+            .first()
+            .and_then(|s| s.strip_prefix("offer:"))
+            .and_then(|s| s.parse::<u64>().ok())
+        {
+            return ids.len() == 1 && self.matches_offer_id(offer_id);
+        }
         !self.preference_ids.is_empty()
             && self.preference_ids.len() == ids.len()
             && self.preference_ids.iter().all(|id| ids.contains(id))
@@ -389,6 +398,28 @@ pub(crate) fn undo_offer_from_state(
     let Some(offer) = offer.filter(|offer| offer.matches(preference_ids)) else {
         return Ok(None);
     };
+    apply_learned_offer(state, &offer)
+}
+
+/// Undoes the live offer without id matching, for the tray Undo item. The
+/// tray menu is rebuilt whenever the offer changes or expires, so the live
+/// slot itself is the authority there.
+pub(crate) fn undo_last_offer_from_state(state: &AppState) -> Result<Option<UndoOutcome>, String> {
+    let Some(offer) = state
+        .last_learned
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+    else {
+        return Ok(None);
+    };
+    apply_learned_offer(state, &offer)
+}
+
+fn apply_learned_offer(
+    state: &AppState,
+    offer: &LearnedOffer,
+) -> Result<Option<UndoOutcome>, String> {
     let mut profile = (*state.profile.get()).clone();
     let mut dictionary = (*state.dictionary.get()).clone();
     // Open the lexicon before touching anything so a broken store surfaces as
@@ -405,7 +436,7 @@ pub(crate) fn undo_offer_from_state(
     let outcome = undo_offer_in(
         &mut profile,
         &mut dictionary,
-        &offer,
+        offer,
         learning_store.as_ref(),
     );
     // Both snapshots are written only after the clones succeeded; if a write
@@ -1456,6 +1487,19 @@ mod tests {
         // A stale toast (older offer) must not undo a newer take's writes.
         assert!(!offer.matches(&["a".into()]));
         assert!(!offer.matches(&["a".into(), "c".into()]));
+        assert!(!offer.matches(&[]));
+    }
+
+    #[test]
+    fn word_only_offer_matches_by_offer_id_sentinel() {
+        let offer = LearnedOffer {
+            id: 42,
+            preference_ids: Vec::new(),
+            dictionary_changes: Vec::new(),
+            lexicon_terms: vec!["Siobhan".into()],
+        };
+        assert!(offer.matches(&["offer:42".into()]));
+        assert!(!offer.matches(&["offer:41".into()]));
         assert!(!offer.matches(&[]));
     }
 

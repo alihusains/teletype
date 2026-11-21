@@ -786,7 +786,7 @@ pub const CATALOG: &[SpeechModel] = &[
         // post-download check and every Windows first-run download was
         // discarded.
         sha256: Some("1495e91b59d7fc53ddca91f3431758ec99f8fa253fdb0e1e851be0f72b14b0f9"),
-        description: "Default on Windows. Runs on CPU, English and 24 European languages.",
+        description: "Runs on CPU, English and 24 European languages. Fallback behind Parakeet Ultra on Windows and other non-Apple hosts.",
         languages: Some(PARAKEET_V3_LANGUAGES),
         speed: 8.5,
         accuracy: 9.0,
@@ -795,6 +795,25 @@ pub const CATALOG: &[SpeechModel] = &[
             Purpose::inferred("Everyday dictation"),
             Purpose::inferred("Multilingual"),
             Purpose::inferred("Low memory"),
+        ],
+        ..WHISPER
+    },
+    SpeechModel {
+        id: "sherpa-parakeet-ultra-int8",
+        name: "Parakeet Ultra (sherpa-onnx)",
+        file: "sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8.tar.bz2",
+        engine: Engine::SherpaParakeet,
+        size_mb: 465,
+        sha256: Some("d216b71d7f628b3f2f2a20ee7ead39ff0b075984959eb4bf6ddf8dc8da737c09"),
+        description: "Default on Windows and other non-Apple hosts. Runs on CPU, English and 24 European languages; the most accurate sherpa build. Publisher FLEURS CPU WER: English 5.71% (v3 7.57%), Spanish 3.37% (v3 3.82%). CC-BY-4.0, attribution to Moondream/NVIDIA.",
+        languages: Some(PARAKEET_V3_LANGUAGES),
+        speed: 8.5,
+        accuracy: 9.3,
+        min_ram_gb: 4,
+        purposes: &[
+            Purpose::inferred("Everyday dictation"),
+            Purpose::inferred("Most accurate"),
+            Purpose::inferred("Multilingual"),
         ],
         ..WHISPER
     },
@@ -1112,7 +1131,7 @@ pub enum Platform {
     MacosIntel,
     /// Windows - sherpa-onnx is the default engine.
     Windows,
-    /// Anything else (Linux, …) - the ggml build is the default.
+    /// Anything else (Linux, …) - sherpa-onnx Ultra is the default.
     Other,
 }
 
@@ -1169,9 +1188,9 @@ pub type ModelId = &'static str;
 ///    where Whisper ships;
 /// 3. macOS 14+ Apple Silicon uses the Core ML Ultra build (or v2 for
 ///    English once [`V2_ENGLISH_PREFERRED`] is flipped by the P3.8 bake-off);
-/// 4. Windows uses the sherpa-onnx int8 build;
+/// 4. Windows uses the sherpa-onnx Ultra int8 build (v3 is the fallback);
 /// 5. Intel Macs and older macOS keep the ggml Parakeet v3; every other
-///    host uses sherpa-onnx, the only cross-platform engine.
+///    host uses sherpa-onnx Ultra, the only cross-platform engine.
 ///
 /// The returned model is always loadable on `platform`; that invariant is
 /// what keeps a Windows or Linux install from selecting a macOS-only engine.
@@ -1215,11 +1234,11 @@ pub fn pick_engine(pinned: Option<&str>, platform: Platform, language: Option<&s
             if V2_ENGLISH_PREFERRED {
                 "sherpa-parakeet-v2-int8"
             } else {
-                "sherpa-parakeet-v3-int8"
+                "sherpa-parakeet-ultra-int8"
             }
         }
         Platform::MacosAppleSilicon { .. } | Platform::MacosIntel => "parakeet-tdt-v3",
-        Platform::Other => "sherpa-parakeet-v3-int8",
+        Platform::Other => "sherpa-parakeet-ultra-int8",
     };
     if let Some(l) = lang {
         let detours = find("large-v3-turbo-q5").is_some_and(|m| m.available_on(platform))
@@ -1259,7 +1278,8 @@ pub fn pick_engine(pinned: Option<&str>, platform: Platform, language: Option<&s
 /// [`pick_engine`]'s answer cannot be offered on this build, best first.
 ///
 /// Every entry is a real dictation model, so the fallback can never name a
-/// row the list hides (the CTC spotter is deliberately absent).
+/// row the list hides (the CTC spotter is deliberately absent). The sherpa v3
+/// row is the Windows/Other fallback behind the Ultra platform default.
 const RECOMMENDED_FALLBACKS: &[ModelId] = &[
     "parakeet-tdt-v3",
     "parakeet-tdt-v3-q4",
@@ -1283,7 +1303,7 @@ const RECOMMENDED_FALLBACKS: &[ModelId] = &[
 /// Semantics, in order:
 /// 1. `pick_engine`'s answer wins when this build can offer it: Apple Silicon
 ///    macOS 14+ **with** the bridge gets `parakeet-ultra-coreml`, Windows gets
-///    `sherpa-parakeet-v3-int8`, macOS 13 and Intel get `parakeet-tdt-v3`.
+///    `sherpa-parakeet-ultra-int8`, macOS 13 and Intel get `parakeet-tdt-v3`.
 /// 2. Otherwise the first entry in [`RECOMMENDED_FALLBACKS`] this build can
 ///    offer and that transcribes `language` is used, so an Apple Silicon
 ///    macOS 14+ machine without the bridge falls back to `parakeet-tdt-v3`
@@ -1341,7 +1361,7 @@ pub const SHORTLIST_MAX: usize = 3;
 
 /// The rows worth showing someone who has never dictated here, best first.
 ///
-/// The full catalog is 16 rows and a first-run user cannot tell a quantization
+/// The full catalog is 17 rows and a first-run user cannot tell a quantization
 /// of the same model from a different engine. This is the measured ranking
 /// collapsed to one decision per axis: the fastest accurate engine this host
 /// has, the portable ggml build that needs no Neural Engine and loads in half a
@@ -1389,6 +1409,7 @@ pub fn shortlist_ids(
             push("large-v3-turbo-q5");
         }
         Platform::Windows | Platform::Other => {
+            push("sherpa-parakeet-ultra-int8");
             push("sherpa-parakeet-v3-int8");
             push("sherpa-parakeet-v2-int8");
         }
@@ -1768,6 +1789,38 @@ mod tests {
     }
 
     #[test]
+    fn sherpa_parakeet_ultra_row_is_well_formed() {
+        let m = find("sherpa-parakeet-ultra-int8").unwrap();
+        assert_eq!(m.engine, Engine::SherpaParakeet);
+        assert_eq!(
+            m.file,
+            "sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8.tar.bz2"
+        );
+        assert_eq!(m.url(), format!("{SHERPA_MODELS_BASE_URL}/{}", m.file));
+        assert_eq!(
+            m.sha256,
+            Some("d216b71d7f628b3f2f2a20ee7ead39ff0b075984959eb4bf6ddf8dc8da737c09")
+        );
+        assert_eq!(m.size_mb, 465);
+        assert_eq!(m.languages, Some(PARAKEET_V3_LANGUAGES));
+        assert_eq!(m.language_label(), "25 languages");
+        assert_eq!(m.speed, 8.5);
+        assert_eq!(m.accuracy, 9.3);
+        assert_eq!(m.min_ram_gb, 4);
+        assert!(!m.english_only);
+        assert!(!m.auxiliary);
+        assert!(!m.recommended);
+        // Publisher FLEURS numbers are in the description, but no chip claims
+        // a Teletype measurement: every purpose is inferred.
+        assert!(
+            m.description.contains("CC-BY-4.0")
+                && m.description.contains("5.71%")
+                && m.description.contains("3.37%")
+        );
+        assert!(m.purposes.iter().all(|p| p.basis == PurposeBasis::Inferred));
+    }
+
+    #[test]
     fn pick_engine_defaults_by_platform() {
         let mac14 = Platform::MacosAppleSilicon { major: 14 };
         assert_eq!(pick_engine(None, mac14, None), "parakeet-ultra-coreml");
@@ -1797,12 +1850,12 @@ mod tests {
         );
         assert_eq!(
             pick_engine(None, Platform::Windows, None),
-            "sherpa-parakeet-v3-int8"
+            "sherpa-parakeet-ultra-int8"
         );
         // Linux and other hosts can only load sherpa-onnx, not ggml.
         assert_eq!(
             pick_engine(None, Platform::Other, Some("fr")),
-            "sherpa-parakeet-v3-int8"
+            "sherpa-parakeet-ultra-int8"
         );
     }
 
@@ -1926,11 +1979,11 @@ mod tests {
             );
             assert_eq!(
                 recommended_speech_model_id(Platform::Windows, None, fluid),
-                "sherpa-parakeet-v3-int8"
+                "sherpa-parakeet-ultra-int8"
             );
             assert_eq!(
                 recommended_speech_model_id(Platform::Other, Some("fr"), fluid),
-                "sherpa-parakeet-v3-int8"
+                "sherpa-parakeet-ultra-int8"
             );
         }
     }
@@ -1954,7 +2007,7 @@ mod tests {
             for fluid in [true, false] {
                 assert_eq!(
                     recommended_speech_model_id(Platform::Windows, Some(lang), fluid),
-                    "sherpa-parakeet-v3-int8",
+                    "sherpa-parakeet-ultra-int8",
                     "Windows/{lang} with bridge={fluid}"
                 );
             }
@@ -1962,7 +2015,7 @@ mod tests {
         // A covered language keeps the platform default.
         assert_eq!(
             recommended_speech_model_id(Platform::Windows, Some("uk"), false),
-            "sherpa-parakeet-v3-int8"
+            "sherpa-parakeet-ultra-int8"
         );
         // "auto", empty, and None all mean "the engine decides".
         for unset in [None, Some(""), Some("auto"), Some("AUTO"), Some("  auto  ")] {
@@ -1975,7 +2028,7 @@ mod tests {
         // BCP-47 tags normalize to the base language.
         assert_eq!(
             recommended_speech_model_id(Platform::Windows, Some("pt-BR"), false),
-            "sherpa-parakeet-v3-int8"
+            "sherpa-parakeet-ultra-int8"
         );
         assert_eq!(
             recommended_speech_model_id(mac14, Some("ja-JP"), true),
@@ -2001,15 +2054,20 @@ mod tests {
 
         // sherpa-onnx loads everywhere, but its Windows/Linux CPU rows are
         // not surfaced on macOS: every native macOS engine beats them.
-        let sherpa = find("sherpa-parakeet-v3-int8").unwrap();
-        for p in PLATFORMS {
-            if p.is_macos() {
-                assert!(
-                    !sherpa.offered_on(*p, true) && !sherpa.offered_on(*p, false),
-                    "sherpa must not be offered on {p:?}"
-                );
-            } else {
-                assert!(sherpa.offered_on(*p, true) && sherpa.offered_on(*p, false));
+        for id in ["sherpa-parakeet-ultra-int8", "sherpa-parakeet-v3-int8"] {
+            let sherpa = find(id).unwrap();
+            for p in PLATFORMS {
+                if p.is_macos() {
+                    assert!(
+                        !sherpa.offered_on(*p, true) && !sherpa.offered_on(*p, false),
+                        "sherpa {id} must not be offered on {p:?}"
+                    );
+                } else {
+                    assert!(
+                        sherpa.offered_on(*p, true) && sherpa.offered_on(*p, false),
+                        "sherpa {id} must stay offered on {p:?}"
+                    );
+                }
             }
         }
     }
@@ -2027,7 +2085,7 @@ mod tests {
             // rather than selecting a model the binary cannot load.
             assert_eq!(
                 pick_engine(None, Platform::Windows, Some(lang)),
-                "sherpa-parakeet-v3-int8",
+                "sherpa-parakeet-ultra-int8",
                 "Windows/{lang}"
             );
         }
@@ -2059,11 +2117,11 @@ mod tests {
         // selection continues instead of selecting a dead engine.
         assert_eq!(
             pick_engine(Some("parakeet-tdt-v3"), Platform::Windows, Some("ja")),
-            "sherpa-parakeet-v3-int8"
+            "sherpa-parakeet-ultra-int8"
         );
         assert_eq!(
             pick_engine(Some("large-v3-turbo"), Platform::Windows, Some("en")),
-            "sherpa-parakeet-v3-int8"
+            "sherpa-parakeet-ultra-int8"
         );
         // Unknown ids are ignored (they cannot be loaded), so automatic
         // selection continues.
@@ -2171,6 +2229,7 @@ mod tests {
         // not surfaced to Mac users: every native macOS engine beats it and
         // the "Default on Windows" models confused onboarding. They remain
         // offered on Windows/Linux, where sherpa IS the default engine.
+        let ultra = find("sherpa-parakeet-ultra-int8").unwrap();
         let v3 = find("sherpa-parakeet-v3-int8").unwrap();
         let v2 = find("sherpa-parakeet-v2-int8").unwrap();
         for p in [
@@ -2180,13 +2239,13 @@ mod tests {
         ] {
             assert!(v3.available_on(p), "sherpa still loads on {p:?}");
             assert!(
-                !v3.offered_on(p, true) && !v2.offered_on(p, true),
+                !ultra.offered_on(p, true) && !v3.offered_on(p, true) && !v2.offered_on(p, true),
                 "sherpa must not be offered on {p:?}"
             );
         }
         for p in [Platform::Windows, Platform::Other] {
             assert!(
-                v3.offered_on(p, true) && v2.offered_on(p, true),
+                ultra.offered_on(p, true) && v3.offered_on(p, true) && v2.offered_on(p, true),
                 "sherpa must stay offered on {p:?}"
             );
         }
@@ -2236,6 +2295,7 @@ mod tests {
             ] {
                 assert!(!find(id).unwrap().available_on(p), "{id} on {p:?}");
             }
+            assert!(find("sherpa-parakeet-ultra-int8").unwrap().available_on(p));
             assert!(find("sherpa-parakeet-v3-int8").unwrap().available_on(p));
             assert!(find("sherpa-parakeet-v2-int8").unwrap().available_on(p));
         }
@@ -2367,9 +2427,9 @@ mod tests {
             for lang in ["en", "en-US", "de", "pl", "ar", "ja-JP", "uk", "auto"] {
                 let candidate: &str = match p {
                     Platform::MacosAppleSilicon { major } if major >= 14 => "parakeet-ultra-coreml",
-                    Platform::Windows => "sherpa-parakeet-v3-int8",
+                    Platform::Windows => "sherpa-parakeet-ultra-int8",
                     Platform::MacosAppleSilicon { .. } | Platform::MacosIntel => "parakeet-tdt-v3",
-                    Platform::Other => "sherpa-parakeet-v3-int8",
+                    Platform::Other => "sherpa-parakeet-ultra-int8",
                 };
                 // `entry_supports` is the single list predicate the Settings
                 // engine picker uses to decide whether a model's language
@@ -2452,6 +2512,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn host_platform_matches_the_build_target() {
         let p = host_platform();
         if cfg!(target_os = "macos") {
@@ -2484,7 +2545,7 @@ mod tests {
         );
         assert_eq!(
             pick_engine(None, Platform::Windows, Some("en")),
-            "sherpa-parakeet-v3-int8"
+            "sherpa-parakeet-ultra-int8"
         );
     }
 
@@ -2593,15 +2654,19 @@ mod tests {
             ["large-v3-turbo-q5"]
         );
 
-        // Windows: the coverage build first, the English-only build second, and
-        // no macOS engine at all.
+        // Windows: the Ultra default first, the v3 fallback second, the
+        // English-only build third, and no macOS engine at all.
         assert_eq!(
             shortlist_ids(Platform::Windows, Some("en"), true),
-            ["sherpa-parakeet-v3-int8", "sherpa-parakeet-v2-int8"]
+            [
+                "sherpa-parakeet-ultra-int8",
+                "sherpa-parakeet-v3-int8",
+                "sherpa-parakeet-v2-int8"
+            ]
         );
         assert_eq!(
             shortlist_ids(Platform::Windows, Some("ar"), true),
-            ["sherpa-parakeet-v3-int8"]
+            ["sherpa-parakeet-ultra-int8"]
         );
     }
 

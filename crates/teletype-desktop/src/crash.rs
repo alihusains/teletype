@@ -175,7 +175,7 @@ fn prune(dir: &Path) {
     if reports.len() <= MAX_REPORTS {
         return;
     }
-    reports.sort_by(|a, b| a.0.cmp(&b.0));
+    reports.sort_by_key(|a| a.0);
     for (_, path) in reports.iter().take(reports.len() - MAX_REPORTS) {
         let _ = std::fs::remove_file(path);
     }

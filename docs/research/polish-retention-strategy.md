@@ -6,6 +6,8 @@ Date: 2026-11-19
 Scope: product strategy, prompt/pipeline design, settings, interface, learning loop, measurement
 Method: repository audit of the current Polish implementation + public competitor teardown + synthesis of public user feedback. **No primary user interviews were run for this document**; §10 is the plan to run them.
 
+> **Re-checked against `main @ e1fd01f` (2026-11-19).** Several items the first draft implied were missing are already partly shipped: the P6.3 protected-terms/hallucination guard (`crates/teletype-core/src/transforms/guard.rs`) is wired into the polish path; the severity-graded polish behavior gate (`evals/polish-adversarial/`, `scripts/eval/polish_behavior_gate.py`) runs in CI; Transforms and Styles scope their controls by model capability; and the pill surfaces skip/fallback reasons. Those are credited as shipped below; G9 records two defects found in the guard during this re-check. The items marked **open** are what the re-check still finds missing.
+
 ---
 
 ## 0. TL;DR
@@ -23,9 +25,9 @@ That is the opening. Teletype cannot beat Wispr by rewriting more aggressively. 
 
 **Five highest-leverage moves (in order):**
 
-1. **Diff card v2** — revert to raw, undo a single change, thumbs, "never change this," and "why." Today the card reports what happened but offers no recovery or feedback (`ui/src/pill.tsx`, `PolishDiffCard`).
-2. **Polish Profiles** — four named contracts (Clean / Natural / Structured / Transform) with per-app defaults. Collapse the current sprawl of knobs and four overlapping customization systems into one mental model.
-3. **A deterministic trust layer** — backtrack/self-correction resolution and protected spans (names, numbers, URLs, code, quotes) before the model, plus a verifier after it. "Polish cannot touch what must not change."
+1. **Diff card v2** — revert to raw, undo a single change, thumbs, "never change this," and "why." Today the card reports what happened but offers no recovery action or feedback (`ui/src/pill.tsx`, `PolishDiffCard`).
+2. **Polish Profiles** — four named contracts (Clean / Natural / Structured / Transform) with per-app defaults. Collapse the current sprawl of knobs and four overlapping customization layers into one mental model.
+3. **A deterministic trust layer** — backtrack/self-correction resolution and protected spans (names, numbers, URLs, code, quotes) before the model, plus a verifier after it. The shipped post-model guard is a start, but its removal and case-mismatch defects (G9) must be fixed before claiming "Polish cannot touch what must not change."
 4. **Close the learning loop** — the 30-minute kept/undone signal already exists (`ui/src/screens/InsightsScreen.tsx`); today it feeds terminology promotion but never Polish behavior. Use it to adapt per-app profiles and visibly teach the product.
 5. **Calibrate on day zero and prove value weekly** — a 60-second onboarding calibration on the user's own three sentences, and a weekly local "Polish report" with zero-edit rate.
 
@@ -131,12 +133,13 @@ The current implementation is more sophisticated than the UI lets on.
 | **Deterministic gate** | Skips polish for short/clean takes, with reasons: filler, self-correction, list cue, email context, low confidence, script needs LLM | `crates/teletype-core/src/transforms/gate.rs` |
 | **Model-specific prompts** | S1-mini control line; Qwen 2B editor; Qwen 0.8B lean editor; SpeakoFlow fixed card; generic prompt path | `crates/teletype-core/src/transforms/prompt.rs` |
 | **Fidelity guard** | Empty, prompt echo, instruction echo, preamble, markdown fence, massive expansion, truncation, language drift, off-topic, **too-much-change** (default 40%) | `crates/teletype-core/src/transforms/validator.rs` (`DEFAULT_MAX_CHANGE_PERCENT = 40`) |
-| **Self-repair handling** | Spoken self-repair splicing exists in the filler corpus | `crates/teletype-core/src/fillers/corpus.rs`, `tiers.rs` |
-| **Protected spans** | AutoText placeholders survive transforms; screen terms can snap names | `crates/teletype-core/src/autotext/protect.rs`, `pipeline.rs` |
-| **Personalization** | User profile, preferred terms, per-app style resolution, learned preferences | `crates/teletype-core/src/personalization/`, `style.rs` |
-| **Post-insert proof** | Diff card with change count and polish latency; History entry stores raw text, model, ms | `ui/src/pill.tsx`, `crates/teletype-core/src/history.rs` |
-| **Settle signal** | "Corrections you kept" vs "undone" 30 minutes after insertion | `ui/src/screens/InsightsScreen.tsx`, learning store |
-| **Local eval harness** | Replay/measure modes, polish score, WER, latency | `crates/teletype-eval/`, `evals/report.md` |
+| **Self-repair handling** | The gate detects self-correction cues; the filler corpus splices spoken repairs. There is no deterministic backtrack resolver before the model. | `crates/teletype-core/src/transforms/gate.rs`, `crates/teletype-core/src/fillers/corpus.rs`, `tiers.rs` |
+| **Protected spans (post-model)** | P6.3 guard restores **changed** lexicon terms, numbers, URLs, emails, and code identifiers, but its case-sensitive word diff has two verified defects: a **removed** token is counted and not reinserted, and a case-only change can be mistaken for a substitution and displace the wrong word. Only >3 changed/removed tokens (or a hallucinated phrase) rejects the output. AutoText placeholders protect before the model; rescoring never replaces protected spans. | `crates/teletype-core/src/transforms/guard.rs`, `pipeline.rs:610`, `autotext/protect.rs`, `rescoring.rs` |
+| **Personalization** | User profile, preferred terms, per-app style resolution, learned preferences — but the two shipped default models are cleanup-only and ignore the style layer. | `crates/teletype-core/src/personalization/`, `style.rs` |
+| **Post-insert proof** | Diff card with change count and polish latency; History shows raw vs polished, model, ms. No one-click revert or per-span undo. | `ui/src/pill.tsx` (`PolishDiffCard`), `ui/src/components/dictation/`, `crates/teletype-core/src/history.rs` |
+| **Settle signal** | "Corrections you kept" vs "undone" 30 minutes after insertion; displayed, and flags candidates for auto-apply, but no stage applies polish changes. | `ui/src/screens/InsightsScreen.tsx`, `learning/settle.rs` |
+| **Local eval harness** | Replay/measure modes, weighted content-loss/hallucination rubric, WER, latency. The headline corpus is synthesised. | `crates/teletype-eval/`, `evals/report.md` |
+| **Polish behavior gate** | 17 severity-graded adversarial cases (numbers, entities, fabrication, filler, tone, technical terms, AutoText) plus a satisfiability linter and a correct-output proof; the live judge runs when CI secrets are configured, and the model-free checks always run. | `scripts/eval/polish_behavior_gate.py`, `evals/polish-adversarial/`, `.github/workflows/ci.yml` |
 | **No telemetry** | Everything local | repo-wide |
 
 The existing "Beat Wispr Flow" plan (Phase 6) already scopes much of the right architecture: a richer gate, protected terms, context capture, latency targets, and a self-improving loop. Several pieces are shipped or in progress. The gap this document addresses is not the architecture — it is the **product layer, the trust contract, and the measurement** that turn those pieces into retention.
@@ -145,26 +148,30 @@ The existing "Beat Wispr Flow" plan (Phase 6) already scopes much of the right a
 
 #### G1. There is no zero-edit metric
 
-`evals/report.md` has a "mean polish score" (91.2) over **synthesised audio**, and the harness has no human "would I send this?" label. The production product has no measure of how often polish actually removes the need to edit. The closest signal is "edits per 100 words" and "corrections kept," both buried in Insights.
+`evals/report.md` has a "mean polish score" (91.2) over **synthesised audio**, and the harness has no human "would I send this?" label. The production product has no measure of how often polish actually removes the need to edit. The closest signals are "edits per 100 words" and "corrections kept," both in Insights below the headline impact cards.
 
 **Consequence:** prompt/model decisions are made on vibes and a synthetic score, not on the outcome that drives retention.
 
 #### G2. The learning loop is open
 
-The UI already says: *"Changes AI Polish made that were still in the text 30 minutes later... Nothing is applied automatically from this yet."* (`InsightsScreen.tsx`, QualityCard). The tally feeds terminology promotion in the learning store, but it does **not** feed back into Polish behavior — the prompt, profile, edit budget, or per-app choice. A kept/undone signal, per app, is exactly the training signal a polish system needs, and that part is discarded.
+The UI already says: *"Changes AI Polish made that were still in the text 30 minutes later... Nothing is applied automatically from this yet."* (`InsightsScreen.tsx`, QualityCard). That is accurate: the tally is displayed and can flag a candidate for auto-apply, but the store itself documents that nothing rewrites text from it yet. It does **not** feed back into Polish behavior — the prompt, profile, edit budget, or per-app choice. A kept/undone signal, per app, is exactly the training signal a polish system needs, and that part is discarded.
 
-The edit-watch learning loop is dictionary/terminology-centric, fires on the *next* dictation, and needs three consistent observations. It does not learn style, edit budget, protected spans, or per-app preference.
+The edit-watch learning loop is dictionary/terminology-centric, fires on the *next* dictation, and promotes only after three keeps with no undos (`settle.rs`, `AUTO_APPLY_AFTER = 3`). It does not learn style, edit budget, protected spans, or per-app preference.
 
-#### G3. Four overlapping customization systems
+#### G3. Four overlapping customization layers, gated by an invisible capability matrix
 
-A user who wants better polish meets:
+A user who wants better polish meets a capability matrix, not one system:
 
-1. **Model choice** — SpeakoFlow Mini, S1-mini, Qwen 2B/0.8B, plus generic models.
-2. **Tone / Structure / Context** — a control line honored only by S1-mini and Qwen.
-3. **Style presets** — Concise / Professional / etc., honored only by some models.
-4. **Polish rules + custom instructions + prompt override** — a Wispr-style instruction list, but **only the generic prompt path reads the rules and instructions**. The Qwen models honor the separate `polishPromptOverride` addendum; the card models (SpeakoFlow Mini, S1-mini) ignore all three. Nothing in the UI makes that distinction obvious at the point of editing.
+| Model | Style channel | Tone / Structure / Context | Style phrases | Rules + instructions | Prompt override | Other presets |
+|---|---|---|---|---|---|---|
+| **SpeakoFlow Mini** (code default) | `FixedBehaviour` | no | no | no | no | no (`cleanup_only`) |
+| **S1-mini** (onboarding lead) | `ControlLine` | yes | no | no | no | no (`cleanup_only`) |
+| **Qwen 2B / 0.8B** | `ControlLine` | yes | no | no | yes | yes |
+| **Generic / remote** | `StylePhrases` | no | yes | yes | yes | yes |
 
-The default model, **SpeakoFlow Mini**, is `FixedBehaviour` and `cleanup_only` (`crates/teletype-core/src/style.rs`). It ignores style phrases, tone/structure/context, polish rules, and custom instructions. The Transforms screen has a capability notice, but the overall UI still lets users spend time tuning controls that will never reach the model.
+Source: `crates/teletype-core/src/style.rs` (`model_style`), `TransformsScreen.tsx` (`polishCustomizationFor`).
+
+At HEAD, the Transforms screen scopes the rules, prompt, and custom-instruction controls by this matrix and blocks non-Polish presets on cleanup-only models; Styles disables the phrase list and explains why. That closes most of the "dead controls" trap. The remaining gap is **expectation**: both shipped first-run models (SpeakoFlow Mini as the code default, S1-mini as the onboarding lead) are cleanup-only, yet the AI Polish settings section and onboarding never say that the model cannot structure an email or tighten a rambling thought. A user can reasonably expect a capability the model does not have.
 
 That is not a power-user feature. It is a trust trap: *"I set it up and nothing changed."*
 
@@ -178,7 +185,7 @@ That is not a power-user feature. It is a trust trap: *"I set it up and nothing 
 - "this was good,"
 - "never change this word/name."
 
-The user's only recovery is ⌘Z or manual editing — and they are not told that.
+The raw words are not lost: History stores `raw_text` and renders the removed words struck through, and the card's hover title shows before/after. But the user's only *action* is ⌘Z or manual editing — and the card does not tell them that.
 
 #### G5. The knobs speak engineer, not user
 
@@ -194,7 +201,7 @@ These are internally meaningful, but they ask the user to reason about word coun
 
 #### G6. Defaults optimize for safety, not for the magic moment
 
-- Default model: SpeakoFlow Mini — a **cleanup** model. It will fix fillers, punctuation, and self-corrections, but it will not structure an email or tighten a rambling thought.
+- Code default: SpeakoFlow Mini; onboarding lead: S1-mini. Both are **cleanup** models. They fix fillers, punctuation, and many self-corrections, but do not structure an email or tighten a rambling thought.
 - Default `auto_apply_transform = true`, gate on, threshold 12 words, max change 40%, `polish_whole_text_at_end = false`.
 
 For a first-time user dictating a rambling email, the result may be "clean but shapeless." That is a correct, safe behavior — and a weak first impression against Wispr's structured output.
@@ -203,18 +210,33 @@ For a first-time user dictating a rambling email, the result may be "clean but s
 
 The gate helps short takes, but a long take still waits for a local LLM (0.5–3 s). There is no "instant text, then refine" path. Wispr's p99 target is sub-700 ms. On a CPU-only Mac with the 0.8B, Teletype's polish can feel like a pause.
 
-#### G8. Evals do not cover the trust failures users complain about
+#### G8. Evals are stronger than the report suggests, but still miss voice, repetition, and format
 
-The eval corpus has tags for filler, list, names, numbers, question, long, awkward, plain, multi. It does **not** systematically measure:
+This is not a greenfield gap. The harness already has:
 
-- Did polish invent a fact/name/number?
-- Did it remove intentional repetition or emphasis?
-- Did it change the user's voice (contractions, sentence length)?
-- Did it change meaning in a self-correction?
-- Did it add a greeting/sign-off that was not dictated?
-- Did it obey the per-app format contract?
+- **Weighted correctness checks** — `no_content_loss` (50) and `no_hallucination` (40) dominate the score (`crates/teletype-eval/src/polish.rs`).
+- **A severity-graded adversarial corpus** — 17 behavior cases covering number preservation, entity preservation, no-fabrication, filler handling, tone/formality, technical terms, and AutoText placeholders (`evals/polish-adversarial/behavior-cases.jsonl`).
+- **A real CI gate** — `polish-quality-gate` runs the corpus load check and the satisfiability/correct-output self-test on every push; the live model judge runs when the repo secrets are configured (`scripts/eval/polish_behavior_gate.py`, `.github/workflows/ci.yml`).
+- **A CI failure on over-polishing** — the self-test runs the corpus against committed correct outputs (must pass) and an over-polished derivative (must fail).
 
-The "Polish Failed Checks" table shows `no_content_loss: 3` and `bullets_when_listing: 1` — real signals, but too thin to steer a roadmap.
+What is still missing from the gate:
+
+- Intentional **repetition/emphasis** preservation.
+- **Voice drift** (contractions, sentence length, formality) as a scored signal.
+- **Greeting/sign-off invention** and **per-app format contracts** (email vs Slack vs code).
+- **Self-correction resolution** as its own behavior class, beyond "filler handling."
+- The headline **91.2 mean polish score** is still from synthesised audio (`evals/report.md`); it validates plumbing, not sendability.
+
+The remaining work is therefore to *extend* the gate, not invent one.
+
+#### G9. The guard restores substitutions, not removals
+
+`guard.rs` has two related defects, both verified with a temporary test:
+
+1. **Removal is not restored.** A removed protected token is counted as a change but not reinserted; only more than three changed/removed tokens reject the output. Input `please ask Siobhan to review the plan` → `please ask to review the plan.` is accepted without `Siobhan`.
+2. **The word diff is case-sensitive, so a case-only change can be mistaken for a substitution.** Input `ask Siobhan to review the plan` → `Ask to review the plan.` makes the unmatched `Ask` look like the replacement for the removed `Siobhan`; the guard returns `Siobhan to review the plan.`, dropping the verb.
+
+The module comment says changed or removed tokens are "restored in place," so the code and its documentation disagree. The fix is small and testable: normalize case (or use a case-insensitive LCS), reinsert or reject when a protected token is deleted, and add golden cases for one removed name and one removed number. Until then, do not claim that Polish "cannot touch names or numbers"; it can drop or displace them.
 
 ---
 
@@ -380,7 +402,7 @@ This pass should be evaluated on a dedicated corpus of 50+ real self-corrections
 
 #### B. Protected spans
 
-Before the model sees the text, replace must-not-change spans with placeholders:
+**Shipped at HEAD (post-model):** `transforms/guard.rs` collects protected spans after the model and restores **changed** lexicon terms, numbers, URLs, emails, and code identifiers; more than three changed/removed tokens or a hallucinated phrase rejects the whole output. **Known holes:** a removed protected token is counted but not reinserted, so one dropped name or number can still pass; and the case-sensitive LCS can mistake a sentence-initial capitalization for a substitution, displacing a protected token over the wrong word (G9). **Proposed extension:** normalize case, restore or reject on removal, protect before the model with placeholders, and widen coverage. Today the guard does not cover quoted speech, file paths (unless they look like code), or word-form dates/times ("nine fifteen").
 
 - names from the dictionary, Contacts, and screen terms
 - numbers, currency, dates, times, percentages
@@ -465,7 +487,7 @@ For the 0.8B, do **not** add these as another rule wall. Put the first four in t
 
 ### 6.4 The verifier
 
-A polish output should not be trusted just because it is fluent. Run these checks before insertion:
+A polish output should not be trusted just because it is fluent. **Already shipped:** the validator rejects empty/echoed/preambled/markdown/truncated/language-drifted/off-topic/over-budget output, and the P6.3 guard restores protected spans or rejects on hallucination. **Proposed:** the full table below, including format contracts and backtrack consistency.
 
 | Check | Rule | On failure |
 |---|---|---|
@@ -557,7 +579,7 @@ Then, below the fold:
 
 | Today | Becomes | Notes |
 |---|---|---|
-| `polishGateEnabled` + `polishGateThresholdWords` + `polishSkipWhenClean` | **When to polish** (Always / When it helps / Never) | Threshold moves to Advanced. |
+| `polishGateEnabled` + `polishGateThresholdWords` | **When to polish** (Always / When it helps / Never) | Threshold moves to Advanced; the pipeline's internal `polish_skip_when_clean` is not a separate user control. |
 | `polishMaxChangePercent` | **Editing freedom** (Light / Balanced / Bold) in Advanced | 15 / 30 / 45; raw % still available. |
 | `polishWholeTextAtEnd` | Profile default | Structured: on; Natural: per-segment for chat, whole for long; Clean: on. |
 | `autoApplyTransform` | **Apply automatically** | Default on for Clean/Natural; preview for Transform. |
@@ -796,8 +818,9 @@ These are hypotheses to validate, not settled facts.
 | # | Change | Why | Effort |
 |---|---|---|---|
 | 1 | **Diff card v2**: revert, per-span undo, thumbs, "never change this," "why" | Converts polish from opaque to controllable; collects the learning signal | M |
+| 1a | **Fix the guard word diff**: case-insensitive matching; reinsert or reject when a protected token is deleted, not just substituted; golden cases for one removed name/number and sentence-initial capitalization | A dropped name passes, and a case-only change can displace the wrong word (G9) | S |
 | 2 | **Profiles + per-app defaults**, map existing budgets | Gives users a predictable contract; fixes the "one global personality" problem | M |
-| 3 | **Settings consolidation**; hide inert controls with a capability note | Removes the "I customized it and nothing happened" trap | S |
+| 3 | **Extend the shipped capability gating** to AI Polish settings + onboarding; state the loaded model's contract (Cleanup vs Clean/Natural/Structured) | Transforms/Styles already scope controls; the first-run surfaces still don't say what the default cleanup model cannot do | S |
 | 4 | **Zero-edit metric** from existing 30-min settle + final text; add to Insights | Makes quality visible and steerable | S |
 | 5 | **Fix the default-model story**: auto engine, default Natural/Structured by app; do not ship a cleanup-only model as the only first impression | Closes the "clean but shapeless" first-run gap | S |
 
@@ -806,8 +829,9 @@ These are hypotheses to validate, not settled facts.
 | # | Start here | Done means |
 |---|---|---|
 | 1 | `ui/src/pill.tsx` (`PolishDiffCard`), `ui/src/pillMachine.ts`, `crates/teletype-core/src/history.rs` | Revert restores the raw text for that insertion; per-span undo works; a thumb or "never change this" persists as `accepted/rejected`; the card renders without blocking the first keystroke. |
+| 1a | `crates/teletype-core/src/transforms/guard.rs`, `pipeline.rs` | A single removed name, number, URL, or code identifier is reinserted or rejects the output; golden tests cover one removal of each category. |
 | 2 | `ui/src/settings/DictationPolishSections.tsx`, `crates/teletype-desktop/src/commands.rs`, `crates/teletype-core/src/style.rs`, `transforms/engine.rs` | A user can pick Clean/Natural/Structured/Transform and a per-app default; the resulting prompt and edit budget are visible in one line; a Settings test shows the active contract. |
-| 3 | `ui/src/settings/DictationPolishSections.tsx`, `ui/src/screens/TransformsScreen.tsx`, `ui/src/screens/StylesScreen.tsx` | No control is shown that the active model ignores; each disabled control says why and links to the model that honors it; the four surfaces share one vocabulary. |
+| 3 | `ui/src/settings/DictationPolishSections.tsx`, `ui/src/screens/OnboardingScreen.tsx`, `ui/src/screens/TransformsScreen.tsx` | The AI Polish section and onboarding say whether the loaded model is Cleanup-only or can do Structured; no control is shown that the active model ignores; the surfaces share one vocabulary. |
 | 4 | `crates/teletype-core/src/insights.rs` (kept/undone), `crates/teletype-core/src/history.rs` (`raw_text`, final text), `ui/src/screens/InsightsScreen.tsx` | Insights shows "zero-edit rate this week", split by app, from local data; the number moves when the user reverts a polish; it can be exported/deleted. |
 | 5 | `crates/teletype-desktop/src/commands.rs` defaults, `ui/src/screens/OnboardingScreen.tsx` | First-run dictation in Slack/email gets the profile and budget the user would choose; the default is no longer a cleanup-only model with no path to structure. |
 
@@ -815,13 +839,13 @@ These are hypotheses to validate, not settled facts.
 
 | # | Change | Why | Effort |
 |---|---|---|---|
-| 6 | **Deterministic backtrack resolver + protected spans + verifier** | Directly addresses the category's top trust failures; makes "never change names/numbers/code" real | L |
+| 6 | **Deterministic backtrack resolver + extend the shipped guard/verifier** (pre-model placeholders; quotes, paths, word-form dates) | Directly addresses the category's top trust failures; the post-model guard already protects names/numbers/code, so this closes the remaining categories and catches retractions before the model | L |
 | 7 | **Onboarding calibration** on the user's own three sentences | The first magic moment; sets per-app defaults; builds trust | M |
-| 8 | **Learning loop v1**: per-app bandit, preference mining, "what Polish learned" | Turns usage into compounding retention | L |
+| 8 | **Learning loop v1**: connect the existing settle/auto-apply plumbing to per-app profile choice; preference mining; "what Polish learned" | The signal and candidate flags exist; nothing feeds Polish behavior yet | L |
 | 9 | **Instant insert + refine** | Removes perceived latency; differentiates vs cloud | L |
-| 10 | **Golden set + per-profile prompts + regression gate** | Makes prompt/model improvements safe and measurable | L |
+| 10 | **Extend the shipped adversarial gate** with a human golden set, per-profile prompts, and a zero-edit regression gate | The 17-case behavior gate and CI job exist; they need human sendability labels and profile coverage | L |
 | 11 | **History re-polish / compare profiles** | Recovery + experimentation surface | S |
-| 12 | **Per-app format contracts** (email, chat, code, docs) | Closes the fit gap | M |
+| 12 | **Per-app format contracts** (email, chat, code, docs) | Per-app style overrides exist; explicit format contracts do not | M |
 
 ### P2 — Depth and reach (6–12 weeks)
 
@@ -875,14 +899,16 @@ These are hypotheses to validate, not settled facts.
 **Do this:**
 
 1. Give the user a **contract**: Clean / Natural / Structured / Transform, per app.
-2. **Protect** names, numbers, URLs, code, and quotes deterministically.
+2. **Extend the shipped guard**: protect names, numbers, URLs, code, quotes, and dates deterministically, before and after the model.
 3. **Resolve backtracks** deterministically before the model.
-4. **Verify** every output; fall back to what the user said when in doubt.
+4. **Extend the shipped verifier**; fall back to what the user said when in doubt.
 5. **Show the diff** and let the user revert, undo one change, or say "never change this."
 6. **Learn** from kept/undone and corrections, per app, visibly.
 7. **Prove value** weekly with zero-edit rate and time saved.
 8. **Insert instantly**, refine in the background.
 9. **Calibrate on day zero** with the user's own three sentences.
+
+**Already shipped at HEAD:** the post-model protected-span + hallucination guard (changed tokens only — removals and case-sensitive mis-substitution are open), the weighted content-loss/hallucination rubric, the 17-case CI behavior gate, capability-scoped Transforms/Styles controls, and skip/fallback reasons in the pill. **Still open:** zero-edit measurement, diff-card recovery, the guard's word diff, profiles/per-app contracts, backtrack resolution, the polish learning loop, and first-run calibration.
 
 **Measure:** zero-edit rate, fact fidelity, over-edit rate, time to first usable text, D7/D30.
 
@@ -897,10 +923,14 @@ Repository evidence (verified 2026-11-19):
 - `crates/teletype-core/src/transforms/gate.rs` — deterministic gate, reasons, email/list/self-correction cues, 12-word default.
 - `crates/teletype-core/src/transforms/prompt.rs` — model-specific prompts, control line, prompt-info/editability, override placement.
 - `crates/teletype-core/src/transforms/validator.rs` — fidelity failures, `DEFAULT_MAX_CHANGE_PERCENT = 40`.
+- `crates/teletype-core/src/transforms/guard.rs` — P6.3 protected-span restore/reject, >3-change ceiling, hallucination guard; wired at `pipeline.rs:610`.
 - `crates/teletype-core/src/transforms/engine.rs` — routing: card-cleanup models ignore the transform instruction; Qwen control-line paths; chunking.
-- `crates/teletype-core/src/style.rs` — `StyleChannel`, `cleanup_only`, `polishes_from_card`; SpeakoFlow is fixed behaviour; S1 is cleanup-only.
+- `crates/teletype-core/src/style.rs` — `StyleChannel`, `cleanup_only`, `polishes_from_card`; SpeakoFlow is fixed behaviour; S1 is control-line but cleanup-only.
 - `crates/teletype-core/src/autotext/protect.rs` — placeholder protection/restore pattern.
+- `crates/teletype-core/src/rescoring.rs` — dictionary rescoring never replaces protected spans.
 - `crates/teletype-core/src/fillers/corpus.rs`, `tiers.rs` — existing self-repair splicing.
+- `scripts/eval/polish_behavior_gate.py`, `evals/polish-adversarial/`, `.github/workflows/ci.yml` (`polish-quality-gate`) — severity-graded behavior gate and its CI wiring.
+- `ui/src/screens/TransformsScreen.tsx` (`polishCustomizationFor`), `ui/src/screens/StylesScreen.tsx` — model-capability scoping.
 - `crates/teletype-desktop/src/commands.rs` — defaults: SpeakoFlow Mini, auto-apply on, gate 12 words, 40% max change, whole-text-at-end off.
 - `ui/src/settings/DictationPolishSections.tsx` — current AI Polish settings UI.
 - `ui/src/pill.tsx` (`PolishDiffCard`) — post-insert card; no revert/feedback.

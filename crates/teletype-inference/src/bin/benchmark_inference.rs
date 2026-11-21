@@ -158,7 +158,7 @@ fn main() {
     println!("\n=== Testing llama.cpp ===");
     let s1_path = models_dir.join("s1-mini.gguf");
     if s1_path.exists() {
-        println!("Found S1-mini at {:?}", &s1_path);
+        println!("Found S1-mini at {:?}", s1_path);
         let provider = ServerProvider::new("s1-mini", "S1-mini", &s1_path);
         match provider.warm_up() {
             Ok(_) => {
@@ -179,7 +179,7 @@ fn main() {
         .join("eg-1")
         .join("eg1-1.2-c003-00001-of-00008.gguf");
     if eg1_path.exists() {
-        println!("\nFound EG-1 at {:?}", &eg1_path);
+        println!("\nFound EG-1 at {:?}", eg1_path);
         let provider = ServerProvider::new("eg-1", "EG-1", &eg1_path);
         match provider.warm_up() {
             Ok(_) => {

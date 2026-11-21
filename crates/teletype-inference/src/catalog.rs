@@ -277,6 +277,18 @@ pub fn host_gpu_accelerated() -> bool {
     )
 }
 
+pub fn default_llm_model_id(gpu_accelerated: bool) -> &'static str {
+    if gpu_accelerated {
+        "qwen3.5-2b"
+    } else {
+        "speakoflow-mini"
+    }
+}
+
+pub fn host_default_llm_model_id() -> &'static str {
+    default_llm_model_id(host_gpu_accelerated())
+}
+
 /// How many polish rows a first-run surface may show.
 pub const POLISH_SHORTLIST_MAX: usize = 3;
 
@@ -285,9 +297,10 @@ pub const POLISH_SHORTLIST_MAX: usize = 3;
 ///
 /// Written as two literal lists rather than derived by ranking the catalog, so
 /// a change to `sort_order` or a new row cannot silently re-recommend a model
-/// nobody looked at. Both lists start at s1-mini, which is the shipped default
-/// and the smallest recommended row, so the first card a user ever sees is a
-/// model already known to behave.
+/// nobody looked at. Accelerated hosts start at Qwen3.5 2B: paired with
+/// Parakeet Ultra it is the "wow" default and can honor every Polish profile.
+/// CPU-only hosts still start at S1-mini, the smallest measured cleanup model
+/// they can actually run quickly.
 ///
 /// A CPU-only host gets three rows: the two measured cleanup models plus the
 /// Qwen3.5 0.8B, the smallest all-rounder that runs the Polish control-line
@@ -299,7 +312,7 @@ pub const POLISH_SHORTLIST_MAX: usize = 3;
 /// flipped.
 pub fn polish_shortlist_ids(gpu_accelerated: bool) -> Vec<&'static str> {
     const CPU: &[&str] = &["s1-mini", "speakoflow-mini", "qwen3.5-0.8b"];
-    const ACCELERATED: &[&str] = &["s1-mini", "qwen3.5-2b"];
+    const ACCELERATED: &[&str] = &["qwen3.5-2b", "s1-mini"];
 
     let ids = if gpu_accelerated { ACCELERATED } else { CPU };
     ids.iter()
@@ -315,13 +328,13 @@ pub const CATALOG: &[CatalogEntry] = &[
         id: "s1-mini",
         name: "S1-mini",
         size_label: "0.6B",
-        url: "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf",
+        url: "https://github.com/alihusains/teletype-models/releases/download/models-v1/s1-mini-q4_k_m.gguf",
         size_mb: 462,
         description:
             "Small open cleanup model, happiest in English. Pairs with Tone / Structure styles.",
         specialty: Specialty::CLEANUP,
         sha256: Some("3b41ebe2502cbd03e811d5d16b022f5ab551eda58d62597d152f89535003c634"),
-        backup_url: None,
+        backup_url: Some("https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf"),
         attribution: Some("S1-mini by Superwhisper"),
         license_name: Some("Apache-2.0"),
         license_url: Some(
@@ -340,30 +353,30 @@ pub const CATALOG: &[CatalogEntry] = &[
         id: "qwen3.5-2b",
         name: "Qwen3.5 2B",
         size_label: "2B",
-        url: "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-IQ4_XS.gguf",
+        url: "https://github.com/alihusains/teletype-models/releases/download/models-v1/Qwen3.5-2B-IQ4_XS.gguf",
         size_mb: 1173,
         description:
             "The all-rounder: cleans up, tightens, rewords and structures dictation, honors the Polish settings, and runs Prompt Engineer.",
         specialty: Specialty::ALL_ROUND,
         sha256: Some("3639f34b5ca22aa1c51f3616566eae8c355111554f6924ad97ee2652ed11c1cd"),
-        backup_url: None,
+        backup_url: Some("https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-IQ4_XS.gguf"),
         attribution: Some("Qwen3.5 by Alibaba (Apache-2.0)"),
         license_name: Some("Apache-2.0"),
         license_url: Some("https://huggingface.co/Qwen/Qwen3.5-2B/blob/main/LICENSE"),
         requires_license_accept: false,
-        recommended: false,
+        recommended: true,
         polish_capable: true,
         verdict: ModelVerdict::Recommended,
-        verdict_note: "Best all-rounder: tightens, rewords and structures Polish, plus Prompt Engineer",
+        verdict_note: "Default on accelerated hosts: the wow pair with Parakeet Ultra; full Clean/Natural/Structured/Transform Polish plus Prompt Engineer",
         runs_on_cpu: false,
-        sort_order: 2,
+        sort_order: 0,
         shards: &[],
     },
     CatalogEntry {
         id: "qwen3.5-0.8b",
         name: "Qwen3.5 0.8B",
         size_label: "0.8B",
-        url: "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
+        url: "https://github.com/alihusains/teletype-models/releases/download/models-v1/Qwen3.5-0.8B-Q4_K_M.gguf",
         size_mb: 508,
         description:
             "The lightweight all-rounder: the same Polish control-line as Qwen3.5 2B in a smaller package, for CPU-only and low-RAM hosts where the 2B is too slow.",
@@ -372,7 +385,7 @@ pub const CATALOG: &[CatalogEntry] = &[
             measured: false,
         },
         sha256: Some("bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517"),
-        backup_url: None,
+        backup_url: Some("https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf"),
         attribution: Some("Qwen3.5 by Alibaba (Apache-2.0)"),
         license_name: Some("Apache-2.0"),
         license_url: Some("https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/LICENSE"),
@@ -389,13 +402,13 @@ pub const CATALOG: &[CatalogEntry] = &[
         id: "speakoflow-mini",
         name: "SpeakoFlow Mini",
         size_label: "0.8B",
-        url: "https://huggingface.co/SpeakoFlow/speakoflow-mini/resolve/main/SpeakoFlow-Mini-0.8B-Q8_0.gguf",
+        url: "https://github.com/alihusains/teletype-models/releases/download/models-v1/SpeakoFlow-Mini-0.8B-Q8_0.gguf",
         size_mb: 834,
         description:
             "Purpose-built dictation cleanup: fixes grammar, spelling, fillers and spoken symbols; leaves correct text and names/numbers untouched. A cleanup model, not a rewriter.",
         specialty: Specialty::CLEANUP,
         sha256: Some("696769bb6911f51bc231b112926e934cf7bfc760e6cdfa24212907bc5ad41fc9"),
-        backup_url: None,
+        backup_url: Some("https://huggingface.co/SpeakoFlow/speakoflow-mini/resolve/main/SpeakoFlow-Mini-0.8B-Q8_0.gguf"),
         attribution: Some("SpeakoFlow Mini by SpeakoFlow (Apache-2.0)"),
         license_name: Some("Apache-2.0"),
         license_url: Some("https://huggingface.co/SpeakoFlow/speakoflow-mini/blob/main/LICENSE"),
@@ -725,11 +738,9 @@ mod tests {
         assert_eq!(e.attribution, Some("S1-mini by Superwhisper"));
     }
 
-    /// The polish rail takes its badge and its order straight from these two
-    /// fields, so flipping either silently un-recommends S1-mini with nothing
-    /// else failing.
+    /// S1-mini keeps its badge as the measured CPU cleanup default.
     #[test]
-    fn s1_mini_is_the_recommended_head_of_the_list() {
+    fn s1_mini_is_a_recommended_cpu_model() {
         let e = find("s1-mini").unwrap();
         assert!(e.recommended, "s1-mini must carry the Recommended badge");
         assert!(
@@ -737,8 +748,27 @@ mod tests {
             "the badge must be backed by a measured verdict"
         );
         assert!(!e.verdict_note.is_empty(), "the badge explains itself");
-        let head = CATALOG.iter().min_by_key(|m| m.sort_order).unwrap();
-        assert_eq!(head.id, "s1-mini", "the recommended model leads the list");
+        assert!(e.runs_on_cpu, "the CPU fallback must run everywhere");
+    }
+
+    /// Accelerated hosts lead with the full-profile model: this is the "wow"
+    /// default paired with Parakeet Ultra.
+    #[test]
+    fn qwen35_2b_leads_the_accelerated_polish_list() {
+        let e = find("qwen3.5-2b").unwrap();
+        assert!(e.recommended, "the accelerated default must wear the badge");
+        assert!(
+            matches!(e.verdict, ModelVerdict::Recommended),
+            "the badge must be backed by a measured verdict"
+        );
+        assert_eq!(polish_shortlist_ids(true)[0], "qwen3.5-2b");
+        assert_eq!(polish_shortlist_ids(false)[0], "s1-mini");
+        let head = CATALOG
+            .iter()
+            .filter(|m| m.runs_on_host(true))
+            .min_by_key(|m| m.sort_order)
+            .unwrap();
+        assert_eq!(head.id, "qwen3.5-2b", "the accelerated card leads the list");
     }
 
     #[test]
@@ -853,17 +883,40 @@ mod tests {
 
     #[test]
     fn polish_shortlist_leads_with_a_recommended_model_and_matches_the_hosts() {
-        assert_eq!(polish_shortlist_ids(true), vec!["s1-mini", "qwen3.5-2b"]);
+        assert_eq!(polish_shortlist_ids(true), vec!["qwen3.5-2b", "s1-mini"]);
         assert_eq!(
             polish_shortlist_ids(false),
             vec!["s1-mini", "speakoflow-mini", "qwen3.5-0.8b"]
         );
-        // The head is the row every host gets first, and it wears the badge, so
-        // the card a user cannot skip is a model that was measured.
+        // The head is the row each host gets first, wears the badge, and can
+        // actually run on that host.
         for &gpu in &[true, false] {
             let head = find(polish_shortlist_ids(gpu)[0]).unwrap();
             assert!(head.recommended, "the lead row must be a recommended model");
-            assert!(head.runs_on_cpu, "the lead row must run on every host");
+            assert!(
+                head.runs_on_host(gpu),
+                "the lead row must run on this host (gpu={gpu})"
+            );
+        }
+    }
+
+    #[test]
+    fn default_llm_model_id_follows_the_host_engine_build() {
+        assert_eq!(default_llm_model_id(true), "qwen3.5-2b");
+        assert_eq!(default_llm_model_id(false), "speakoflow-mini");
+        assert_eq!(
+            host_default_llm_model_id(),
+            default_llm_model_id(host_gpu_accelerated())
+        );
+        for &gpu in &[true, false] {
+            let id = default_llm_model_id(gpu);
+            let entry = find(id).unwrap_or_else(|| panic!("{id} is not a catalog entry"));
+            assert!(entry.polish_capable, "{id} is not a polish engine");
+            assert!(entry.runs_on_host(gpu), "{id} cannot run on gpu={gpu}");
+            assert!(
+                polish_shortlist_ids(gpu).contains(&id),
+                "{id} is not shortlisted on gpu={gpu}"
+            );
         }
     }
 
@@ -907,22 +960,14 @@ mod tests {
     /// reads as if every model was scored.
     #[test]
     fn unmeasured_rows_rank_below_measured_rows() {
-        // Measured polish rows keep their relative order and lead the list.
-        let measured_ids: Vec<&str> = CATALOG
+        // Measured polish rows lead the list; the accelerated default (2B)
+        // outranks the CPU cleanup default (S1-mini) by sort order.
+        let mut measured_ranks: Vec<u32> = CATALOG
             .iter()
             .filter(|e| e.polish_capable && e.specialty.measured)
-            .map(|e| e.id)
+            .map(|e| e.sort_order)
             .collect();
-        let measured_ranks: Vec<u32> = measured_ids
-            .iter()
-            .map(|id| find(id).unwrap().sort_order)
-            .collect();
-        let mut sorted = measured_ranks.clone();
-        sorted.sort();
-        assert_eq!(
-            measured_ranks, sorted,
-            "measured rows are listed in rank order: {measured_ranks:?}"
-        );
+        measured_ranks.sort_unstable();
         let max_measured = *measured_ranks.iter().max().unwrap();
 
         // Every unmeasured polish row ranks strictly below the measured block.
@@ -973,6 +1018,51 @@ mod tests {
         );
         assert!(e.url.ends_with("Qwen3.5-2B-IQ4_XS.gguf"));
         assert!(!e.runs_on_cpu, "a 2B at 1.1 GB stays off a CPU-only host");
+    }
+
+    /// The four mirrored GGUFs download from our release first and keep the
+    /// publisher's original URL as a byte-for-byte backup. The hash pins stay
+    /// on the entry, so a fallback to upstream can never swap the content.
+    #[test]
+    fn mirrored_models_keep_the_upstream_url_as_a_pinned_backup() {
+        const MIRROR: &str =
+            "https://github.com/alihusains/teletype-models/releases/download/models-v1";
+        let cases = [
+            (
+                "s1-mini",
+                "s1-mini-q4_k_m.gguf",
+                "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf",
+            ),
+            (
+                "qwen3.5-2b",
+                "Qwen3.5-2B-IQ4_XS.gguf",
+                "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-IQ4_XS.gguf",
+            ),
+            (
+                "qwen3.5-0.8b",
+                "Qwen3.5-0.8B-Q4_K_M.gguf",
+                "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_M.gguf",
+            ),
+            (
+                "speakoflow-mini",
+                "SpeakoFlow-Mini-0.8B-Q8_0.gguf",
+                "https://huggingface.co/SpeakoFlow/speakoflow-mini/resolve/main/SpeakoFlow-Mini-0.8B-Q8_0.gguf",
+            ),
+        ];
+        for (id, asset, upstream) in cases {
+            let e = find(id).unwrap_or_else(|| panic!("{id} is not a catalog entry"));
+            let expected = format!("{MIRROR}/{asset}");
+            assert_eq!(e.url, expected.as_str(), "{id} primary must be the mirror");
+            assert_eq!(
+                e.backup_url,
+                Some(upstream),
+                "{id} backup must be the exact upstream URL"
+            );
+            assert!(
+                e.sha256.is_some(),
+                "{id} must stay hash-pinned across the mirror"
+            );
+        }
     }
 
     /// Apple Silicon is the only build with a fast Metal backend today, and the

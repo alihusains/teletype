@@ -91,7 +91,9 @@ static void watchdogCallback(CFRunLoopTimerRef timer, void *info) {
     (void)info;
     if (g_tap && !CGEventTapIsEnabled(g_tap)) {
         CGEventTapEnable(g_tap, TRUE);
-        modTapLog("watchdog: tap re-enabled");
+        // A release edge may have been lost while the tap was disabled.
+        g_down = NO;
+        modTapLog("watchdog: tap re-enabled, modifier latch cleared");
     }
 }
 
@@ -107,6 +109,7 @@ static CGEventRef modTapCallback(CGEventTapProxy proxy,
         type == kCGEventTapDisabledByUserInput) {
         if (g_tap) {
             CGEventTapEnable(g_tap, TRUE);
+            g_down = NO;
         }
         return event;
     }
@@ -249,4 +252,10 @@ void teletype_mod_tap_stop(void) {
     g_callback = NULL;
     g_target = 0;
     g_down = NO;
+}
+
+// 1 when the modifier tap has been started, still holds a live mach port, and
+// has not been disabled by the system. Used for hotkey liveness checks.
+int teletype_mod_tap_is_live(void) {
+    return g_started && g_tap != NULL && CGEventTapIsEnabled(g_tap) ? 1 : 0;
 }

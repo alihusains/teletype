@@ -132,21 +132,25 @@ fn read_api_key(base_url: &str) -> Option<String> {
 }
 
 pub mod autotext;
+pub mod calibration;
 pub mod crash;
 pub mod dictionary;
 pub mod history;
 pub mod models;
 pub mod personalization;
+pub mod polish_feedback;
 pub mod scratchpad;
 pub mod settings;
 pub mod system;
 pub mod transforms;
 
 pub use autotext::*;
+pub use calibration::*;
 pub use dictionary::*;
 pub use history::*;
 pub use models::*;
 pub use personalization::*;
+pub use polish_feedback::*;
 pub use scratchpad::*;
 pub use settings::*;
 pub use system::*;
@@ -665,6 +669,16 @@ pub struct Settings {
     /// alongside the fixed off-topic floor that always applies.
     #[serde(default = "default_polish_max_change_percent")]
     pub polish_max_change_percent: u8,
+    /// T3a: the user's global edit contract. `#[serde(default)]` gives an
+    /// older settings file Natural, the shipped default, without a migration.
+    #[serde(default)]
+    pub polish_profile: teletype_core::profile::PolishProfile,
+    /// T3a: per-app overrides, keyed by a stable app/category key (bundle id,
+    /// app name, or `email`/`chat`/`coding`/`terminal`/`document`/`notes`).
+    /// An explicit key wins over the category default and the global profile.
+    #[serde(default)]
+    pub polish_app_profiles:
+        std::collections::BTreeMap<String, teletype_core::profile::PolishProfile>,
     /// Per-app ASR language overrides (P3.3): normalized app key -> language
     /// code (e.g. "com.google.gmail" -> "en"). An override for the frontmost
     /// app wins over the global `language` setting.
@@ -807,9 +821,11 @@ pub struct Settings {
     /// per committed segment. Slower but more consistent output.
     #[serde(default)]
     pub polish_whole_text_at_end: bool,
-    /// Phase 5/6: skip the AI polish pass when the take is already clean
-    /// (the P6.2 gate constant, now user-controllable). On by default.
-    #[serde(default = "default_true")]
+    /// Skip the AI polish pass when the take is already clean. Off by default:
+    /// polish always runs, so the result card reports "0 changes · already
+    /// clean" when the text needed no edits. Skipping requires an explicit
+    /// opt-in, including for settings files that predate this field.
+    #[serde(default)]
     pub polish_skip_when_clean: bool,
     /// Phase 5/6: when to start recording ahead of the hotkey press.
     /// "off" | "while_app_active" | "always".
@@ -899,6 +915,9 @@ pub struct SettingsPatch {
     pub polish_gate_enabled: Option<bool>,
     pub polish_gate_threshold_words: Option<usize>,
     pub polish_max_change_percent: Option<u8>,
+    pub polish_profile: Option<teletype_core::profile::PolishProfile>,
+    pub polish_app_profiles:
+        Option<std::collections::BTreeMap<String, teletype_core::profile::PolishProfile>>,
     pub app_language_overrides: Option<std::collections::BTreeMap<String, String>>,
     pub restore_emoji: Option<bool>,
     pub spoken_emoji: Option<bool>,
@@ -975,6 +994,8 @@ impl SettingsPatch {
         apply!(polish_gate_enabled);
         apply!(polish_gate_threshold_words);
         apply!(polish_max_change_percent);
+        apply!(polish_profile);
+        apply!(polish_app_profiles);
         apply!(app_language_overrides);
         apply!(restore_emoji);
         apply!(spoken_emoji);
@@ -1342,7 +1363,7 @@ impl Default for Settings {
             auto_apply_transform: true,
             show_tray_icon: true,
             has_completed_onboarding: false,
-            selected_llm_model: "speakoflow-mini".into(),
+            selected_llm_model: teletype_inference::catalog::host_default_llm_model_id().into(),
             typing_autotext_enabled: default_true(),
             autotext_timing: default_autotext_timing(),
             remove_filler_words: true,
@@ -1355,8 +1376,8 @@ impl Default for Settings {
             app_icon: default_app_icon(),
             transcripts_dir: String::new(),
             save_recordings: default_true(),
-            // SpeakoFlow Mini is the default transform model (local-server);
-            // S1-mini remains available as an alternative in the Models screen.
+            // The transform default follows the host's llama-server build:
+            // Qwen3.5 2B on accelerated hosts, SpeakoFlow Mini on CPU-only ones.
             selected_llm_provider: "local-server".into(),
             openai_base_url: default_openai_base_url(),
             openai_model: default_openai_model(),
@@ -1369,6 +1390,8 @@ impl Default for Settings {
             polish_gate_enabled: default_true(),
             polish_gate_threshold_words: default_polish_gate_threshold_words(),
             polish_max_change_percent: default_polish_max_change_percent(),
+            polish_profile: teletype_core::profile::PolishProfile::Natural,
+            polish_app_profiles: std::collections::BTreeMap::new(),
             app_language_overrides: std::collections::BTreeMap::new(),
             restore_emoji: true,
             spoken_emoji: default_true(),
@@ -1399,7 +1422,7 @@ impl Default for Settings {
             pending_notice: None,
             crash_notice: None,
             polish_whole_text_at_end: false,
-            polish_skip_when_clean: default_true(),
+            polish_skip_when_clean: false,
             instant_start: default_instant_start(),
             prefer_builtin_mic_with_bt: default_true(),
             learn_from_edits: default_true(),
@@ -1501,14 +1524,19 @@ pub async fn dismiss_pending_notice(state: tauri::State<'_, crate::AppState>) ->
 }
 
 /// P3.9 migration: EG-1 is gone from the catalog (its license forbids use in
-/// competing products). A user who had it selected moves to SpeakoFlow Mini,
-/// the default cleanup model, with a one-time notice the Models screen shows
-/// and clears. Returns true when the settings were changed.
+/// competing products). A user who had it selected moves to this host's default
+/// polish model, with a one-time notice the Models screen shows and clears.
+/// Returns true when the settings were changed.
 pub fn migrate_removed_models(settings: &mut Settings) -> bool {
+    let fallback = teletype_inference::catalog::host_default_llm_model_id();
+    let fallback_name = teletype_inference::catalog::find(fallback)
+        .map(|entry| entry.name)
+        .unwrap_or(fallback);
     if settings.selected_llm_model == "eg-1" {
-        settings.selected_llm_model = "speakoflow-mini".to_string();
-        settings.pending_notice =
-            Some("EG-1 was removed from Teletype. You are now using SpeakoFlow Mini.".to_string());
+        settings.selected_llm_model = fallback.to_string();
+        settings.pending_notice = Some(format!(
+            "EG-1 was removed from Teletype. You are now using {fallback_name}."
+        ));
         return true;
     }
     // Until the Models rail split on `polish_capable`, NeuDecide (the Command
@@ -1529,19 +1557,18 @@ pub fn migrate_removed_models(settings: &mut Settings) -> bool {
         if !entry.polish_capable {
             settings.pending_notice = Some(format!(
                 "{} is a Command Mode model, not a polish engine. Teletype switched text cleanup \
-                 to SpeakoFlow Mini.",
+                 to {fallback_name}.",
                 entry.name
             ));
-            settings.selected_llm_model = "speakoflow-mini".to_string();
+            settings.selected_llm_model = fallback.to_string();
             return true;
         }
     } else if removed_decider {
-        settings.pending_notice = Some(
+        settings.pending_notice = Some(format!(
             "Needle 3 is no longer offered by Teletype and was not a \
-             polish engine. Teletype switched text cleanup to SpeakoFlow Mini."
-                .to_string(),
-        );
-        settings.selected_llm_model = "speakoflow-mini".to_string();
+             polish engine. Teletype switched text cleanup to {fallback_name}."
+        ));
+        settings.selected_llm_model = fallback.to_string();
         return true;
     }
     false
@@ -1707,6 +1734,54 @@ mod tests {
         }
     }
 
+    /// T3a: a settings file written before profiles existed must still load,
+    /// getting Natural and no per-app overrides; an explicit saved profile and
+    /// override map must round-trip through camelCase keys untouched.
+    #[test]
+    fn polish_profile_settings_are_legacy_deserializable_and_round_trip() {
+        use teletype_core::profile::PolishProfile;
+        assert_eq!(Settings::default().polish_profile, PolishProfile::Natural);
+        assert!(Settings::default().polish_app_profiles.is_empty());
+
+        let mut v = serde_json::to_value(Settings::default()).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("polishProfile");
+        obj.remove("polishAppProfiles");
+        let legacy: Settings = serde_json::from_value(v).unwrap();
+        assert_eq!(legacy.polish_profile, PolishProfile::Natural);
+        assert!(legacy.polish_app_profiles.is_empty());
+
+        let mut custom = Settings {
+            polish_profile: PolishProfile::Structured,
+            ..Settings::default()
+        };
+        custom
+            .polish_app_profiles
+            .insert("com.apple.Terminal".into(), PolishProfile::Off);
+        let json = serde_json::to_value(&custom).unwrap();
+        assert_eq!(json["polishProfile"], "structured");
+        assert_eq!(json["polishAppProfiles"]["com.apple.Terminal"], "off");
+        let back: Settings = serde_json::from_value(json).unwrap();
+        assert_eq!(back.polish_profile, PolishProfile::Structured);
+        assert_eq!(
+            back.polish_app_profiles.get("com.apple.Terminal"),
+            Some(&PolishProfile::Off)
+        );
+
+        // SettingsPatch applies only the fields it carries.
+        let mut target = Settings::default();
+        let patch: SettingsPatch = serde_json::from_str(
+            r#"{"polishProfile":"clean","polishAppProfiles":{"Slack":"off"}}"#,
+        )
+        .unwrap();
+        assert!(patch.apply_to(&mut target));
+        assert_eq!(target.polish_profile, PolishProfile::Clean);
+        assert_eq!(
+            target.polish_app_profiles.get("Slack"),
+            Some(&PolishProfile::Off)
+        );
+    }
+
     #[test]
     fn save_recordings_is_on_for_new_and_upgraded_settings() {
         // Ali's decision (2026-10-31): recordings are saved by default.
@@ -1802,7 +1877,7 @@ mod tests {
         );
         assert_eq!(
             default_speech_model_id_for(Platform::Windows, None, false),
-            "sherpa-parakeet-v3-int8"
+            "sherpa-parakeet-ultra-int8"
         );
     }
 
@@ -1861,6 +1936,22 @@ mod tests {
         assert!(s.duck_other_audio);
         assert!((s.duck_level - 0.2).abs() < f32::EPSILON);
         assert!(!s.pause_media_while_dictating);
+    }
+
+    #[test]
+    fn polish_always_runs_until_the_clean_skip_is_opted_in() {
+        // A fresh install must run polish on every take; skipping a take that
+        // looks clean is an explicit opt-in, not the shipped behavior.
+        assert!(!Settings::default().polish_skip_when_clean);
+        // An older settings.json without the key must also get the off default,
+        // or upgraded users silently keep the old skip behavior.
+        let legacy: Settings = serde_json::from_str(r#"{"hotkey":"Cmd+Shift+Space"}"#).unwrap();
+        assert!(!legacy.polish_skip_when_clean);
+        // An explicit true is still honored.
+        let opted_in: Settings = serde_json::from_str(r#"{"polishSkipWhenClean":true}"#).unwrap();
+        assert!(opted_in.polish_skip_when_clean);
+        // The short-take gate is a separate control and keeps its own default.
+        assert!(Settings::default().polish_gate_enabled);
     }
 
     #[test]
@@ -2071,7 +2162,7 @@ mod tests {
             migrate_unavailable_speech_model(&mut s, Platform::Windows, true).as_deref(),
             Some("parakeet-ultra-coreml")
         );
-        assert_eq!(s.selected_speech_model, "sherpa-parakeet-v3-int8");
+        assert_eq!(s.selected_speech_model, "sherpa-parakeet-ultra-int8");
         // The user is told, in words that name both models.
         let notice = s.pending_notice.clone().expect("migration sets a notice");
         assert!(
@@ -2079,7 +2170,7 @@ mod tests {
             "names the old model: {notice}"
         );
         assert!(
-            notice.contains("Parakeet v3 (sherpa-onnx)"),
+            notice.contains("Parakeet Ultra (sherpa-onnx)"),
             "names the new model: {notice}"
         );
 
@@ -2119,7 +2210,7 @@ mod tests {
             ..Default::default()
         };
         assert!(migrate_unavailable_speech_model(&mut s, Platform::Windows, true).is_some());
-        assert_eq!(s.selected_speech_model, "sherpa-parakeet-v3-int8");
+        assert_eq!(s.selected_speech_model, "sherpa-parakeet-ultra-int8");
         assert!(s
             .pending_notice
             .as_deref()
@@ -2207,7 +2298,7 @@ mod tests {
             ..Default::default()
         };
         assert!(migrate_unavailable_speech_model(&mut s, Platform::Windows, false).is_some());
-        assert_eq!(s.selected_speech_model, "sherpa-parakeet-v3-int8");
+        assert_eq!(s.selected_speech_model, "sherpa-parakeet-ultra-int8");
     }
 
     #[test]
@@ -2288,13 +2379,22 @@ mod tests {
     }
 
     #[test]
+    fn default_llm_model_follows_the_host_engine_build() {
+        assert_eq!(
+            Settings::default().selected_llm_model,
+            teletype_inference::catalog::host_default_llm_model_id()
+        );
+    }
+
+    #[test]
     fn migrate_removed_models_switches_the_removed_pick_and_notices_once() {
+        let fallback = teletype_inference::catalog::host_default_llm_model_id();
         let mut s = Settings {
             selected_llm_model: "eg-1".into(),
             ..Default::default()
         };
         assert!(migrate_removed_models(&mut s));
-        assert_eq!(s.selected_llm_model, "speakoflow-mini");
+        assert_eq!(s.selected_llm_model, fallback);
         assert!(s.pending_notice.is_some());
 
         // Idempotent: a second run changes nothing and writes no new notice.
@@ -2322,7 +2422,10 @@ mod tests {
                 ..Default::default()
             };
             assert!(migrate_removed_models(&mut s), "{stale} should migrate");
-            assert_eq!(s.selected_llm_model, "speakoflow-mini");
+            assert_eq!(
+                s.selected_llm_model,
+                teletype_inference::catalog::host_default_llm_model_id()
+            );
             let notice = s.pending_notice.clone().unwrap_or_default();
             assert!(notice.contains("not a polish engine"), "{notice}");
             // Idempotent, and no second notice.

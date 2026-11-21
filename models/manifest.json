@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "release_tag": "models-v1",
+  "target_repo": "alihusains/teletype-models",
+  "notes": "Pinned, permissively licensed LLM artifacts mirrored from immutable upstream revisions. Assets are immutable: additions only, no overwrites, no latest.json, never marked latest.",
+  "models": [
+    {
+      "id": "s1-mini",
+      "asset_name": "s1-mini-q4_k_m.gguf",
+      "source_url": "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/s1-mini-q4_k_m.gguf",
+      "sha256": "3b41ebe2502cbd03e811d5d16b022f5ab551eda58d62597d152f89535003c634",
+      "size_bytes": 484219808,
+      "size_bytes_source": "Hugging Face tree API lfs.size at pinned revision 34add00a48a2e5d24e5a4ee5405a99620a3a240c; matches lfs.oid = sha256",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/34add00a48a2e5d24e5a4ee5405a99620a3a240c/LICENSE",
+      "license_note": "LICENSE at the pinned revision is Apache-2.0 text with a notice that S1-mini derives from Qwen3-0.6B (Apache-2.0). HF cardData labels it 's1-mini-license'.",
+      "attribution": "S1-mini by Superwhisper; derivative of Qwen3-0.6B by Alibaba (Apache-2.0)",
+      "mirror_allowed": true
+    },
+    {
+      "id": "speakoflow-mini",
+      "asset_name": "SpeakoFlow-Mini-0.8B-Q8_0.gguf",
+      "source_url": "https://huggingface.co/SpeakoFlow/speakoflow-mini/resolve/835431771f72820251fe6c6b4b07f12b000e2647/SpeakoFlow-Mini-0.8B-Q8_0.gguf",
+      "sha256": "696769bb6911f51bc231b112926e934cf7bfc760e6cdfa24212907bc5ad41fc9",
+      "size_bytes": 833591776,
+      "size_bytes_source": "Hugging Face tree API lfs.size at pinned revision 835431771f72820251fe6c6b4b07f12b000e2647; matches lfs.oid = sha256",
+      "license": "Apache-2.0",
+      "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+      "attribution": "SpeakoFlow Mini by SpeakoFlow (Apache-2.0; HF cardData license apache-2.0)",
+      "mirror_allowed": true
+    },
+    {
+      "id": "qwen3.5-0.8b",
+      "asset_name": "Qwen3.5-0.8B-Q4_K_M.gguf",
+      "source_url": "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/6ab461498e2023f6e3c1baea90a8f0fe38ab64d0/Qwen3.5-0.8B-Q4_K_M.gguf",
+      "sha256": "bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517",
+      "size_bytes": 532517120,
+      "size_bytes_source": "Hugging Face tree API lfs.size at pinned revision 6ab461498e2023f6e3c1baea90a8f0fe38ab64d0; matches lfs.oid = sha256",
+      "license": "Apache-2.0",
+      "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+      "attribution": "Qwen3.5 by Alibaba (Apache-2.0); GGUF by unsloth",
+      "mirror_allowed": true
+    },
+    {
+      "id": "qwen3.5-2b",
+      "asset_name": "Qwen3.5-2B-IQ4_XS.gguf",
+      "source_url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/f6d5376be1edb4d416d56da11e5397a961aca8ae/Qwen3.5-2B-IQ4_XS.gguf",
+      "sha256": "3639f34b5ca22aa1c51f3616566eae8c355111554f6924ad97ee2652ed11c1cd",
+      "size_bytes": 1172996352,
+      "size_bytes_source": "Hugging Face tree API lfs.size at pinned revision f6d5376be1edb4d416d56da11e5397a961aca8ae; matches lfs.oid = sha256",
+      "license": "Apache-2.0",
+      "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
+      "attribution": "Qwen3.5 by Alibaba (Apache-2.0); GGUF by unsloth",
+      "mirror_allowed": true
+    }
+  ]
+}

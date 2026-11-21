@@ -251,6 +251,34 @@ describe("Insights proof screen", () => {
     expect(screen.getByText("Cory")).toBeTruthy();
   });
 
+  it("renders at most three ready-to-apply correction rows with their text", async () => {
+    await mount(fixture({
+      learning: {
+        autoApplyFixes: [
+          { from: "teletype", to: "Teletype", count: 12 },
+          { from: "kube", to: "Kube", count: 9 },
+          { from: "api", to: "API", count: 6 },
+          { from: "gpt", to: "GPT", count: 4 },
+          { from: "url", to: "URL", count: 2 },
+        ],
+      },
+    }));
+    expect(await screen.findByText("Ready to apply")).toBeTruthy();
+    const rows = screen.getAllByTestId("ready-to-apply-row");
+    expect(rows).toHaveLength(3);
+    expect(rows[0].textContent).toContain("teletype → Teletype · seen 12 times");
+    expect(rows[1].textContent).toContain("kube → Kube · seen 9 times");
+    expect(rows[2].textContent).toContain("api → API · seen 6 times");
+    expect(rows[2].textContent).not.toContain("GPT");
+  });
+
+  it("renders no ready-to-apply section when there are no fixes", async () => {
+    await mount();
+    expect(await screen.findByText("Learning and cleanup")).toBeTruthy();
+    expect(screen.queryByTestId("ready-to-apply-row")).toBeNull();
+    expect(screen.queryByText("Ready to apply")).toBeNull();
+  });
+
   it("shows the rhythm card with best day, top days, and busiest hour band", async () => {
     await mount();
     expect(await screen.findByText("Your rhythm")).toBeTruthy();
@@ -361,5 +389,57 @@ describe("Insights proof screen", () => {
     expect(await screen.findByText("Insights")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getAllByText(/No activity yet|No records yet|No milestones yet|No app attribution yet/).length).toBeGreaterThan(0);
+  });
+
+  const LEARNING_ROW = {
+    appId: "com.google.Gmail",
+    appLabel: "Gmail",
+    fromProfile: "natural",
+    learnedProfile: "structured",
+    takes: 12,
+    learnedAt: 1_792_000_000_000,
+    undo: {
+      appKey: "com.google.Gmail",
+      scopeKey: "com.google.Gmail",
+      restoreProfile: "natural",
+      label: "Restore natural for Gmail",
+    },
+  };
+
+  function mountWithLearning(undoImpl: () => Promise<unknown>) {
+    const data = fixture({ learning: { profileLearnings: [LEARNING_ROW] } });
+    mockInvokeResponses({ get_insights: data, undo_profile_learning: null });
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "undo_profile_learning") return undoImpl();
+      if (cmd === "get_insights") return data;
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+    mockListenCapture();
+    render(<InsightsScreen onNavigate={() => {}} />);
+  }
+
+  it("undoes profile learning through the command and hides the row only on success", async () => {
+    mountWithLearning(() => Promise.resolve(null));
+    expect(await screen.findByTestId("profile-learning-row")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() =>
+      expect(invokeCalls()).toContainEqual({
+        cmd: "undo_profile_learning",
+        args: { appKey: "com.google.Gmail" },
+      }),
+    );
+    await waitFor(() => expect(screen.queryByTestId("profile-learning-row")).toBeNull());
+    // The backend owns the bandit state; the old settings patch must not fire.
+    expect(invokeCalls().some((c) => c.cmd === "save_settings")).toBe(false);
+  });
+
+  it("keeps the learning row visible when the undo command fails", async () => {
+    mountWithLearning(() => Promise.reject(new Error("could not undo")));
+    expect(await screen.findByTestId("profile-learning-row")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("could not undo");
+    expect(screen.getByTestId("profile-learning-row")).toBeTruthy();
   });
 });

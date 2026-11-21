@@ -12,6 +12,25 @@ import { navigateTo } from "../lib/useTauriEvent";
 import { confirmDialog } from "../lib/dialogs";
 import { errorMessage } from "../lib/errors";
 import type { RuntimeStatus } from "../lib/runtimeStatus";
+import ProfilePicker from "../components/ProfilePicker";
+import {
+  APP_PROFILE_ROWS,
+  DEFAULT_MAX_CHANGE_PERCENT,
+  effectiveBudgetPercent,
+  effectiveProfileFor,
+  modelCapabilityFor,
+  parseProfileKey,
+  polishCustomizationFor,
+  profileBudgetPercent,
+  profileLabel,
+  PROFILES,
+  rowStoredOverride,
+  supportedProfileList,
+  supportsProfile,
+  unsupportedProfileList,
+  writeRowOverride,
+  type ProfileKey,
+} from "../lib/profileLabels";
 import {
   Chip,
   Explainer,
@@ -31,10 +50,50 @@ import type { RecordingsUsage } from "../components/dictation/types";
 // Must stay a superset of the SettingsScreen interface for the fields this
 // file touches: the contract test parses SettingsScreen's Settings for the
 // UI-visible field list, and these patch keys must remain valid there.
+interface PolishSettingsFields {
+  polishProfile?: string;
+  polishAppProfiles?: Record<string, string>;
+}
+
+type SectionSettings = Settings & PolishSettingsFields;
+
 interface SectionProps {
-  settings: Settings;
-  onChange: (patch: Partial<Settings>) => void;
+  settings: SectionSettings;
+  onChange: (patch: Partial<SectionSettings>) => void;
   runtimeStatus?: RuntimeStatus;
+}
+
+interface ActiveProfileInfo {
+  profile: string;
+  label: string;
+  resolvedBy: string;
+  budgetPercent: number;
+  effectiveMaxChangePercent: number;
+  modelCapability: string;
+  modelId: string;
+  reason: string;
+}
+
+interface PolishPromptInfoPayload {
+  modelId?: string;
+  editable?: boolean;
+  defaultPrompt?: string;
+  note?: string;
+  profile?: ActiveProfileInfo | null;
+}
+
+function budgetMessage(profile: ProfileKey, customPercent: number): string {
+  const budget = profileBudgetPercent(profile);
+  const effective = effectiveBudgetPercent(profile, customPercent);
+  if (profile === "off") return "Off inserts your words unchanged; no edit budget applies.";
+  if (profile === "transform") return "Transform follows your explicit request; no fixed ceiling applies.";
+  if (effective < budget) {
+    return `${profileLabel(profile)} allows up to ${budget}% of words. Your stricter custom limit of ${customPercent}% is used instead.`;
+  }
+  if (customPercent !== DEFAULT_MAX_CHANGE_PERCENT && customPercent > budget) {
+    return `${profileLabel(profile)} overrides your custom limit of ${customPercent}%: up to ${budget}% of words may change.`;
+  }
+  return `${profileLabel(profile)} allows up to ${budget}% of words.`;
 }
 
 // Runtime state to chip tone. "ready" (downloaded, not resident) is a working
@@ -371,10 +430,31 @@ export function AIPolishSection(props: SectionProps) {
   const llm = runtimeStatus?.llm;
   const tone = llm ? STATE_TONE[llm.state] ?? "neutral" : "neutral";
   const model = settings.selectedLlmModel || settings.selectedLlmProvider;
+  const [activeProfile, setActiveProfile] = useState<ActiveProfileInfo | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<PolishPromptInfoPayload>("get_polish_prompt_info")
+      .then((info) => {
+        if (!cancelled) setActiveProfile(info.profile ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setActiveProfile(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.selectedLlmModel, settings.selectedLlmProvider]);
+
+  const modelId = activeProfile?.modelId || llm?.modelId || settings.selectedLlmModel || "";
+  const capability = modelCapabilityFor(modelId, activeProfile?.modelCapability);
+  const cleanupOnly = capability === "cleanup-only" || polishCustomizationFor(modelId) === "none";
+  const globalProfile = parseProfileKey(settings.polishProfile);
+  const overrides = settings.polishAppProfiles ?? {};
+  const modelLabel = llm?.label || (modelId ? modelId : "This model");
 
   return (
     <Section title="AI Polish">
-      {/* The provider is chosen on the Models screen; the row goes there. */}
       <Row
         label="Provider"
         first
@@ -384,63 +464,230 @@ export function AIPolishSection(props: SectionProps) {
         <Chip>{providerLabel(settings.selectedLlmProvider)}</Chip>
         {model ? <Chip>{model}</Chip> : null}
       </Row>
-      <Row label="Skip polish for short takes">
-        <Explainer text="Below the word count, the text is inserted as dictated: cleaning up a two-word message costs more latency than it is worth. The gate only ever skips polish, it never changes the text." />
-        <Toggle
-          label="Skip polish for short takes"
-          checked={settings.polishGateEnabled}
-          onChange={(v) => onChange({ polishGateEnabled: v })}
-        />
-      </Row>
-      <Row
-        label={`Polish takes with at least ${settings.polishGateThresholdWords} words`}
-        disabled={!settings.polishGateEnabled}
-      >
-        <TextInput
-          label="Polish gate word threshold"
-          value={String(settings.polishGateThresholdWords)}
-          onChange={(v) => {
-            const words = Math.round(Number(v));
-            if (Number.isFinite(words) && words >= 1) onChange({ polishGateThresholdWords: words });
+
+      {cleanupOnly ? (
+        <div
+          role="status"
+          data-settings-label="Cleanup-only model"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            alignItems: "baseline",
+            padding: "11px 14px",
+            borderTop: "1px solid var(--border-subtle)",
+            fontSize: "var(--text-xs)",
+            lineHeight: 1.5,
+            color: "var(--text-secondary)",
           }}
-          width={90}
+        >
+          <strong style={{ color: "var(--text)" }}>Cleanup-only model</strong>
+          <span>
+            {modelLabel} can honor {supportedProfileList(capability)}. It cannot honor{" "}
+            {unsupportedProfileList(capability)}; those profiles fall back to Clean.
+          </span>
+          <button
+            type="button"
+            onClick={() => navigateTo("models")}
+            style={{
+              padding: 0,
+              border: "none",
+              background: "none",
+              color: "var(--accent)",
+              font: "inherit",
+              fontWeight: 700,
+              textDecoration: "underline",
+              cursor: "pointer",
+            }}
+          >
+            Models
+          </button>
+        </div>
+      ) : null}
+
+      <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border-subtle)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+          <span style={{ fontSize: "var(--text-sm)", fontWeight: 600 }}>Polish profile</span>
+          <Explainer text="A profile is a contract: what Polish may change, what it must keep, and how much it may rewrite. Pick the contract before you speak, not the knobs." />
+        </div>
+        <ProfilePicker
+          value={globalProfile}
+          onChange={(key) => onChange({ polishProfile: key })}
+          capability={capability}
+          label="Polish profile"
         />
-      </Row>
-      <Row
-        label={
-          settings.polishMaxChangePercent >= 100
-            ? "Let Polish rewrite freely"
-            : `Let Polish change up to ${settings.polishMaxChangePercent}% of the words`
-        }
-        hint={
-          settings.polishMaxChangePercent >= 100
-            ? "Off: the rewrite is only rejected when it goes off topic."
-            : undefined
-        }
-      >
-        <Explainer text="If a rewrite replaces more of your words than this, Teletype inserts what you actually said instead. 40% allows grammar, filler and phrasing fixes; raise it if you want bolder editing." />
-        <Slider
-          label="Polish change limit"
-          value={settings.polishMaxChangePercent}
-          min={10}
-          max={100}
-          step={5}
-          onChange={(v) => onChange({ polishMaxChangePercent: v })}
-        />
-        <Chip>
-          {settings.polishMaxChangePercent >= 100
-            ? "Off"
-            : `${settings.polishMaxChangePercent}%`}
-        </Chip>
-      </Row>
-      <Row label="Polish whole text at the end">
-        <Explainer text="Polish the entire take as one unit at the end instead of per committed segment. Slower, but more consistent output across the whole message." />
-        <Toggle
-          label="Polish whole text at the end"
-          checked={settings.polishWholeTextAtEnd}
-          onChange={(v) => onChange({ polishWholeTextAtEnd: v })}
-        />
-      </Row>
+        <div
+          role="status"
+          style={{ marginTop: 9, fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}
+        >
+          {budgetMessage(globalProfile, settings.polishMaxChangePercent)}
+        </div>
+        {activeProfile ? (
+          <div style={{ marginTop: 4, fontSize: "var(--text-xs)", color: "var(--text-tertiary)" }}>
+            Active now: {profileLabel(parseProfileKey(activeProfile.profile))} · {activeProfile.resolvedBy}
+            {activeProfile.reason ? ` — ${activeProfile.reason}` : ""}
+          </div>
+        ) : null}
+      </div>
+
+      <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border-subtle)" }}>
+        <div style={{ fontSize: "var(--text-sm)", fontWeight: 600, marginBottom: 3 }}>
+          Per-app profiles
+        </div>
+        <div style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)", marginBottom: 9 }}>
+          Each app starts from a default. “Effective” is the contract that actually runs with the
+          current model.
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--text-xs)" }}>
+          <caption style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>
+            Per-app Polish profiles and their effective contract
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col" style={{ textAlign: "left", padding: "4px 6px", color: "var(--text-tertiary)" }}>App</th>
+              <th scope="col" style={{ textAlign: "left", padding: "4px 6px", color: "var(--text-tertiary)" }}>Effective profile</th>
+              <th scope="col" style={{ textAlign: "left", padding: "4px 6px", color: "var(--text-tertiary)" }}>Override</th>
+            </tr>
+          </thead>
+          <tbody>
+            {APP_PROFILE_ROWS.map((row) => {
+              const storedOverride = rowStoredOverride(overrides, row);
+              const stored = storedOverride ?? row.defaultProfile ?? globalProfile;
+              const effective = effectiveProfileFor(stored, capability);
+              const fallback = effective !== stored;
+              const unsupported = !supportsProfile(capability, stored);
+              return (
+                <tr key={row.key} style={{ borderTop: "1px solid var(--border-subtle)" }}>
+                  <td style={{ padding: "6px", color: "var(--text)" }}>{row.label}</td>
+                  <td style={{ padding: "6px", color: "var(--text-secondary)" }}>
+                    <span data-effective-profile={row.key} style={{ color: "var(--text)", fontWeight: 600 }}>
+                      Effective: {profileLabel(effective)}
+                    </span>
+                    <span style={{ display: "block", color: "var(--text-tertiary)" }}>
+                      Default: {profileLabel(row.defaultProfile ?? globalProfile)}
+                      {fallback ? ` · ${profileLabel(stored)} falls back to ${profileLabel(effective)}` : ""}
+                      {unsupported && !fallback ? " · unsupported on this model" : ""}
+                    </span>
+                  </td>
+                  <td style={{ padding: "6px" }}>
+                    <select
+                      aria-label={`Override for ${row.label}`}
+                      value={storedOverride ?? ""}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        onChange({
+                          polishAppProfiles: writeRowOverride(
+                            overrides,
+                            row,
+                            raw === "" ? "" : parseProfileKey(raw),
+                          ),
+                        });
+                      }}
+                      style={{
+                        padding: "4px 6px",
+                        fontSize: "var(--text-xs)",
+                        color: "var(--text)",
+                        background: "var(--surface-2)",
+                        border: "1px solid var(--border)",
+                        borderRadius: "var(--radius-sm)",
+                      }}
+                    >
+                      <option value="">Use default</option>
+                      {PROFILES.map((p) => (
+                        <option key={p.key} value={p.key} disabled={!supportsProfile(capability, p.key)}>
+                          {p.label}
+                          {!supportsProfile(capability, p.key) ? " (unsupported)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <details>
+        <summary
+          style={{
+            padding: "11px 14px",
+            borderTop: "1px solid var(--border-subtle)",
+            cursor: "pointer",
+            fontSize: "var(--text-sm)",
+            fontWeight: 600,
+            color: "var(--text)",
+          }}
+        >
+          Advanced Polish controls
+        </summary>
+        <Row label="Skip polish for short takes">
+          <Explainer text="Below the word count, the text is inserted as dictated: cleaning up a two-word message costs more latency than it is worth. The gate only ever skips polish, it never changes the text." />
+          <Toggle
+            label="Skip polish for short takes"
+            checked={settings.polishGateEnabled}
+            onChange={(v) => onChange({ polishGateEnabled: v })}
+          />
+        </Row>
+        <Row
+          label={`Polish takes with at least ${settings.polishGateThresholdWords} words`}
+          disabled={!settings.polishGateEnabled}
+        >
+          <TextInput
+            label="Polish gate word threshold"
+            value={String(settings.polishGateThresholdWords)}
+            onChange={(v) => {
+              const words = Math.round(Number(v));
+              if (Number.isFinite(words) && words >= 1) onChange({ polishGateThresholdWords: words });
+            }}
+            width={90}
+          />
+        </Row>
+        <Row label="Skip polish when text already looks clean">
+          <Explainer text="Off by default: polish always runs, so every take gets a real pass and the result card reports “0 changes · already clean” when nothing needed editing. Turn this on to skip the model call when a heuristic judges the text already clean — faster, but some takes get no polish at all." />
+          <Toggle
+            label="Skip polish when text already looks clean"
+            checked={settings.polishSkipWhenClean}
+            onChange={(v) => onChange({ polishSkipWhenClean: v })}
+          />
+        </Row>
+        <Row
+          label={
+            settings.polishMaxChangePercent >= 100
+              ? "Let Polish rewrite freely"
+              : `Let Polish change up to ${settings.polishMaxChangePercent}% of the words`
+          }
+          hint={
+            settings.polishMaxChangePercent >= 100
+              ? "No ceiling: the rewrite is only rejected when it goes off topic."
+              : undefined
+          }
+        >
+          <Explainer text="If a rewrite replaces more of your words than this, Teletype inserts what you actually said instead. The profile's budget and the custom limit are compared; the stricter one applies." />
+          <Slider
+            label="Polish change limit"
+            value={settings.polishMaxChangePercent}
+            min={10}
+            max={100}
+            step={5}
+            onChange={(v) => onChange({ polishMaxChangePercent: v })}
+          />
+          <Chip>
+            {settings.polishMaxChangePercent >= 100
+              ? "Off"
+              : `${settings.polishMaxChangePercent}%`}
+          </Chip>
+        </Row>
+        <Row label="Polish whole text at the end">
+          <Explainer text="Polish the entire take as one unit at the end instead of per committed segment. Slower, but more consistent output across the whole message." />
+          <Toggle
+            label="Polish whole text at the end"
+            checked={settings.polishWholeTextAtEnd}
+            onChange={(v) => onChange({ polishWholeTextAtEnd: v })}
+          />
+        </Row>
+      </details>
+
       <Row label="Polish every dictation automatically">
         <Explainer text="When on, the polished text is inserted without waiting for you to confirm. When off, the dictation lands as dictated and the transform is not applied." />
         <Toggle

@@ -38,6 +38,19 @@ pub struct Signal {
 /// - **Terminology**: a word replaced by another word of similar shape
 ///   (same length ± 3, both alphabetic, length ≥ 4) in the middle of the text.
 pub fn extract_signals(ai_output: &str, final_text: &str, app: &ApplicationContext) -> Vec<Signal> {
+    extract_signals_with_screen_terms(ai_output, final_text, app, &[])
+}
+
+/// As [`extract_signals`], with the terms visible on screen when the edit was
+/// observed. They affect only the terminology lane: a screen-confirmed common
+/// first name is not vetoed as a synonym swap. All other lanes and every
+/// strict check are unchanged when `screen_terms` is empty.
+pub fn extract_signals_with_screen_terms(
+    ai_output: &str,
+    final_text: &str,
+    app: &ApplicationContext,
+    screen_terms: &[String],
+) -> Vec<Signal> {
     if ai_output.trim().is_empty() || final_text.trim().is_empty() {
         return Vec::new();
     }
@@ -102,7 +115,9 @@ pub fn extract_signals(ai_output: &str, final_text: &str, app: &ApplicationConte
     // Illinois" -> "Miami-Illinois"). Those edits change the word count but
     // not the letters, so they are punctuation taste, not mishearings.
     if !is_punctuation_join_split(ai_output, final_text) {
-        if let Some((from, to)) = terminology_swap(ai_output, final_text) {
+        if let Some((from, to)) =
+            terminology_swap_with_screen_terms(ai_output, final_text, screen_terms)
+        {
             signals.push(Signal {
                 key: format!("term:{from}→{to}"),
                 description: format!("Prefer '{to}' instead of '{from}'"),
@@ -277,8 +292,16 @@ fn closing_word(line: &str) -> String {
 
 /// Finds a single mid-text word replacement that looks like a terminology
 /// choice. Conservative: requires the words to be similar in length and both
-/// alphabetic, and only reports the first such swap.
-fn terminology_swap(ai: &str, final_text: &str) -> Option<(String, String)> {
+/// alphabetic, and only reports the first such swap. A `to` visible on screen
+/// is exempt from the synonym-swap veto when it is a common first name (the
+/// very case the strict veto would otherwise discard). The generic common-word
+/// veto stays in force for everything else, so "clients" → "customers" is
+/// still not a term.
+fn terminology_swap_with_screen_terms(
+    ai: &str,
+    final_text: &str,
+    screen_terms: &[String],
+) -> Option<(String, String)> {
     let ai_words = words(ai);
     let final_words = words(final_text);
     // Align by position: find the first index where they differ and the
@@ -293,7 +316,10 @@ fn terminology_swap(ai: &str, final_text: &str) -> Option<(String, String)> {
                 let after = (i + 1).min(n);
                 let ctx_ok = words_eq_ignore_case(&ai_words[before..i], &final_words[before..i])
                     || words_eq_ignore_case(&ai_words[i..after], &final_words[i..after]);
-                if ctx_ok && !is_synonym_swap(a, b) {
+                let screen_confirmed_name = screen_terms.iter().any(|t| {
+                    t.eq_ignore_ascii_case(b) && crate::learning::judge::is_common_first_name(b)
+                });
+                if ctx_ok && (!is_synonym_swap(a, b) || screen_confirmed_name) {
                     return Some((a.clone(), b.clone()));
                 }
             }
@@ -331,7 +357,7 @@ fn is_word(w: &str) -> bool {
 }
 
 /// Case-insensitive word-slice equality for the context-check in
-/// `terminology_swap`. Surrounding words may differ only in case (e.g.
+/// `terminology_swap_with_screen_terms`. Surrounding words may differ only in case (e.g.
 /// "ic" vs "IC") and should still count as matching context.
 fn words_eq_ignore_case(a: &[String], b: &[String]) -> bool {
     a.len() == b.len()
@@ -689,6 +715,67 @@ mod tests {
             .preferences
             .iter()
             .all(|p| p.learned_correction().is_none()));
+    }
+
+    #[test]
+    fn screen_terms_do_not_change_other_signal_lanes() {
+        let terms = vec!["Hi".to_string(), "Cheers".to_string()];
+        let plain = extract_signals("Dear A,\nThanks", "Hi A,\nCheers", &app());
+        let with_screen =
+            extract_signals_with_screen_terms("Dear A,\nThanks", "Hi A,\nCheers", &app(), &terms);
+        assert_eq!(plain, with_screen);
+        assert!(with_screen.iter().any(|s| s.key.starts_with("greeting")));
+        assert!(with_screen.iter().any(|s| s.key.starts_with("signoff")));
+    }
+
+    #[test]
+    fn screen_confirmed_name_yields_a_term_signal_with_provenance() {
+        // "sevan" → "Sarah" is the pair the dictionary guard needs screen
+        // confirmation for; the extractor must surface it with both words so
+        // the caller can apply the screen-aware guard downstream.
+        let terms = vec!["Sarah".to_string()];
+        let signals = extract_signals_with_screen_terms(
+            "I met sevan today",
+            "I met Sarah today",
+            &app(),
+            &terms,
+        );
+        let term = signals
+            .iter()
+            .find(|s| s.key.starts_with("term:"))
+            .expect("terminology signal missing");
+        assert_eq!(term.canonical_word.as_deref(), Some("Sarah"));
+        assert!(term.key.contains("sevan"));
+        assert!(
+            crate::personalization::is_learnable_terminology_with_screen_terms(
+                "sevan", "Sarah", &terms
+            )
+        );
+    }
+
+    #[test]
+    fn screen_terms_keep_synonym_and_punctuation_vetoes() {
+        let terms = vec!["customers".to_string(), "e-mail".to_string()];
+        let signals = extract_signals_with_screen_terms(
+            "We value our clients.",
+            "We value our customers.",
+            &app(),
+            &terms,
+        );
+        assert!(
+            signals.iter().all(|s| !s.key.starts_with("term:")),
+            "a synonym swap must never be learned, got {signals:?}"
+        );
+        let signals = extract_signals_with_screen_terms(
+            "I sent the e mail yesterday",
+            "I sent the e-mail yesterday",
+            &app(),
+            &terms,
+        );
+        assert!(
+            signals.iter().all(|s| !s.key.starts_with("term:")),
+            "a punctuation join must never be learned, got {signals:?}"
+        );
     }
 
     #[test]

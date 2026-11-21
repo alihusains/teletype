@@ -20,6 +20,8 @@ import { GlowPill } from "./pillGlow";
 import { Icon } from "./components/Icon";
 import { RADIUS as GLOW_RADIUS } from "./lib/glowTokens";
 import { changeCount, diffWords, formatPolishMs } from "./lib/wordDiff";
+import { sendPolishFeedback, type PolishFeedbackSpan } from "./lib/polishFeedback";
+import { rewriteWithTransform, type RewriteWithTransformResult } from "./lib/polishRewrite";
 import {
   busyPillSize,
   fitTail,
@@ -1514,25 +1516,91 @@ const DIFF_ADD_BG = "rgba(79,142,247,0.16)";
 const DIFF_CLAMP_LINES = 3;
 const DIFF_LINE_HEIGHT = 13 * 1.5;
 
+interface PolishChangeGroup {
+  original: string;
+  replacement: string;
+}
+
+function changeGroups(segments: ReturnType<typeof diffWords>): PolishChangeGroup[] {
+  const groups: PolishChangeGroup[] = [];
+  let current: { original: string[]; replacement: string[] } | null = null;
+  const flush = () => {
+    if (!current) return;
+    groups.push({
+      original: current.original.join(" "),
+      replacement: current.replacement.join(" "),
+    });
+    current = null;
+  };
+  for (const seg of segments) {
+    if (seg.kind === "same") {
+      flush();
+      continue;
+    }
+    current ??= { original: [], replacement: [] };
+    if (seg.kind === "del") current.original.push(seg.text);
+    else current.replacement.push(seg.text);
+  }
+  flush();
+  return groups;
+}
+
 function PolishDiffCard({
   raw,
   polished,
   ms,
+  takeId,
+  ran,
+  model,
+  original,
+  profile,
+  reason,
   onClose,
 }: {
   raw: string;
   polished: string;
   ms: number;
+  takeId?: number;
+  ran?: boolean;
+  model?: string | null;
+  original?: string;
+  profile?: string;
+  reason?: string;
   onClose: () => void;
 }) {
-  const segments = diffWords(raw, polished);
-  const changes = changeCount(segments);
+  const { segments, groups, changes } = useMemo(() => {
+    const segments = diffWords(raw, polished);
+    return {
+      segments,
+      groups: changeGroups(segments),
+      changes: changeCount(segments),
+    };
+  }, [raw, polished]);
   const seconds = formatPolishMs(ms);
   // Changes that start past the clamp would otherwise vanish silently; the
   // footer counts them. A change is a run of non-"same" segments (as in
   // changeCount), marked on its first segment.
-  const bodyRef = useRef<HTMLSpanElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const [hiddenChanges, setHiddenChanges] = useState(0);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [copiedRaw, setCopiedRaw] = useState(false);
+  const [copyNote, setCopyNote] = useState<string | null>(null);
+  const [savedNote, setSavedNote] = useState<string | null>(null);
+  const [whyOpen, setWhyOpen] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [rewriting, setRewriting] = useState(false);
+  const [rewriteResult, setRewriteResult] = useState<RewriteWithTransformResult | null>(null);
+  const [rewriteError, setRewriteError] = useState(false);
+  const [copiedRewrite, setCopiedRewrite] = useState(false);
+  const statusLine =
+    ran === true && changes === 0
+      ? "Polish ran · 0 changes · already clean"
+      : ran === false
+        ? `Polish skipped · ${reason || "no reason reported"}`
+        : null;
+  const hasOriginal = typeof original === "string";
+  const originalText = hasOriginal ? original : raw;
+  const originalLabel = hasOriginal ? "Original after filler removal" : "Raw transcript";
   useLayoutEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
@@ -1549,6 +1617,98 @@ function PolishDiffCard({
     onClose();
   };
 
+  const copy = async (text: string, isRaw: boolean) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedRaw(isRaw);
+      setCopyNote(isRaw ? "Copied what you said — paste to restore" : "Copied the full text");
+    } catch {
+      setCopiedRaw(false);
+      setCopyNote("Copy failed");
+    }
+  };
+
+  const rewriteStronger = async () => {
+    setRewriting(true);
+    setRewriteError(false);
+    setCopiedRewrite(false);
+    setRewriteResult(null);
+    try {
+      setRewriteResult(await rewriteWithTransform(polished));
+    } catch {
+      setRewriteError(true);
+    } finally {
+      setRewriting(false);
+    }
+  };
+
+  const copyRewrite = async () => {
+    if (!rewriteResult) return;
+    try {
+      await navigator.clipboard.writeText(rewriteResult.text);
+      setCopiedRewrite(true);
+    } catch {
+      setCopiedRewrite(false);
+    }
+  };
+
+  const send = async (
+    kind: "thumb_up" | "thumb_down" | "never_change" | "copy_raw",
+    term?: string,
+    span?: PolishFeedbackSpan,
+  ) => {
+    if (!takeId) {
+      setSavedNote("No take id — feedback not recorded");
+      return;
+    }
+    try {
+      await sendPolishFeedback({
+        takeId,
+        kind,
+        term: term ?? null,
+        span: span ?? null,
+        model: model ?? null,
+        profile: profile ?? null,
+      });
+      setSavedNote(kind === "never_change" ? "Saved locally — T5 will use it" : "Saved locally");
+    } catch {
+      setSavedNote("Could not save locally");
+    }
+  };
+
+  const action = (
+    label: string,
+    onClick: () => void,
+    options: { pressed?: boolean; primary?: boolean; disabled?: boolean } = {},
+  ) => (
+    <button
+      key={label}
+      type="button"
+      aria-pressed={options.pressed}
+      disabled={options.disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      style={{
+        minHeight: 26,
+        fontSize: 11,
+        lineHeight: "14px",
+        fontWeight: 600,
+        color: options.disabled ? "rgba(255,255,255,0.35)" : options.pressed ? "#cfe2ff" : options.primary ? "#8bbaff" : SECONDARY_TEXT,
+        background: options.pressed ? "rgba(79,142,247,0.18)" : "rgba(255,255,255,0.05)",
+        border: "0.5px solid rgba(255,255,255,0.1)",
+        borderRadius: 7,
+        padding: "5px 8px",
+        cursor: options.disabled ? "default" : "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  const selectedGroup = selected === null ? null : groups[selected] ?? null;
+
   return (
     <div
       style={{
@@ -1563,24 +1723,31 @@ function PolishDiffCard({
         animation: "fade-in 0.18s ease-out",
       }}
     >
-      {/* Announced once; the visible card is a button, not a live region. */}
+      {/* Announced once; the visible card is not a live region. */}
       <span role="status" style={VISUALLY_HIDDEN}>
         Inserted. Polish made {changes} {changes === 1 ? "change" : "changes"}.
+        {copiedRaw ? " Copied what you said." : ""}
       </span>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 650 }}>
-          {changes} {changes === 1 ? "change" : "changes"}
-        </span>
-        {seconds && (
-          <span
-            style={{
-              fontSize: 12,
-              color: SECONDARY_TEXT,
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            · {seconds}
-          </span>
+        {statusLine ? (
+          <span style={{ fontSize: 13, fontWeight: 650 }}>{statusLine}</span>
+        ) : (
+          <>
+            <span style={{ fontSize: 13, fontWeight: 650 }}>
+              {changes} {changes === 1 ? "change" : "changes"}
+            </span>
+            {seconds && (
+              <span
+                style={{
+                  fontSize: 12,
+                  color: SECONDARY_TEXT,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                · {seconds}
+              </span>
+            )}
+          </>
         )}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
           <button
@@ -1590,8 +1757,6 @@ function PolishDiffCard({
               open("transforms");
             }}
             style={{
-              // 24px tall at least (principle 6): 14px of text plus 5px
-              // above and below.
               minHeight: 24,
               fontSize: 12,
               lineHeight: "14px",
@@ -1633,14 +1798,19 @@ function PolishDiffCard({
           </button>
         </div>
       </div>
-      {/* The body opens the entry in History; a real button so it is
-          reachable by assistive tech (the card used to be a clickable div). */}
-      <button
-        type="button"
-        // The body is clamped to three lines; the full before and after text
-        // stays reachable on hover (struck words come from the raw text).
+      {/* The body opens the entry in History. It is a focusable div rather
+          than a button so the changed spans inside can be real buttons. */}
+      <div
+        role="button"
+        tabIndex={0}
         title={`Before: ${raw}\nAfter: ${polished}`}
         onClick={() => open("home")}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            open("home");
+          }
+        }}
         style={{
           display: "block",
           width: "100%",
@@ -1654,47 +1824,187 @@ function PolishDiffCard({
           cursor: "pointer",
         }}
       >
-      <span
-        ref={bodyRef}
-        style={{
-          marginTop: 9,
-          fontSize: 13,
-          lineHeight: `${DIFF_LINE_HEIGHT}px`,
-          color: "rgba(255,255,255,0.74)",
-          display: "-webkit-box",
-          WebkitLineClamp: DIFF_CLAMP_LINES,
-          WebkitBoxOrient: "vertical",
-          overflow: "hidden",
-        }}
-      >
-        {segments.map((seg, i) => {
-          const startsChange = seg.kind !== "same" && (i === 0 || segments[i - 1].kind === "same");
-          const mark = startsChange ? { "data-change": "" } : {};
-          return seg.kind === "same" ? (
-            <span key={i}>{seg.text} </span>
-          ) : seg.kind === "del" ? (
-            <span
-              key={i}
-              {...mark}
-              style={{ color: "rgba(255,255,255,0.5)", textDecoration: "line-through" }}
-            >
-              {seg.text}{" "}
-            </span>
-          ) : (
-            <span
-              key={i}
-              {...mark}
-              style={{ color: DIFF_ADD, background: DIFF_ADD_BG, borderRadius: 3, padding: "0 2px" }}
-            >
-              {seg.text}{" "}
-            </span>
-          );
-        })}
-      </span>
-      <span style={{ display: "block", marginTop: 8, fontSize: 11, color: SECONDARY_TEXT }}>
-        Inserted{hiddenChanges > 0 && ` · +${hiddenChanges} more ${hiddenChanges === 1 ? "change" : "changes"}`} · click to open History
-      </span>
-      </button>
+        <div
+          ref={bodyRef}
+          style={{
+            marginTop: 9,
+            fontSize: 13,
+            lineHeight: `${DIFF_LINE_HEIGHT}px`,
+            color: "rgba(255,255,255,0.74)",
+            display: "-webkit-box",
+            WebkitLineClamp: DIFF_CLAMP_LINES,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {(() => {
+            let groupCursor = -1;
+            return segments.map((seg, i) => {
+              if (seg.kind === "same") return <span key={i}>{seg.text} </span>;
+              if (i === 0 || segments[i - 1].kind === "same") groupCursor++;
+              const groupIndex = groupCursor;
+              const startsChange = i === 0 || segments[i - 1].kind === "same";
+              const mark = startsChange ? { "data-change": "" } : {};
+              const base: CSSProperties =
+                seg.kind === "del"
+                  ? { color: "rgba(255,255,255,0.5)", textDecoration: "line-through" }
+                  : { color: DIFF_ADD, background: DIFF_ADD_BG, borderRadius: 3, padding: "0 2px" };
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  {...mark}
+                  aria-pressed={selected === groupIndex}
+                  aria-label={`Inspect change: ${seg.text}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelected(selected === groupIndex ? null : groupIndex);
+                  }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  style={{
+                    ...base,
+                    display: "inline",
+                    font: "inherit",
+                    lineHeight: "inherit",
+                    border: "none",
+                    cursor: "pointer",
+                    ...(selected === groupIndex
+                      ? { outline: "1px solid #7db1ff", outlineOffset: 1 }
+                      : {}),
+                  }}
+                >
+                  {seg.text}{" "}
+                </button>
+              );
+            });
+          })()}
+        </div>
+        <span style={{ display: "block", marginTop: 8, fontSize: 11, color: SECONDARY_TEXT }}>
+          Inserted{hiddenChanges > 0 && ` · +${hiddenChanges} more ${hiddenChanges === 1 ? "change" : "changes"}`} · click to open History
+        </span>
+      </div>
+
+      {showOriginal && (
+        <div
+          style={{
+            marginTop: 9,
+            padding: "7px 9px",
+            borderRadius: 8,
+            background: "rgba(255,255,255,0.045)",
+            border: "0.5px solid rgba(255,255,255,0.09)",
+          }}
+        >
+          <div style={{ fontSize: 11, color: SECONDARY_TEXT }}>{originalLabel}</div>
+          <div style={{ marginTop: 3, fontSize: 12, lineHeight: 1.5, color: "rgba(255,255,255,0.85)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {originalText}
+          </div>
+        </div>
+      )}
+
+      {rewriteResult && (
+        <div
+          style={{
+            marginTop: 9,
+            padding: "7px 9px",
+            borderRadius: 8,
+            background: "rgba(255,255,255,0.045)",
+            border: "0.5px solid rgba(255,255,255,0.09)",
+          }}
+        >
+          <div style={{ fontSize: 11, color: SECONDARY_TEXT }}>Stronger rewrite</div>
+          <div style={{ marginTop: 3, fontSize: 12, lineHeight: 1.5, color: DIFF_ADD, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {rewriteResult.text}
+          </div>
+          {rewriteResult.skipMessage && (
+            <div style={{ marginTop: 4, fontSize: 11, color: "#f5c518", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+              {rewriteResult.skipMessage}
+            </div>
+          )}
+          <div style={{ marginTop: 6 }}>
+            {action(copiedRewrite ? "Copied" : "Copy rewrite", () => void copyRewrite())}
+          </div>
+        </div>
+      )}
+
+      {rewriteError && (
+        <div role="alert" style={{ marginTop: 6, fontSize: 11, color: ERROR_TEXT }}>
+          Rewrite failed
+        </div>
+      )}
+
+      {selectedGroup && (
+        <div
+          style={{
+            marginTop: 8,
+            padding: "7px 9px",
+            borderRadius: 8,
+            background: "rgba(255,255,255,0.045)",
+            border: "0.5px solid rgba(255,255,255,0.09)",
+          }}
+        >
+          <div style={{ fontSize: 11, color: SECONDARY_TEXT, lineHeight: 1.5 }}>
+            Original: <span style={{ color: "rgba(255,255,255,0.85)" }}>{selectedGroup.original || "(none)"}</span>
+            {" · Now: "}
+            <span style={{ color: DIFF_ADD }}>{selectedGroup.replacement || "(removed)"}</span>
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+            {action("Copy full text", () => void copy(polished, false))}
+            {action(
+              "Never change this",
+              () =>
+                void send("never_change", selectedGroup.replacement || selectedGroup.original, selectedGroup),
+            )}
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 9 }}>
+        {action("Copy what I said", () => void copy(raw, true), { primary: true })}
+        {action(showOriginal ? "Hide original" : "View original", () => setShowOriginal((v) => !v), { pressed: showOriginal })}
+        {action(rewriting ? "Rewriting…" : "Rewrite stronger", () => void rewriteStronger(), { disabled: rewriting })}
+        {action("Thumbs up", () => void send("thumb_up"))}
+        {action("Thumbs down", () => void send("thumb_down"))}
+        {action("Why", () => setWhyOpen((open) => !open), { pressed: whyOpen })}
+      </div>
+      {copyNote && (
+        <span role="status" style={{ display: "block", marginTop: 6, fontSize: 11, color: SECONDARY_TEXT }}>
+          {copyNote}
+        </span>
+      )}
+      {savedNote && (
+        <span role="status" style={{ display: "block", marginTop: 4, fontSize: 11, color: SECONDARY_TEXT }}>
+          {savedNote}
+        </span>
+      )}
+      {whyOpen && (
+        <div
+          role="dialog"
+          aria-label="Why this changed"
+          style={{
+            position: "absolute",
+            left: 16,
+            right: 16,
+            bottom: "calc(100% + 6px)",
+            padding: "10px 12px",
+            borderRadius: 10,
+            background: "rgba(25,25,25,0.98)",
+            border: "0.5px solid rgba(255,255,255,0.16)",
+            boxShadow: TOP_HIGHLIGHT,
+            fontSize: 11,
+            lineHeight: 1.55,
+            color: "rgba(255,255,255,0.82)",
+          }}
+        >
+          <div>Model: {model || "unknown"} · Profile: {profile ?? "unknown"}</div>
+          <div>
+            Changes: {changes}
+            {seconds ? ` · Polish time: ${seconds}` : ""}
+          </div>
+          <div>Gate / fallback reason: {reason || "none reported"}</div>
+          <div style={{ marginTop: 6 }}>Before: {raw}</div>
+          <div>After: {polished}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2064,6 +2374,12 @@ export function Pill() {
             raw={machine.pill.raw}
             polished={machine.pill.polished}
             ms={machine.pill.ms}
+            takeId={machine.pill.card}
+            ran={machine.pill.ran}
+            model={machine.pill.model}
+            original={machine.pill.original}
+            profile={machine.pill.profile}
+            reason={machine.pill.reason}
             onClose={() => dispatch({ type: "result-dismiss" })}
           />
         </div>

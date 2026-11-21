@@ -6,9 +6,11 @@
 pub mod boost;
 pub mod contacts;
 pub mod diff;
+pub mod feedback;
 pub mod judge;
 pub mod learn_memory;
 pub mod observer;
+pub mod profile_bandit;
 pub mod promote;
 pub mod replay;
 pub mod settle;

@@ -15,5 +15,13 @@
   "tone-keep-casual": "Sounds good to me. I will do that.",
   "tech-verbatim": "Run the kubectl get pods command in the prod namespace, then check the ingress controller.",
   "tech-identifiers": "Set the environment variable FEATURE_FLAGS to true in the deploy config.",
-  "autotext-placeholder": "Send the report to {{AUTOTEXT_0}} before Friday."
+  "autotext-placeholder": "Send the report to {{AUTOTEXT_0}} before Friday.",
+  "backtrack-name": "Invite Gordon to the review.",
+  "backtrack-number": "The deploy is at ten.",
+  "backtrack-conservative": "The office is in Austin.",
+  "backtrack-identifier": "The variable is FEATURE_FLAGS_V2.",
+  "backtrack-no-replacement": "The release is Friday no wait.",
+  "backtrack-actually-emphasis": "I actually like this approach.",
+  "backtrack-multiple-cues": "The deploy is at ten, and the review is Tuesday.",
+  "backtrack-end-of-take": "The release is Thursday."
 }

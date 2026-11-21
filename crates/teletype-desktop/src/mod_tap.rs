@@ -12,6 +12,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Mutex, OnceLock};
 
 use crate::dictation::{Controller, Event};
+use crate::hotkey_latch::{now_ms, EdgeLatch};
 
 /// CGEventFlags bits, mirroring the constants in `mod_tap.m`. These are the
 /// generic CoreGraphics masks: each covers both sides of its key (left and
@@ -58,10 +59,18 @@ pub fn bare_modifier_mask(hotkey: &str) -> Option<u32> {
 /// Durable sender used by the C callback (the tap outlives any command).
 static TX: OnceLock<Sender<Event>> = OnceLock::new();
 static RUNNING: Mutex<bool> = Mutex::new(false);
+/// The native latch is reset on restart; the Rust latch must be reset too.
+static LAST_DOWN: EdgeLatch = EdgeLatch::new();
+/// Serializes native stop/start so two callers cannot double-join the tap.
+static TAP_LIFECYCLE: Mutex<()> = Mutex::new(());
 
 /// Starts the bare-modifier tap for `mask` (one of the MOD_* bits). No-op if
 /// already running. Must be called from the main thread.
 pub fn start(controller: Controller, mask: u32) -> Result<(), String> {
+    let _lifecycle = TAP_LIFECYCLE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    LAST_DOWN.reset();
     *RUNNING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
@@ -88,12 +97,16 @@ pub fn start(controller: Controller, mask: u32) -> Result<(), String> {
 
 /// Stops the bare-modifier tap (no-op if not running).
 pub fn stop() {
+    let _lifecycle = TAP_LIFECYCLE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let was = *RUNNING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if !was {
         return;
     }
+    LAST_DOWN.reset();
     extern "C" {
         fn teletype_mod_tap_stop();
     }
@@ -104,15 +117,24 @@ pub fn stop() {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
 }
 
+/// Whether the bare-modifier tap is currently installed and enabled.
+pub fn is_live() -> bool {
+    extern "C" {
+        fn teletype_mod_tap_is_live() -> i32;
+    }
+    // SAFETY: reads native tap state only; takes no arguments and touches no
+    // Rust state.
+    unsafe { teletype_mod_tap_is_live() != 0 }
+}
+
 /// C callback: 1 = modifier pressed (as sole modifier), 0 = released.
 extern "C" fn on_mod_state(down: u8) {
-    static LAST_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let now_down = down != 0;
-    // flagsChanged repeats while held — only react to edges.
-    if now_down == LAST_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
+    // flagsChanged repeats while held — only react to edges. A stale latch
+    // from a tap that lost the release edge is recovered after 30 s.
+    if !LAST_DOWN.accept(now_down, now_ms()) {
         return;
     }
-    LAST_DOWN.store(now_down, std::sync::atomic::Ordering::SeqCst);
     if now_down {
         crate::dictation::mark_hotkey_down();
     } else {

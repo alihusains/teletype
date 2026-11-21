@@ -142,6 +142,13 @@ pub struct PipelineResult {
     /// empty-text floor ladder falls back to this when the transform
     /// emptied the take.
     pub post_itn: String,
+    /// T3a: the profile resolved for this take. Exposed so the pill and
+    /// History can show "Structured · Gmail" from one source of truth.
+    pub polish_profile: crate::profile::PolishProfile,
+    /// T3a: one-line user-visible fallback/advisory reason (empty on a clean
+    /// pass). Names the model limitation when Natural/Structured was reduced
+    /// to Clean. Surfaced by `get_polish_profile_info` and available to T3b.
+    pub polish_profile_reason: String,
 }
 
 /// Everything the pipeline needs, assembled by the desktop app.
@@ -247,6 +254,20 @@ pub struct Pipeline<'a> {
     pub polish_prompt_override: Option<String>,
 }
 
+/// T5 profile-choice hook. The local bandit may only select an adjacent,
+/// learnable profile; every other case keeps the recommended default exactly.
+/// An explicit instruction-channel profile always wins (the same precedence
+/// T3a established), so a learned choice never overrides the user.
+pub fn choose_take_profile(
+    app_key: &str,
+    explicit: Option<crate::profile::PolishProfile>,
+    recommended: crate::profile::PolishProfile,
+    bandit: &crate::learning::profile_bandit::BanditState,
+    now_ms: u64,
+) -> crate::profile::PolishProfile {
+    explicit.unwrap_or_else(|| bandit.choose(app_key, recommended, now_ms))
+}
+
 impl<'a> Pipeline<'a> {
     /// Runs the pipeline and returns the final text. Does NOT inject —
     /// the caller decides (tests assert on the returned text).
@@ -258,6 +279,33 @@ impl<'a> Pipeline<'a> {
         let raw_input = input.text.clone();
         let context = self.platform.active_application().unwrap_or_default();
         let is_voice = input.source == InputSource::Voice;
+
+        // T3a: one resolution per take, before any stage can change the text.
+        // A caller that encoded a profile in the instruction channel wins;
+        // otherwise the per-app category table decides, with Natural as the
+        // global fallback. The user's own override is preserved verbatim.
+        let (explicit_profile, raw_user_override) =
+            crate::profile::decode_instruction(self.polish_prompt_override.as_deref());
+        let raw_word_count = input.text.split_whitespace().count();
+        let recommended_profile = crate::profile::resolve_profile(
+            &context,
+            &std::collections::BTreeMap::new(),
+            crate::profile::PolishProfile::Natural,
+            raw_word_count,
+        );
+        // T5: the bandit may pick an adjacent learned profile for this app.
+        // With no bandit store threaded in yet (the desktop layer owns that
+        // wiring) the state is empty and the recommended default is kept, so
+        // every existing caller behaves byte-for-byte as before.
+        let app_key = crate::profile::normalize_key(&context.application_id);
+        let resolved_profile = choose_take_profile(
+            &app_key,
+            explicit_profile,
+            recommended_profile,
+            &crate::learning::profile_bandit::BanditState::default(),
+            0,
+        );
+        let mut profile_reason = String::new();
 
         // 0.0. Scrub control characters before anything else. A NUL or other
         //      C0/C1 control can arrive from a decoder or a paste, and if it
@@ -327,10 +375,22 @@ impl<'a> Pipeline<'a> {
         push_stage(&mut stages, EditKind::Filler, &before_fillers, &input_text);
         let before_itn = input_text.clone();
 
+        // 0.55. Deterministic backtrack / self-correction resolution (T4).
+        //       Voice-only, English-gated (the pass's own gate), and runs
+        //       after the filler/self-repair pass and before the gate/model
+        //       so the model sees a resolved transcript. `raw_input` stays
+        //       the raw ASR output; the resolved text becomes the input to
+        //       the gate and the transform. Pure and idempotent: no
+        //       inference, no I/O.
+        let input_text = if is_voice {
+            crate::transforms::backtrack::resolve_backtracks(&input_text, &self.profile.language)
+        } else {
+            input_text
+        };
+        push_stage(&mut stages, EditKind::Correction, &before_itn, &input_text);
+        let before_itn = input_text.clone();
+
         // 0.6. Deterministic ITN (numbers, dates, phones, money, units).
-        //      Voice-only, English-gated. Runs before AutoText protect so
-        //      ITN never sees placeholders, and before the transform so the
-        //      model sees formatted numbers. Works with no model loaded.
         let input_text = if is_voice && itn::should_run(&self.profile.language) {
             itn::normalize(&input_text)
         } else {
@@ -516,6 +576,19 @@ impl<'a> Pipeline<'a> {
             match transform.as_ref() {
                 Some(t) => match self.inference {
                     Some(provider) => {
+                        // T3a: the same pure decision the engine applies to the
+                        // prompt/budget also produces the user-visible reason.
+                        let decision = crate::profile::decide_profile(
+                            resolved_profile,
+                            provider.model_id(),
+                            self.polish_max_change_percent,
+                        );
+                        if !decision.reason.is_empty() {
+                            profile_reason = decision.reason.clone();
+                            tracing::info!(reason = %profile_reason, "polish_profile_fallback");
+                        } else if !decision.note.is_empty() {
+                            profile_reason = decision.note.clone();
+                        }
                         if let Some(decision) = gate_skip.as_ref().filter(|d| !d.should_polish) {
                             // Gate decided to skip: produce the same
                             // TransformResult shape the existing skip paths use
@@ -587,7 +660,10 @@ impl<'a> Pipeline<'a> {
                                 list_style: self.list_style,
                                 polish_max_change_percent: self.polish_max_change_percent,
                                 screen_terms: self.screen_terms.to_vec(),
-                                user_override: self.polish_prompt_override.clone(),
+                                user_override: crate::profile::encode_instruction(
+                                    resolved_profile,
+                                    raw_user_override,
+                                ),
                             };
                             let mut result = engine::run_transform_blocking(
                                 provider,
@@ -827,6 +903,8 @@ impl<'a> Pipeline<'a> {
             screen_term_snaps: snap_count,
             stages,
             post_itn,
+            polish_profile: resolved_profile,
+            polish_profile_reason: profile_reason,
         }
     }
 }
@@ -3706,7 +3784,9 @@ mod tests {
             .set_app_style_override("gmail", "style-casual")
             .unwrap();
         let prompt = run_prompt_for(
-            normalize("com.apple.terminal", "Terminal"),
+            // A genuinely unknown app: Terminal now resolves to Off (T3a),
+            // which bypasses inference, so it can no longer test style routing.
+            normalize("com.example.unknown", "UnknownApp"),
             &store,
             "style-professional",
             "",
@@ -4603,5 +4683,464 @@ mod tests {
                 prop_assert_eq!(edit_distance_public(&a, &b), edit_distance_public(&b, &a));
             }
         }
+    }
+
+    // ── T4: deterministic backtrack / self-correction resolver ─────────────
+
+    /// Builds a pipeline that captures the prompt the model saw, so a test
+    /// can assert the resolved text reached the gate/model input. The mock
+    /// LLM returns a fixed string; the test inspects the captured prompt.
+    fn pipeline_capturing_prompt(output: &str, text: &str) -> (String, String) {
+        let platform = MockPlatform::with_app(normalize("com.google.gmail", "Gmail"));
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = CaptureLlm {
+            output: output.to_string(),
+            captured: std::sync::Mutex::new(None),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: None,
+            force_command: false,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "style-concise",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: text.to_string(),
+        };
+        let result = pipeline.run(input, None);
+        let prompt = llm.captured.lock().unwrap().take().unwrap_or_default();
+        (result.final_text, prompt)
+    }
+
+    #[test]
+    fn backtrack_resolved_text_reaches_the_model_input() {
+        // A voice take with a self-correction must have the retracted span
+        // removed before the model sees it: the prompt the model receives
+        // carries the resolved text, not the raw transcript.
+        let (_final, prompt) = pipeline_capturing_prompt("ok", "let's meet at five, no wait, six");
+        assert!(
+            prompt.contains("let's meet at six"),
+            "resolved text must reach the model input; prompt: {prompt}"
+        );
+        assert!(
+            !prompt.contains("no wait"),
+            "retracted cue must not reach the model input; prompt: {prompt}"
+        );
+    }
+
+    #[test]
+    fn backtrack_raw_input_stays_the_asr_output() {
+        // `raw_input` in the PipelineResult is the raw ASR output, untouched
+        // by the backtrack pass.
+        let platform = MockPlatform::with_app(normalize("com.google.gmail", "Gmail"));
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = MockLlm {
+            output: "ok".into(),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: None,
+            force_command: false,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "style-concise",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
+            word_checker: &CHECKER,
+        };
+        let raw = "let's meet at five, no wait, six";
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: raw.to_string(),
+        };
+        let result = pipeline.run(input, None);
+        assert_eq!(result.raw_input, raw);
+    }
+
+    #[test]
+    fn backtrack_stage_is_recorded_when_it_changes_text() {
+        // When the backtrack pass changes the text, a stage entry is pushed
+        // so the Dictation tab's inline edits can attribute the change.
+        let platform = MockPlatform::with_app(normalize("com.google.gmail", "Gmail"));
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = MockLlm {
+            output: "ok".into(),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: None,
+            force_command: false,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "style-concise",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Voice,
+            text: "let's meet at five, no wait, six".to_string(),
+        };
+        let result = pipeline.run(input, None);
+        // The stages vector must contain a Correction stage (the backtrack
+        // pass) whose before/after pair shows the retraction.
+        assert!(
+            result.stages.iter().any(|s| {
+                s.kind == EditKind::Correction
+                    && s.before.contains("no wait")
+                    && !s.after.contains("no wait")
+            }),
+            "backtrack stage not recorded: {:?}",
+            result.stages
+        );
+    }
+
+    #[test]
+    fn backtrack_typed_input_is_not_touched() {
+        // Typed input is the user's own; the backtrack pass is voice-only and
+        // must not touch typed text.
+        let platform = MockPlatform::with_app(normalize("com.google.gmail", "Gmail"));
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = MockLlm {
+            output: "ok".into(),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: None,
+            force_command: false,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "style-concise",
+            explicit_style: "",
+            auto_apply: false,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: true,
+            spoken_punctuation: true,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: None,
+            word_checker: &CHECKER,
+        };
+        let input = UnifiedInput {
+            source: InputSource::Typed,
+            text: "let's meet at five, no wait, six".to_string(),
+        };
+        let result = pipeline.run(input, None);
+        // No Correction stage from the backtrack pass (typed input is
+        // voice-only).
+        assert!(
+            !result
+                .stages
+                .iter()
+                .any(|s| s.kind == EditKind::Correction && s.before.contains("no wait")),
+            "backtrack pass must not touch typed input: {:?}",
+            result.stages
+        );
+    }
+
+    #[test]
+    fn backtrack_runs_before_the_gate_and_model() {
+        // The backtrack pass runs before the gate and the model: the gate
+        // sees the resolved text, and the model sees the resolved text. The
+        // gate's self-correction marker check still fires on the resolved
+        // text (the cue is removed, so the gate does NOT see "no wait"),
+        // which means the gate may skip the model if the resolved text is
+        // short and clean. The test asserts the model input is resolved.
+        let (_final, prompt) =
+            pipeline_capturing_prompt("ok", "the release is friday, no wait, thursday");
+        assert!(
+            prompt.contains("the release is thursday"),
+            "resolved text must reach the model input; prompt: {prompt}"
+        );
+        assert!(
+            !prompt.contains("friday"),
+            "retracted day must not reach the model input; prompt: {prompt}"
+        );
+    }
+
+    // ---- T3a: profile contracts through the real pipeline ----
+
+    struct ProfileLlm {
+        model_id: &'static str,
+        output: String,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl InferenceProvider for ProfileLlm {
+        fn model_id(&self) -> &str {
+            self.model_id
+        }
+        fn model_name(&self) -> &str {
+            self.model_id
+        }
+        fn is_local(&self) -> bool {
+            true
+        }
+        fn generate(
+            &self,
+            _prompt: &str,
+            _params: crate::llm::GenerationParams,
+        ) -> Result<String, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.output.clone())
+        }
+        fn generate_with_system_stream(
+            &self,
+            _system: &str,
+            _user: &str,
+            _params: crate::llm::GenerationParams,
+            _on_token: &mut dyn FnMut(&str),
+        ) -> Result<String, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.output.clone())
+        }
+    }
+
+    fn run_with_profile(
+        app: ApplicationContext,
+        model_id: &'static str,
+        output: &str,
+        override_text: Option<String>,
+        input_text: &str,
+    ) -> (PipelineResult, usize) {
+        let platform = MockPlatform::with_app(app);
+        let autotext = AutoTextStore::default();
+        let transforms = TransformStore::with_built_ins();
+        let profile = UserProfile::default();
+        let llm = ProfileLlm {
+            model_id,
+            output: output.to_string(),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let mut pipeline = Pipeline {
+            platform: &platform,
+            autotext: &autotext,
+            transforms: &transforms,
+            profile: &profile,
+            inference: Some(&llm),
+            decision: None,
+            force_command: false,
+            dictionary: &DICT,
+            styles: &STYLES,
+            active_style: "",
+            explicit_style: "",
+            auto_apply: true,
+            restore_clipboard: true,
+            remove_filler_words: false,
+            filler_words: vec![],
+            filler_strength: crate::fillers::tiers::FillerStrength::Fillers,
+            restore_emoji: false,
+            spoken_emoji: false,
+            spoken_punctuation: true,
+            system_autotext: &[],
+            token_sink: None,
+            polish_gate_enabled: false,
+            polish_skip_when_clean: true,
+            polish_gate_threshold_words: 8,
+            pack_terms: &[],
+            list_style: crate::transforms::ListStyle::default(),
+            polish_max_change_percent: 40,
+            screen_terms: &[],
+            date_format: "",
+            polish_prompt_override: override_text,
+            word_checker: &CHECKER,
+        };
+        let result = pipeline.run(
+            UnifiedInput {
+                source: InputSource::Voice,
+                text: input_text.to_string(),
+            },
+            None,
+        );
+        let calls = llm.calls.load(std::sync::atomic::Ordering::SeqCst);
+        (result, calls)
+    }
+
+    #[test]
+    fn t5_hook_only_uses_adjacent_learned_profiles() {
+        use crate::learning::profile_bandit::{BanditState, Outcome};
+        use crate::profile::PolishProfile;
+        use PolishProfile::*;
+
+        let mut bandit = BanditState::default();
+        for _ in 0..12 {
+            bandit.record_outcome("gmail", Natural, Some(Outcome::Kept));
+        }
+        for _ in 0..8 {
+            bandit.record_outcome("gmail", Natural, Some(Outcome::Undone));
+        }
+        for _ in 0..18 {
+            bandit.record_outcome("gmail", Structured, Some(Outcome::Kept));
+        }
+        assert_eq!(
+            choose_take_profile("gmail", None, Natural, &bandit, 1_000),
+            Structured
+        );
+        // An explicit instruction-channel profile always wins.
+        assert_eq!(
+            choose_take_profile("gmail", Some(Clean), Natural, &bandit, 1_000),
+            Clean
+        );
+        // Transform is never a learned choice even with overwhelming evidence.
+        let mut transform_bandit = BanditState::default();
+        for _ in 0..30 {
+            transform_bandit.record_outcome("gmail", Transform, Some(Outcome::Kept));
+        }
+        assert_eq!(
+            choose_take_profile("gmail", None, Natural, &transform_bandit, 1_000),
+            Natural
+        );
+    }
+
+    #[test]
+    fn off_profile_bypasses_the_model_and_leaves_text_byte_identical() {
+        let input = "hello there this is a long sentence about nothing in particular today";
+        let (result, calls) = run_with_profile(
+            normalize("com.apple.Terminal", "Terminal"),
+            "mock",
+            "A completely different sentence that should never be used.",
+            None,
+            input,
+        );
+        assert_eq!(calls, 0, "Off must never call inference");
+        assert_eq!(
+            result.final_text, input,
+            "Off must not change a single byte"
+        );
+        assert_eq!(result.polish_profile, crate::profile::PolishProfile::Off);
+    }
+
+    #[test]
+    fn cleanup_only_model_fallback_reaches_the_pipeline_result_with_a_reason() {
+        use crate::profile::PolishProfile;
+        let input = "the meeting is scheduled for tuesday afternoon with the whole team";
+        let output = "The meeting is scheduled for Tuesday afternoon with the whole team.";
+        let (result, calls) = run_with_profile(
+            normalize("com.google.gmail", "Gmail"),
+            "s1-mini",
+            output,
+            None,
+            input,
+        );
+        assert_eq!(calls, 1, "the cleanup model still runs in Clean mode");
+        assert_eq!(
+            result.polish_profile,
+            PolishProfile::Structured,
+            "the requested contract stays visible"
+        );
+        assert!(
+            result.polish_profile_reason.contains("s1-mini")
+                && result.polish_profile_reason.contains("can only fix errors"),
+            "the fallback reason must name the model limitation: {}",
+            result.polish_profile_reason
+        );
+    }
+
+    #[test]
+    fn explicit_profile_override_in_instruction_channel_wins_over_category() {
+        use crate::profile::PolishProfile;
+        let (result, calls) = run_with_profile(
+            normalize("com.google.gmail", "Gmail"),
+            "mock",
+            "The meeting is on Thursday.",
+            crate::profile::encode_instruction(PolishProfile::Off, None),
+            "the meeting is on thursday with the team this afternoon",
+        );
+        assert_eq!(calls, 0, "an explicit Off must beat the email default");
+        assert_eq!(result.polish_profile, PolishProfile::Off);
     }
 }

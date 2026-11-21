@@ -1,0 +1,38 @@
+name: Sync model mirrors
+
+on:
+  push:
+    paths:
+      - models/manifest.json
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ secrets.MODELS_REPO_TOKEN }}
+  MODELS_REPO_TOKEN: ${{ secrets.MODELS_REPO_TOKEN }}
+
+concurrency:
+  group: sync-model-mirrors-models-v1
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Mirror pinned models to models-v1
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out manifest
+        uses: actions/checkout@v4
+
+      - name: Require MODELS_REPO_TOKEN
+        shell: bash
+        run: |
+          if [ -z "${MODELS_REPO_TOKEN:-}" ]; then
+            echo "::error::MODELS_REPO_TOKEN is missing; cannot publish models-v1. Add the secret with contents:write on alihusains/teletype-models."
+            exit 1
+          fi
+
+      - name: Sync pinned model assets
+        shell: bash
+        run: bash scripts/models/sync-model-mirrors.sh

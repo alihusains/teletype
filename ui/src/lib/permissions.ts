@@ -74,3 +74,35 @@ export function usePermissions(): { permissions: Permission[] | null; refresh: (
 
   return { permissions, refresh };
 }
+
+/** Observable liveness of the dictation hotkey, matching the backend's
+ * HotkeyStatus wire shape (camelCase). `active: null` means the binding has no
+ * tap-level liveness signal and cannot be checked; `reason` carries the last
+ * re-registration failure. */
+export interface HotkeyStatus {
+  active: boolean | null;
+  binding: string;
+  reason: string | null;
+}
+
+/** Reads hotkey liveness once on mount and keeps it fresh from the backend's
+ * `hotkey-status` push (emitted on liveness changes and after re-registration). */
+export function useHotkeyStatus(): HotkeyStatus | null {
+  const [status, setStatus] = useState<HotkeyStatus | null>(null);
+
+  const refresh = useCallback(() => {
+    invoke<HotkeyStatus>("hotkey_status")
+      .then(setStatus)
+      .catch((e) => console.error("hotkey_status failed:", e));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useTauriEvent<HotkeyStatus>("hotkey-status", ({ payload }) => {
+    setStatus(payload);
+  });
+
+  return status;
+}

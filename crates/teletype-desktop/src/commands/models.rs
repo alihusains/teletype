@@ -1076,17 +1076,72 @@ pub fn rehydrate_provider(app: &AppHandle) {
     }
 }
 
+/// The model id a polish decision is made for, from the active provider.
+fn active_polish_model_id(settings: &Settings) -> String {
+    match settings.selected_llm_provider.as_str() {
+        "local-server" => settings.selected_llm_model.clone(),
+        "openai-compat" => settings.openai_model.clone(),
+        _ => String::new(),
+    }
+}
+
+/// Resolves the active profile once. Both profile commands use this helper so
+/// the badge and the fallback reason cannot disagree. `word_count` is 0 here
+/// because the info command has no transcript: Docs/Notes therefore report
+/// their short-take default (Natural).
+fn polish_profile_info_for(
+    settings: &Settings,
+    app_ctx: &teletype_core::context::ApplicationContext,
+) -> teletype_core::profile::PolishProfileInfo {
+    use teletype_core::profile::{self, PolishProfileInfo};
+    let model_id = active_polish_model_id(settings);
+    let resolved = profile::resolve_profile(
+        app_ctx,
+        &settings.polish_app_profiles,
+        settings.polish_profile,
+        0,
+    );
+    let decision = profile::decide_profile(resolved, &model_id, settings.polish_max_change_percent);
+    PolishProfileInfo::new(
+        &decision,
+        profile::resolved_app_key(app_ctx, &settings.polish_app_profiles),
+        &model_id,
+    )
+}
+
+/// The read-only profile contract is exposed by extending the already
+/// registered `get_polish_prompt_info` command (see `PolishPromptInfo.profile`).
+/// A dedicated `get_polish_profile_info` command would need a registration in
+/// `lib.rs`, which is outside T3a's file ownership; `polish_profile_info_for`
+/// below is the single source of truth either way.
+///
 /// What the AI Polish prompt UI may show and edit for the active polish
 /// model. `teletype_core::transforms::prompt::polish_prompt_info` owns the
-/// mapping; this only resolves the model id from settings.
+/// mapping; this only resolves the model id from settings and attaches the
+/// T3a profile contract to the same registered payload, so T3b can read the
+/// active profile without waiting for a new command registration.
 #[tauri::command]
 pub async fn get_polish_prompt_info(
     state: State<'_, AppState>,
 ) -> CommandResult<teletype_core::transforms::prompt::PolishPromptInfo> {
     let settings = state.settings();
-    Ok(teletype_core::transforms::prompt::polish_prompt_info(
-        &settings.selected_llm_model,
-    ))
+    let mut info =
+        teletype_core::transforms::prompt::polish_prompt_info(&settings.selected_llm_model);
+    let app_ctx = state.platform.active_application().unwrap_or_default();
+    info.profile = Some(polish_profile_info_for(&settings, &app_ctx));
+    Ok(info)
+}
+
+/// The dedicated read-only profile command. Shares `polish_profile_info_for`
+/// with `get_polish_prompt_info` so the two payloads cannot disagree. The UI
+/// worker consumes this under the `get_polish_profile_info` IPC name.
+#[tauri::command]
+pub async fn get_polish_profile_info(
+    state: State<'_, AppState>,
+) -> CommandResult<teletype_core::profile::PolishProfileInfo> {
+    let settings = state.settings();
+    let app_ctx = state.platform.active_application().unwrap_or_default();
+    Ok(polish_profile_info_for(&settings, &app_ctx))
 }
 
 /// What the AI Polish playground needs: the model's output for the sample
@@ -1172,6 +1227,108 @@ pub async fn test_polish_prompt(
     })
     .await
     .map_err(|e| CommandError::internal(format!("playground task failed: {e}")))?;
+    result
+}
+
+/// The visible-polish rewrite: the `builtin-polish` transform's output for a
+/// snippet of text, run with the Transform contract (a full rewrite, no change
+/// ceiling) and the same packet/context resolution as `test_polish_prompt`.
+/// Unlike `transform_selection`, this NEVER injects text — the UI copies the
+/// returned string itself. The response mirrors `TestPolishPromptResult` but
+/// drops `transformed`: the caller only needs the text and an optional reason.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewriteWithTransformResult {
+    pub text: String,
+    pub skip_message: Option<String>,
+}
+
+/// Hard cap on text accepted by [`rewrite_with_transform`]. A selection longer
+/// than this is rejected with a structured user error rather than feeding a
+/// runaway prompt to the local model.
+const REWRITE_MAX_CHARS: usize = 4000;
+
+/// Pure validation so the empty / too-long rules are unit-testable without a
+/// Tauri app. Returns the trimmed text ready for inference.
+fn validate_rewrite_text(text: &str) -> Result<String, CommandError> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(CommandError::user("Nothing to rewrite: the text is empty."));
+    }
+    if trimmed.chars().count() > REWRITE_MAX_CHARS {
+        return Err(CommandError::user(format!(
+            "Text is too long to rewrite (limit is {REWRITE_MAX_CHARS} characters)."
+        )));
+    }
+    Ok(trimmed.to_string())
+}
+
+#[tauri::command]
+pub async fn rewrite_with_transform(
+    app: AppHandle,
+    text: String,
+) -> CommandResult<RewriteWithTransformResult> {
+    let text = validate_rewrite_text(&text)?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        // Lazily load the selected local model (no-op if one is loaded), same
+        // as `test_polish_prompt`.
+        ensure_local_provider(&app);
+        let state = app.state::<AppState>();
+        let transforms = (*state.transforms.get()).clone();
+        let transform = transforms
+            .get("builtin-polish")
+            .ok_or_else(|| CommandError::user("No Polish preset is available"))?
+            .clone();
+        let engine = state
+            .inference
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| CommandError::user("No AI polish model is loaded"))?;
+        let provider = engine.as_ref();
+        let profile = (*state.profile.get()).clone();
+        let settings = state.settings();
+        let app_ctx = state.platform.active_application().unwrap_or_default();
+        let packet =
+            resolve_packet_with_learned_rules(&profile, &app_ctx, state.data_dir.join("learning"));
+        // The Transform contract is a full rewrite: carried in the instruction
+        // channel like the dictation path, with no user override text.
+        let override_text = teletype_core::profile::encode_instruction(
+            teletype_core::profile::PolishProfile::Transform,
+            None,
+        );
+        let prompt_ctx = teletype_core::transforms::prompt::PromptContext {
+            app: Some(app_ctx),
+            preferences: packet.style,
+            preferred_terms: packet.terms,
+            user_instruction: None,
+            language: profile.language.clone(),
+            s1_control: profile.s1_control,
+            list_style: settings.list_style.resolve(),
+            // No ceiling: a visible rewrite may change every word.
+            polish_max_change_percent: 100,
+            screen_terms: Vec::new(),
+            user_override: override_text,
+        };
+        let result = teletype_core::transforms::engine::run_transform_blocking(
+            provider,
+            &transform,
+            &text,
+            &prompt_ctx,
+            &mut None,
+        );
+        let skip_message = result
+            .metrics
+            .skip_reason
+            .as_ref()
+            .and_then(teletype_core::state::skip_message);
+        Ok::<_, CommandError>(RewriteWithTransformResult {
+            text: result.text,
+            skip_message,
+        })
+    })
+    .await
+    .map_err(|e| CommandError::internal(format!("rewrite task failed: {e}")))?;
     result
 }
 
@@ -2837,6 +2994,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rewrite_validation_rejects_empty_and_oversized_text() {
+        assert!(validate_rewrite_text("").is_err());
+        assert!(validate_rewrite_text("   \n\t ").is_err());
+        assert_eq!(validate_rewrite_text("  hello  ").unwrap(), "hello");
+        let long = "x".repeat(REWRITE_MAX_CHARS + 1);
+        assert!(validate_rewrite_text(&long).is_err());
+        let at_cap = "x".repeat(REWRITE_MAX_CHARS);
+        assert_eq!(
+            validate_rewrite_text(&at_cap).unwrap().len(),
+            REWRITE_MAX_CHARS
+        );
+        let err = validate_rewrite_text("").unwrap_err();
+        assert_eq!(err.code, "E_REQUEST");
+    }
+
+    #[test]
     fn should_install_local_rejects_when_a_provider_appeared_during_warmup() {
         // BUG-015: a provider installed while we warmed up wins.
         assert!(!should_install_local(true, "local-server"));
@@ -2889,6 +3062,7 @@ mod tests {
 
         let windows = speech_model_list(Platform::Windows, &dir, "", true, unset, false);
         let on_windows: Vec<&str> = windows.iter().map(|m| m.id.as_str()).collect();
+        assert!(on_windows.contains(&"sherpa-parakeet-ultra-int8"));
         assert!(on_windows.contains(&"sherpa-parakeet-v3-int8"));
         assert!(on_windows.contains(&"sherpa-parakeet-v2-int8"));
         assert!(windows.iter().all(|m| m.engine == "sherpaparakeet"));
@@ -2897,7 +3071,7 @@ mod tests {
                 .iter()
                 .find(|m| m.recommended)
                 .map(|m| m.id.as_str()),
-            Some("sherpa-parakeet-v3-int8"),
+            Some("sherpa-parakeet-ultra-int8"),
             "Windows must recommend what it can run"
         );
 
@@ -3034,7 +3208,7 @@ mod tests {
                     .iter()
                     .find(|m| m.recommended)
                     .map(|m| m.id.as_str()),
-                Some("sherpa-parakeet-v3-int8"),
+                Some("sherpa-parakeet-ultra-int8"),
                 "Windows ships no Whisper, so it keeps the engine it can load"
             );
         }
@@ -3221,7 +3395,7 @@ mod tests {
         );
         // The Apple Intelligence row is appended after the sorted catalog, so
         // the catalog order still leads the list.
-        assert_eq!(full_gpu[0].id, "s1-mini");
+        assert_eq!(full_gpu[0].id, "qwen3.5-2b");
         assert_eq!(
             ids(&full_gpu),
             ids(&full_cpu),
@@ -3260,9 +3434,9 @@ mod tests {
         assert_eq!(
             ids(&gpu_run),
             if ai_available {
-                vec!["s1-mini", "qwen3.5-2b", "apple-intelligence"]
+                vec!["qwen3.5-2b", "s1-mini", "apple-intelligence"]
             } else {
-                vec!["s1-mini", "qwen3.5-2b"]
+                vec!["qwen3.5-2b", "s1-mini"]
             }
         );
         for list in [&cpu_run, &gpu_run] {
@@ -3303,9 +3477,9 @@ mod tests {
         assert_eq!(
             ids(&model_list(true, &dir, "ollama/llama3", true)),
             if ai_available {
-                vec!["s1-mini", "qwen3.5-2b", "apple-intelligence"]
+                vec!["qwen3.5-2b", "s1-mini", "apple-intelligence"]
             } else {
-                vec!["s1-mini", "qwen3.5-2b"]
+                vec!["qwen3.5-2b", "s1-mini"]
             }
         );
 

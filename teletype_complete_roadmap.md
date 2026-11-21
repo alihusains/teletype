@@ -1433,6 +1433,7 @@ Do not pollute the command engine with OS-specific branches.
 - [ ] `.cact` download
 - [ ] transcription
 - [ ] model management
+- [ ] manifest-driven model mirroring to GitHub Releases (see §29A; deferred)
 - [ ] benchmarking
 
 ## v0.3
@@ -1519,6 +1520,38 @@ Local AI
 +
 Optional Cloud AI
 ```
+
+---
+
+# 29A. Model Distribution Mirror (Deferred)
+
+**Status:** planned, not started. Recorded here 2026-11-21 after the "wow pair" default decision.
+
+**Goal:** make first-run model downloads faster and less dependent on upstream Hugging Face availability, without committing weights to git or re-hosting models with unclear licenses.
+
+## Decisions already made
+
+- Host mirrored assets in the existing `alihusains/teletype-models` repository, not in the app repo.
+- Use a dedicated release tag, `models-v1`. Never use a `v*` tag: that would trigger the app release workflow. Never publish `latest.json` there and never mark it "latest": the Tauri updater reads `releases/latest/download/latest.json`.
+- Publish only when a reviewed PR changes the model manifest; also allow manual `workflow_dispatch`.
+- Mirror only permissive, pinned artifacts under GitHub's 2 GiB per-asset limit. Exclude Qwen3-ASR 1.7B's 2.02 GiB main GGUF, Gemma/Llama/OpenMDW terms, and any `(unverified)` license.
+- Existing assets are immutable for a release tag. Add new models to `models-v1`; changing an existing model's bytes requires a new tag such as `models-v2`. Never overwrite in place.
+
+## Implementation shape
+
+1. `models/manifest.json` in `alihusains/teletype` is the source of truth. Each row carries `id`, `catalog` (`llm`/`speech`), `asset_name`, pinned `source_url`, `sha256`, exact `size_bytes`, display `size_mb`, license/attribution, `mirror_allowed`, and shard layout where needed.
+2. `.github/workflows/sync-model-mirrors.yml` validates the manifest, skips unchanged assets, downloads new/changed artifacts with retries, verifies sha256 + exact size, uploads to `alihusains/teletype-models@models-v1` with `gh release upload`, writes `SHA256SUMS` and a manifest snapshot, and re-verifies the public app-facing URLs.
+3. The app does **not** read the manifest at runtime: catalogs stay `&'static`. Use a build-time generator that reads the manifest and emits URL/sha/size constants.
+4. LLM catalog: GitHub asset URL primary, upstream pinned URL as `backup_url`. Speech catalog: point `base_url` at the model release. Skip FluidAudio/Core ML rows, which the bridge downloads itself.
+5. Add manifest schema tests, manifest↔catalog consistency tests, no-`latest.json`/non-`v*` release guard, live pin checks, and range/resume verification against GitHub asset URLs.
+6. Update `THIRD_PARTY_MODELS.md`, which currently says Teletype does not re-host weights.
+
+## Exit criteria
+
+- A fresh install downloads S1-mini, SpeakoFlow Mini, Qwen3.5 0.8B/2B, and eligible speech GGUF/sherpa artifacts from `teletype-models` release URLs with SHA-256 verification.
+- App release tags remain untouched; `releases/latest/download/latest.json` still points at app updates.
+- Adding a model to the manifest and merging the PR publishes only that asset; changing an existing asset without a new release tag fails CI.
+- Excluded models remain on their upstream sources with honest catalog copy.
 
 ---
 

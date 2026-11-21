@@ -53,6 +53,7 @@ static void inputEngineLog(const char *msg) {
 
 static CFMachPortRef g_tap = NULL;
 static CFRunLoopSourceRef g_tapSource = NULL;
+static CFRunLoopTimerRef g_watchdog = NULL;
 static TeletypeInputActionCallback g_actionCb = NULL;
 static TeletypeInputObserveCallback g_observeCb = NULL;
 static TeletypeInputBinding g_bindings[IE_MAX_BINDINGS];
@@ -75,6 +76,18 @@ static BOOL inputEngineIsFrontmostSelf(void) {
     NSString *frontId = [front bundleIdentifier];
     NSString *ownId = [[NSBundle mainBundle] bundleIdentifier];
     return frontId != nil && ownId != nil && [frontId isEqualToString:ownId];
+}
+
+// The input-engine tap lives on the main run loop and has no tap thread to
+// re-enable it. A timer on the same run loop self-heals a tap macOS disables
+// without delivering a disable event.
+static void inputEngineWatchdog(CFRunLoopTimerRef timer, void *info) {
+    (void)timer;
+    (void)info;
+    if (g_tap && !CGEventTapIsEnabled(g_tap)) {
+        CGEventTapEnable(g_tap, TRUE);
+        inputEngineLog("watchdog: tap re-enabled");
+    }
 }
 
 static CGEventRef inputEngineCallback(CGEventTapProxy proxy,
@@ -165,6 +178,15 @@ int teletype_input_engine_start(TeletypeInputActionCallback actionCb,
     g_tap = port;
     g_tapSource = CFMachPortCreateRunLoopSource(NULL, port, 0);
     CFRunLoopAddSource(CFRunLoopGetMain(), g_tapSource, kCFRunLoopCommonModes);
+    g_watchdog = CFRunLoopTimerCreate(
+        kCFAllocatorDefault,
+        CFAbsoluteTimeGetCurrent() + 2.0,
+        2.0,
+        0,
+        0,
+        inputEngineWatchdog,
+        NULL);
+    CFRunLoopAddTimer(CFRunLoopGetMain(), g_watchdog, kCFRunLoopCommonModes);
     CGEventTapEnable(port, TRUE);
     inputEngineLog("tap started on main runloop");
     return 1;
@@ -198,6 +220,11 @@ void teletype_input_engine_set_parked(int parked) {
 }
 
 void teletype_input_engine_stop(void) {
+    if (g_watchdog) {
+        CFRunLoopTimerInvalidate(g_watchdog);
+        CFRelease(g_watchdog);
+        g_watchdog = NULL;
+    }
     if (g_tapSource) {
         CFRunLoopSourceInvalidate(g_tapSource);
         CFRelease(g_tapSource);
@@ -210,4 +237,10 @@ void teletype_input_engine_stop(void) {
     g_actionCb = NULL;
     g_observeCb = NULL;
     g_count = 0;
+}
+
+// 1 when the input-engine tap is enabled, still holds a live mach port, and
+// has not been disabled by the system. Used for hotkey liveness checks.
+int teletype_input_engine_is_live(void) {
+    return g_enabled && g_tap != NULL && CGEventTapIsEnabled(g_tap) ? 1 : 0;
 }

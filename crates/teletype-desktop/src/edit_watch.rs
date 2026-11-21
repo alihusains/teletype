@@ -23,12 +23,14 @@
 //!    span cannot be located within the distance budget, the observation is
 //!    dropped and counted, never written.
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use teletype_core::learning::diff::diff_words;
 use teletype_core::learning::observer::{
     clip_anchor, locate_observed, ObserverDecision, ObserverEvent, ObserverState, PasteAnchor,
 };
+use teletype_core::learning::promote::{promote_profile, ProfilePromotion};
 
 /// How long after an insertion we are still willing to consider the field
 /// edited. Long enough for a human to fix a sign-off, short enough that a
@@ -314,16 +316,41 @@ impl StoreSink {
     /// Called from the observation flush — the moment the session already
     /// talks to the learning store — so the sweep needs no timer of its own.
     /// Failures log; they never propagate into the paste path.
-    pub fn settle_sweep(&self, now_ms: u64) {
+    pub fn settle_sweep(
+        &self,
+        now_ms: u64,
+        bandit: &mut teletype_core::learning::profile_bandit::BanditState,
+    ) {
         match teletype_core::learning::settle::sweep(&self.store, now_ms) {
-            Ok(r) if r.settled > 0 => crate::log_entry(
-                crate::LogLevel::Info,
-                format!(
-                    "learning settle: {} rows judged, {} spans unlocatable",
-                    r.settled, r.unlocatable
-                ),
-            ),
-            Ok(_) => {}
+            Ok(r) => {
+                if r.settled > 0 {
+                    crate::log_entry(
+                        crate::LogLevel::Info,
+                        format!(
+                            "learning settle: {} rows judged, {} spans unlocatable",
+                            r.settled, r.unlocatable
+                        ),
+                    );
+                }
+                // Replay the unambiguous settle verdicts into the bandit, then
+                // let the same conservative rule record an automatic profile
+                // change when there is enough evidence. One promotion per app
+                // per sweep; the bandit's weekly cap prevents flip-flopping.
+                let mut promoted = HashSet::new();
+                for (app, profile, outcome) in &r.bandit_signals {
+                    bandit.record_outcome(app, *profile, Some(*outcome));
+                    if !promoted.insert(app.clone()) {
+                        continue;
+                    }
+                    match promote_profile(bandit, app, *profile, now_ms) {
+                        ProfilePromotion::Applied { from, to, .. } => crate::log_entry(
+                            crate::LogLevel::Info,
+                            format!("polish profile learned for {app}: {from:?} -> {to:?}"),
+                        ),
+                        ProfilePromotion::KeptRecommended => {}
+                    }
+                }
+            }
             Err(e) => crate::log_entry(
                 crate::LogLevel::Warn,
                 format!("learning settle: sweep failed: {e}"),

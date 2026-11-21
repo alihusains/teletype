@@ -9,16 +9,25 @@ use std::sync::mpsc::Sender;
 use std::sync::{Mutex, OnceLock};
 
 use crate::dictation::{Controller, Event};
+use crate::hotkey_latch::{now_ms, EdgeLatch};
 
 /// Durable sender used by the C callback (the tap outlives any command).
 static TX: OnceLock<Sender<Event>> = OnceLock::new();
 static RUNNING: Mutex<bool> = Mutex::new(false);
+/// The native latch is reset on restart; the Rust latch must be reset too.
+static LAST_DOWN: EdgeLatch = EdgeLatch::new();
+/// Serializes native stop/start so two callers cannot double-join the tap.
+static TAP_LIFECYCLE: Mutex<()> = Mutex::new(());
 
 /// Starts the Fn event tap (no-op if already running).
 ///
 /// Must be called from the main thread — the tap is added to the main run
 /// loop, and Tauri commands run on the main thread.
 pub fn start(controller: Controller) -> Result<(), String> {
+    let _lifecycle = TAP_LIFECYCLE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    LAST_DOWN.reset();
     *RUNNING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
@@ -45,12 +54,16 @@ pub fn start(controller: Controller) -> Result<(), String> {
 
 /// Stops the Fn event tap (no-op if not running).
 pub fn stop() {
+    let _lifecycle = TAP_LIFECYCLE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let was = *RUNNING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if !was {
         return;
     }
+    LAST_DOWN.reset();
     extern "C" {
         fn teletype_fn_tap_stop();
     }
@@ -61,15 +74,24 @@ pub fn stop() {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
 }
 
+/// Whether the Fn tap is currently installed and enabled.
+pub fn is_live() -> bool {
+    extern "C" {
+        fn teletype_fn_tap_is_live() -> i32;
+    }
+    // SAFETY: reads native tap state only; takes no arguments and touches no
+    // Rust state.
+    unsafe { teletype_fn_tap_is_live() != 0 }
+}
+
 /// C callback: 1 = Fn pressed, 0 = Fn released.
 extern "C" fn on_fn_state(down: u8) {
-    static LAST_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let now_down = down != 0;
-    // flagsChanged repeats while held — only react to edges.
-    if now_down == LAST_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
+    // flagsChanged repeats while held — only react to edges. A stale latch
+    // from a tap that lost the release edge is recovered after 30 s.
+    if !LAST_DOWN.accept(now_down, now_ms()) {
         return;
     }
-    LAST_DOWN.store(now_down, std::sync::atomic::Ordering::SeqCst);
     if now_down {
         crate::dictation::mark_hotkey_down();
     } else {
