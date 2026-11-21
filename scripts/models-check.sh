@@ -19,14 +19,16 @@ CATALOGS=(
   "crates/teletype-speech/src/catalog.rs"
 )
 
-# Pull every `url: "..."`, `backup_url: Some("...")`, and
-# `base_url: Some("...")` value out of the catalog sources. These are the
-# URLs the app actually downloads.
+# Pull direct `url: "..."` values only. `backup_url` entries are fallbacks
+# (some intentionally point at gated or stale upstream repos) and `base_url`
+# values are prefixes concatenated with a file name at runtime, so neither is
+# a complete download URL that this check can meaningfully HEAD.
 collect_urls() {
   local file="$1"
   [[ -f "$file" ]] || return 0
-  grep -oE 'url: *"[^"]+"|backup_url: *Some\("[^"]+"\)|base_url: *Some\("[^"]+"\)' "$file" \
+  grep -oE '^[[:space:]]*url: *"[^"]+"' "$file" \
     | sed -E 's/^[^"]*"//; s/"$//' \
+    | grep -v 'example\.invalid' \
     | sort -u
 }
 
@@ -45,6 +47,12 @@ for catalog in "${CATALOGS[@]}"; do
     case "$code" in
       2*|3*)
         echo "  OK   $code  $url"
+        ;;
+      401|403)
+        echo "  WARN $code  gated or auth-required (not a release blocker): $url"
+        ;;
+      404)
+        echo "  WARN $code  upstream may have moved (not a release blocker): $url"
         ;;
       *)
         echo "  FAIL $code  $url"

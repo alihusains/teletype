@@ -935,7 +935,7 @@ jobs:
         with:
           toolchain: "1.90"
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        run: cargo install cargo-deny --locked --version 0.21.0
       - name: cargo deny check licenses bans
         run: cargo deny check licenses bans
       - uses: actions/setup-node@v4
