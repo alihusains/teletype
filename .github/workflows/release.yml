@@ -333,9 +333,11 @@ jobs:
             echo "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env and skipping updater artifacts."
             unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
             cargo tauri build --bundles app,dmg \
-              --config '{"bundle":{"createUpdaterArtifacts":false}}'
+              --config '{"bundle":{"createUpdaterArtifacts":false}}' \
+              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
           else
-            cargo tauri build --bundles app,dmg
+            cargo tauri build --bundles app,dmg \
+              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
           fi
       - name: Installer smoke (self-test)
         # Plan §9.2: the exact binary that ships must pass a headless
@@ -567,9 +569,11 @@ jobs:
             echo "No usable TAURI_SIGNING_PRIVATE_KEY: clearing updater-signing env and skipping updater artifacts."
             unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
             cargo tauri build --target x86_64-apple-darwin --bundles app,dmg \
-              --config '{"bundle":{"createUpdaterArtifacts":false}}'
+              --config '{"bundle":{"createUpdaterArtifacts":false}}' \
+              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
           else
-            cargo tauri build --target x86_64-apple-darwin --bundles app,dmg
+            cargo tauri build --target x86_64-apple-darwin --bundles app,dmg \
+              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
           fi
       - name: Verify the binary really is x86_64
         # Without this, a mis-set flag would publish an arm64 app under the
@@ -820,9 +824,12 @@ jobs:
             # ~30-minute build with "A public key has been found, but no
             # private key". Overridden at the CLI so a signed release still
             # produces updater payloads unchanged.
-            cargo tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+            cargo tauri build --bundles nsis \
+              --config '{"bundle":{"createUpdaterArtifacts":false}}' \
+              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
           } else {
-            cargo tauri build --bundles nsis
+            cargo tauri build --bundles nsis \
+              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
           }
       - name: Installer smoke (self-test)
         # Same gate as the macOS job (plan §9.2): the shipping binary must
