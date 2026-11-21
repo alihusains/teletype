@@ -783,7 +783,7 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
           Expand-Archive -Path $zip -DestinationPath 'llama-server-vulkan' -Force
           Remove-Item $zip
-          $binDir = '..\crates\teletype-desktop\binaries'
+          $binDir = 'crates\teletype-desktop\binaries'
           $llamaDir = Join-Path $binDir 'llama-server-win'
           New-Item -ItemType Directory -Path $llamaDir -Force | Out-Null
           # Copy every file from the prebuilt into binaries/llama-server-win/.
