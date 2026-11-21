@@ -286,6 +286,8 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - name: Install UI deps
         run: cd ui && npm ci
+      - name: Build UI
+        run: npm --prefix ui run build
       - name: Check third-party notices sync
         run: bash scripts/check-notices.sh
       - name: Build llama-server (Metal, static)
@@ -334,10 +336,10 @@ jobs:
             unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
             cargo tauri build --bundles app,dmg \
               --config '{"bundle":{"createUpdaterArtifacts":false}}' \
-              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
+              --config '{"build":{"beforeBuildCommand":"node -e 0"}}'
           else
             cargo tauri build --bundles app,dmg \
-              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
+              --config '{"build":{"beforeBuildCommand":"node -e 0"}}'
           fi
       - name: Installer smoke (self-test)
         # Plan §9.2: the exact binary that ships must pass a headless
@@ -545,6 +547,8 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - name: Install UI deps
         run: cd ui && npm ci
+      - name: Build UI
+        run: npm --prefix ui run build
       - name: Check third-party notices sync
         run: bash scripts/check-notices.sh
       - name: Build llama-server (x86_64)
@@ -570,10 +574,10 @@ jobs:
             unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
             cargo tauri build --target x86_64-apple-darwin --bundles app,dmg \
               --config '{"bundle":{"createUpdaterArtifacts":false}}' \
-              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
+              --config '{"build":{"beforeBuildCommand":"node -e 0"}}'
           else
             cargo tauri build --target x86_64-apple-darwin --bundles app,dmg \
-              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
+              --config '{"build":{"beforeBuildCommand":"node -e 0"}}'
           fi
       - name: Verify the binary really is x86_64
         # Without this, a mis-set flag would publish an arm64 app under the
@@ -756,6 +760,8 @@ jobs:
           cache-dependency-path: ui/package-lock.json
       - name: Install UI deps
         run: cd ui; npm ci
+      - name: Build UI
+        run: npm --prefix ui run build
       - name: Download llama-server (Vulkan, prebuilt)
         # Windows has no Metal; the CPU-only build was the old path. The
         # Vulkan prebuilt from llama.cpp's official releases gives GPU
@@ -824,12 +830,9 @@ jobs:
             # ~30-minute build with "A public key has been found, but no
             # private key". Overridden at the CLI so a signed release still
             # produces updater payloads unchanged.
-            cargo tauri build --bundles nsis \
-              --config '{"bundle":{"createUpdaterArtifacts":false}}' \
-              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
+            cargo tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}' --config '{"build":{"beforeBuildCommand":"node -e 0"}}'
           } else {
-            cargo tauri build --bundles nsis \
-              --config '{"build":{"beforeBuildCommand":"npm --prefix ui run build"}}'
+            cargo tauri build --bundles nsis --config '{"build":{"beforeBuildCommand":"node -e 0"}}'
           }
       - name: Installer smoke (self-test)
         # Same gate as the macOS job (plan §9.2): the shipping binary must
