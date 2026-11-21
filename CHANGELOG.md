@@ -7,6 +7,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This file records user-visible changes; it does not claim feature parity with
 any other dictation product.
 
+## [0.2.21]
+
+### Fixed
+
+- Deterministic backtrack now retracts a quantity phrase as one fact, so
+  "twenty dollars, correction, thirty dollars" becomes "thirty dollars"
+  instead of "twenty thirty dollars".
+- A replacement's duplicated leading function word is dropped, avoiding
+  "on on Tuesday" after a spoken correction.
+
 ## [0.2.20]
 
 ### Added

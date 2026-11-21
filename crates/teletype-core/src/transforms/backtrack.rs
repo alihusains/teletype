@@ -15,6 +15,9 @@
 //! Rules (docs/research/polish-retention-strategy.md §6.2 A):
 //!
 //! * Cue + replacement -> remove the retracted span, keep the replacement.
+//! * A quantity phrase is one fact: "twenty dollars, correction, thirty
+//!   dollars" retracts "twenty dollars", never just the unit, so the output
+//!   cannot contain "twenty thirty dollars".
 //! * Cue + no replacement -> keep the text unchanged (ambiguous; never guess).
 //! * `actually` as emphasis -> keep (no contrasting replacement nearby).
 //! * Never delete the first or last word of the take unless it is explicitly
@@ -65,6 +68,7 @@ pub fn resolve_backtracks(text: &str, language: &str) -> String {
             }
         }
     }
+    drop_duplicated_leading_function_word(&tokens, &mut remove, &retractions);
     if remove.iter().all(|&r| !r) {
         return text.to_string();
     }
@@ -127,6 +131,46 @@ const NUM_WORDS: &[&str] = &[
     "hundred",
     "thousand",
 ];
+
+/// True when a token is a quantity: a digit run ("20", "3pm") or a
+/// spelled-out number word ("twenty", "hundred").
+fn is_quantity_word(t: &Token) -> bool {
+    let bare = t.bare.as_str();
+    bare.chars().next().is_some_and(|c| c.is_ascii_digit()) || NUM_WORDS.contains(&bare)
+}
+
+/// Extends a comma-bounded clause left over the quantity that modifies it.
+///
+/// In "it costs twenty dollars, correction, thirty dollars" the comma walk
+/// retracts only "dollars", which leaves "it costs twenty thirty dollars".
+/// Walking left over `twenty` makes the retracted span the whole phrase, so
+/// the output is "it costs thirty dollars". Only quantity words (and the
+/// connectors inside a quantity, `a hundred`, `one hundred and twenty`) are
+/// absorbed: a name or a verb stops the walk, so "invite Frank, scratch that,
+/// Gordon" is unchanged.
+fn extend_clause_over_quantity(tokens: &[Token], clause_start: usize) -> usize {
+    let mut start = clause_start;
+    while start > 0 {
+        let prev = &tokens[start - 1];
+        if is_quantity_word(prev) {
+            start -= 1;
+            continue;
+        }
+        // "a hundred dollars": the determiner belongs to the quantity phrase.
+        if matches!(prev.bare.as_str(), "a" | "an") && is_quantity_word(&tokens[start]) {
+            start -= 1;
+            continue;
+        }
+        // "one hundred and twenty": the conjunction inside a quantity is part
+        // of the phrase; a conjunction after a name ("Mom and Dad") is not.
+        if prev.bare == "and" && start >= 2 && is_quantity_word(&tokens[start - 2]) {
+            start -= 1;
+            continue;
+        }
+        break;
+    }
+    start
+}
 
 /// Cues that unconditionally retract the preceding clause: the following
 /// word is always the replacement, whatever it is.
@@ -421,6 +465,7 @@ fn retract_before_cue(
     let mut j = cue_start;
     let mut found_boundary = false;
     let mut boundary_punct = false;
+    let mut boundary_comma = false;
     while j > 0 {
         let k = j - 1;
         let t = &tokens[k];
@@ -441,9 +486,11 @@ fn retract_before_cue(
         clause_end = k;
         if t.trailing_punct() == ',' {
             // A comma marks the end of the clause: the comma-carrying token
-            // IS the last word of the retracted clause.
+            // IS the last word of the retracted clause (but see the quantity
+            // extension below — it can be the tail of a longer phrase).
             found_boundary = true;
             boundary_punct = true;
+            boundary_comma = true;
             break;
         }
         j = k;
@@ -454,6 +501,11 @@ fn retract_before_cue(
     if !found_boundary && clause_end == cue_start {
         // No boundary found and no tokens walked: the clause is empty.
         return None;
+    }
+    if boundary_comma {
+        // "twenty dollars," is one fact, not two: retract the whole phrase so
+        // the retracted quantity cannot survive next to its replacement.
+        clause_end = extend_clause_over_quantity(tokens, clause_end);
     }
     // Without punctuation, the clause walk stopped on a function word. That
     // can leave only a suffix of a noun phrase ("the office" -> "office" in
@@ -562,6 +614,7 @@ fn retract_after_actuality(
     let mut clause_end = cue_start;
     let mut j = cue_start;
     let mut found_boundary = false;
+    let mut boundary_comma = false;
     while j > 0 {
         let k = j - 1;
         let t = &tokens[k];
@@ -576,6 +629,7 @@ fn retract_after_actuality(
         clause_end = k;
         if t.trailing_punct() == ',' {
             found_boundary = true;
+            boundary_comma = true;
             break;
         }
         j = k;
@@ -585,6 +639,11 @@ fn retract_after_actuality(
     }
     if !found_boundary && clause_end == cue_start {
         return None;
+    }
+    if boundary_comma {
+        // A quantity phrase is one fact: "twenty dollars, actually, thirty
+        // dollars" must not leave "twenty thirty dollars".
+        clause_end = extend_clause_over_quantity(tokens, clause_end);
     }
     let clause_len = cue_start - clause_end;
     if clause_len == 0 {
@@ -641,6 +700,7 @@ fn retract_after_rather(
     let mut clause_end = cue_start;
     let mut j = cue_start;
     let mut found_boundary = false;
+    let mut boundary_comma = false;
     while j > 0 {
         let k = j - 1;
         let t = &tokens[k];
@@ -655,6 +715,7 @@ fn retract_after_rather(
         clause_end = k;
         if t.trailing_punct() == ',' {
             found_boundary = true;
+            boundary_comma = true;
             break;
         }
         j = k;
@@ -664,6 +725,10 @@ fn retract_after_rather(
     }
     if !found_boundary && clause_end == cue_start {
         return None;
+    }
+    if boundary_comma {
+        // A quantity phrase is one fact, as in the other cue paths.
+        clause_end = extend_clause_over_quantity(tokens, clause_end);
     }
     let clause_len = cue_start - clause_end;
     if clause_len == 0 {
@@ -897,6 +962,39 @@ fn clause_is_unambiguous_fact(tokens: &[Token], start: usize, end: usize) -> boo
     has_number && all_timeish
 }
 
+/// Drops the repaired phrase's leading function word when the word before the
+/// retracted span is the same word. "ship on monday, correction, on tuesday"
+/// otherwise removes "monday, correction" and leaves "ship on on tuesday";
+/// dropping the repeated "on" gives "ship on tuesday". Only an exact repeat of
+/// a function word is touched, so a meaningful word is never removed.
+fn drop_duplicated_leading_function_word(
+    tokens: &[Token],
+    remove: &mut [bool],
+    retractions: &[Retraction],
+) {
+    for ret in retractions {
+        if ret.keep_both || ret.start == 0 {
+            continue;
+        }
+        let mut after = ret.start + ret.len;
+        while after < tokens.len() && remove[after] {
+            after += 1;
+        }
+        if after >= tokens.len() {
+            continue;
+        }
+        let before = ret.start - 1;
+        let repeated = tokens[before].bare.as_str();
+        if !remove[before]
+            && !repeated.is_empty()
+            && repeated == tokens[after].bare
+            && NON_FACTS.contains(&repeated)
+        {
+            remove[after] = true;
+        }
+    }
+}
+
 // ── Output builder ───────────────────────────────────────────────────────────
 
 /// Builds the final text by dropping removed tokens (and transferring a
@@ -991,6 +1089,76 @@ mod tests {
         assert_eq!(
             r("the release is friday, no wait, thursday"),
             "the release is thursday"
+        );
+    }
+
+    // ── Quantity phrases and repeated connectors ──────────────────────────
+
+    #[test]
+    fn correction_retracts_the_whole_quantity_phrase() {
+        // The comma falls inside the quantity phrase: retracting only
+        // "dollars" would leave "it costs twenty thirty dollars".
+        assert_eq!(
+            r("It costs twenty dollars, correction, thirty dollars"),
+            "It costs thirty dollars"
+        );
+        assert_eq!(
+            r("It costs 20 dollars, correction, 30 dollars"),
+            "It costs 30 dollars"
+        );
+    }
+
+    #[test]
+    fn correction_retracts_a_counted_noun_phrase() {
+        assert_eq!(
+            r("we have three servers, correction, four servers"),
+            "we have four servers"
+        );
+        assert_eq!(
+            r("I need two coffees, correction, three coffees"),
+            "I need three coffees"
+        );
+    }
+
+    #[test]
+    fn correction_retracts_a_time_plus_unit() {
+        assert_eq!(r("meet at five pm, correction, six pm"), "meet at six pm");
+    }
+
+    #[test]
+    fn correction_retracts_a_determined_quantity() {
+        // "a" belongs to the quantity phrase; without it the output would be
+        // "it costs a thirty dollars".
+        assert_eq!(
+            r("it costs a hundred dollars, correction, thirty dollars"),
+            "it costs thirty dollars"
+        );
+        assert_eq!(
+            r("the total is one hundred and twenty, correction, one fifty"),
+            "the total is one fifty"
+        );
+    }
+
+    #[test]
+    fn repeated_connector_is_not_duplicated() {
+        // "on monday, correction, on tuesday" must not produce "on on tuesday".
+        assert_eq!(
+            r("ship on Monday, correction, on Tuesday"),
+            "ship on Tuesday"
+        );
+        assert_eq!(
+            r("the meeting is at five, correction, at six"),
+            "the meeting is at six"
+        );
+    }
+
+    #[test]
+    fn quantity_extension_does_not_swallow_a_name_phrase() {
+        // A name is not a quantity: the existing name retraction is unchanged,
+        // and the word before the span survives.
+        assert_eq!(
+            r("invite Frank, scratch that, Gordon to the review"),
+            "invite Gordon to the review"
         );
     }
 
@@ -1091,13 +1259,11 @@ mod tests {
 
     #[test]
     fn actually_correction_resolved() {
-        // "five hundred" is a multi-word number; the clause walk stops at
-        // the comma after "hundred", so only "hundred" is retracted. The
-        // model can handle the remaining "five" (a known limitation of the
-        // token-based clause walk for multi-word numbers).
+        // "five hundred" is a multi-word quantity: the comma-bounded clause is
+        // extended left over the number, so no "five" is left beside "six".
         assert_eq!(
             r("the budget is five hundred, actually six hundred"),
-            "the budget is five six hundred"
+            "the budget is six hundred"
         );
         // Single-token number: the retraction resolves cleanly.
         assert_eq!(r("the budget is five, actually six"), "the budget is six");
@@ -1277,11 +1443,11 @@ mod tests {
             r("the budget is five, correction, six"),
             "the budget is six"
         );
-        // Multi-word number: only the last token before the comma is
-        // retracted (a known limitation of the token-based clause walk).
+        // Multi-word quantity: the whole phrase is retracted, not just its
+        // last token.
         assert_eq!(
             r("the budget is five hundred, correction, six hundred"),
-            "the budget is five six hundred"
+            "the budget is six hundred"
         );
     }
 

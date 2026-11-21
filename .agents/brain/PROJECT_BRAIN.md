@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.19 head=e1fd01f updated=2026-11-20 -->
+<!-- brain-freshness: version=v0.2.21 head=8b4aa66 updated=2026-11-21 -->
 
 This file is the durable working memory for this project.
 
