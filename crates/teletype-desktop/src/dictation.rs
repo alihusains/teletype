@@ -1292,6 +1292,17 @@ impl Controller {
     }
 
     pub fn register_hotkey(&self, app: &AppHandle, hotkey: &str) -> Result<(), String> {
+        // A live Fn tap is the binding we were asked for: tearing it down and
+        // rebuilding it only drops key edges and makes this thread wait for the
+        // old tap thread to exit. The permission watcher calls this on every
+        // "hotkey looks dead" episode and settings saves call it on every
+        // change, so the churn is not free. Every other caller unregisters the
+        // old binding before registering a new one, so this cannot skip a real
+        // switch.
+        #[cfg(target_os = "macos")]
+        if hotkey == "Fn" && crate::fn_tap::is_live() {
+            return Ok(());
+        }
         self.unregister_hotkey(app, hotkey);
         if hotkey == "Fn" {
             // Carbon RegisterEventHotKey never fires for Fn-only presses, so the
