@@ -117,10 +117,14 @@ pub fn record_log(level: &str, message: &str) {
     if !enabled() {
         return;
     }
+    // Only failures travel. `Info`/`Success` lines describe takes (counts,
+    // durations, model choices) and the log ring is documented as able to hold
+    // dictated text, so they stay on the machine; nothing here needs them to
+    // understand a crash.
     let breadcrumb_level = match level {
         "error" => Level::Error,
         "warn" => Level::Warning,
-        _ => Level::Info,
+        _ => return,
     };
     sentry::add_breadcrumb(sentry::Breadcrumb {
         level: breadcrumb_level,
