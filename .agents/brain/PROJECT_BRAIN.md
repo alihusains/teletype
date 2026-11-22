@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.21 head=fb90826 updated=2026-11-22 -->
+<!-- brain-freshness: version=v0.2.21 head=f5a2fe6 updated=2026-11-22 -->
 
 This file is the durable working memory for this project.
 
@@ -2752,6 +2752,23 @@ Force a rewrite on every take (rejected: over-editing and fabricated changes); k
 **Evidence / source:**
 `cargo test -p teletype-core` (1390), `cargo test -p teletype-desktop` (630), tsc clean, vitest 58 files / 610 tests, eval self-test PASS. `crates/teletype-desktop/src/{dictation.rs,commands/models.rs,commands.rs}`, `ui/src/{pill.tsx,pillMachine.ts,settings/DictationPolishSections.tsx}`.
 
+### Decision D051
+
+**Title:** Sentry carries crash, hang and error reports — not telemetry — and is on by default with an in-app switch
+
+**Date:** 2026-11-22
+
+**Status:** accepted (implemented, not yet released)
+
+**Decision:**
+The one network path out of the app besides model downloads and the user's own LLM provider is crash reporting, `crates/teletype-desktop/src/telemetry.rs` → Sentry project `duas-and-aamal/teletype` (platform rust, team `teletype`). It sends exactly four things: a panic (SDK panic integration, reached by chaining to it from the local crash hook), a main-thread hang the watchdog measured, this app's own `Warn`/`Error` log lines (as breadcrumbs, plus one event per error line so a failure that never panics is still visible), and app/device context (version, release, environment, arch, OS, locale, CPU count, uptime). It never sends dictated text, transcripts, clipboard or screen content, audio, the log ring, or identity: `send_default_pii(false)`, no breadcrumbs of `Info` lines, and `user`/`request`/`server_name` deleted in `before_send`. Consent is `Settings.send_crash_reports` (default on, Settings → Privacy); `before_send` re-checks it so turning it off stops the next event; `TELETYPE_TELEMETRY=off` is the developer kill switch and `TELETYPE_SENTRY_DSN` (empty = off) overrides the endpoint. `--e2e` never starts a client.
+
+**Alternatives considered:**
+No reporting (rejected: v0.2.21's freeze was invisible in the field, and `crash.rs` only helps the machine it happened on); opt-in default-off (rejected by the owner: too few reports to be useful); a second SaaS for hang data (rejected: one project covers both); sending the log ring and Session Replay (rejected: the ring can contain dictated text).
+
+**Evidence / source:**
+Verified end to end 2026-11-22: an error line from the built binary produced `TELETYPE-1`, a panic produced `TELETYPE-3` with `release teletype@0.2.21`, `environment production`, OS `macOS 26.6.2`, device `Mac14,6`. Three smoke issues remain in the project (the handoff token can resolve but not delete them). `docs/architecture.md` §Security and privacy updated. Open: dSYM upload in `release.yml` needs `SENTRY_AUTH_TOKEN` before production stack traces are readable.
+
 ## 8. Known constraints
 
 Record constraints that future agents must know.
@@ -3149,6 +3166,7 @@ Keep only the most important summaries and links to detailed learnings.
 | L089 | **`--ctx-size 2048` is required for Qwen3-ASR: the default context allocates 9.6 GB RSS, 2048 tokens allocates 2.8 GB, for the same transcript and decode time.** llama-server allocates the full KV cache at load; the model's trained context is far larger than any dictation needs. Measured 2026-10-29 on M4 Pro 24 GB: default context 9,582 MB load RSS; `-c 2048` 2,795 MB; `-c 4096` 3,020 MB. All three produced the same 120-word transcript of the 33 s clip in ~2.16 s. The `min_ram_gb` catalog field is 4 (measured 2.8 GB, rounded up for comfortable use). | speech / llama-server / memory | verified (probe script, 3 context sizes, same clip) | `learnings/2026-10-29-qwen3-asr-ctx-size.md` |
 | L094 | **Backtrack recall comes from the deletions, so a spoken correction is retracted as a fact, not a suffix.** `is_content_word` + `extend_clause_over_quantified_object` + `replacement_head` walk the clause left over the number and its unit but stop at names and verbs; a replaced pronoun is dropped only when the replacement is a noun phrase; a repeated leading connector is skipped; applying a resolution twice is idempotent. 172 transform tests green. | transforms / backtrack | verified | `learnings/2026-11-22-backtrack-recall-is-deletion-only.md` |
 | L095 | **`CFRunLoopWakeUp` is dropped when the target run loop is not running yet, so an unbounded `pthread_join` in tap teardown froze the main thread for good.** v0.2.21 shipped it: `register_hotkey` → `unregister_hotkey` → `teletype_fn_tap_stop` → `pthread_join` on a worker asleep in its 3600 s `CFRunLoopRunInMode` timeout (`spindump` Event: hang, 11 s). Fix: the tap thread publishes `g_thread_alive` and broadcasts on exit, stop waits at most 1 s (`kStopTimeoutMs`), and a live Fn tap is kept instead of rebuilt on every permission-watcher retry. | desktop / fn_tap.m, mod_tap.m, dictation::register_hotkey | verified (spindump + gate cycles) | `learnings/2026-11-22-fn-tap-teardown-froze-the-main-thread.md` |
+| L097 | **A Sentry panic hook replaces yours, so chain instead of re-registering — and mute the hook's own log lines.** `sentry::init` (with the `panic` feature) installs its hook; calling `std::panic::set_hook` after it silently discards the remote report, so `run()` calls `set_hook` once and ends with `previous_panic_hook(info)`. The hook then logged `PANIC: …`, `  at …` and `  thread: …` through `log_entry`, which the new error-log bridge turned into three separate issues for one crash; `telemetry::mute_error_events()` (breadcrumb only, no standalone event) fixes it, and only the SDK's own `panic:` issue remains. Also: a smoke test must go through the built binary's real `init` (a `capture_message` in a scratch bin proves nothing about the app), and a client that only starts at `run()` cannot report a panic before `before_send` consent is set — the consent flag starts `false` and is applied after the settings file loads. | desktop / telemetry / panic | verified | `learnings/2026-11-22-sentry-panic-hook-chaining.md` |
 | L096 | **A frozen main thread is invisible to stack sampling, so the app now proves it is alive.** `main_thread_watchdog.rs` queues a no-op closure via `run_on_main_thread` every 5 s and waits 5 s for it; a miss is written straight to stderr as `teletype-watchdog: main thread unresponsive for <ms> ms` (never through `log_entry`, whose mutex the wedged main thread may hold), the recovery summary lands in the Developer tab. `scripts/check-main-thread-responsive.sh` (qa.sh stage 7, release.yml after the bundle build) launches the built bundle with a temp `HOME`, cycles `open -a Finder` / `open -a <bundle>`, and fails on that line, on app death, or on a stalled heartbeat; skips when it cannot observe, `--strict` makes a skip a failure. Gate cadence is sped up through `TELETYPE_MAIN_THREAD_PROBE_MS` / `_TIMEOUT_MS` / `_HEARTBEAT_PROBES`. Verified: PASS over 3 real cycles, FAIL when the main thread was blocked 8 s. A hang also persists one `hang-*.json` next to the panic reports (no log tail: the main thread may hold that mutex), so the next launch says "stopped responding for Ns" instead of the generic crash banner; the panic and hang stores share the 10-file cap. Gotcha: the single-instance plugin keys on the *compiled-in* identifier, so a launch while Teletype runs exits instantly | desktop / main thread / release gate | verified | `learnings/2026-11-22-main-thread-watchdog-gate.md` |
 
 ---
