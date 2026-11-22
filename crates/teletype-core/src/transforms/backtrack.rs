@@ -17,7 +17,12 @@
 //! * Cue + replacement -> remove the retracted span, keep the replacement.
 //! * A quantity phrase is one fact: "twenty dollars, correction, thirty
 //!   dollars" retracts "twenty dollars", never just the unit, so the output
-//!   cannot contain "twenty thirty dollars".
+//!   cannot contain "twenty thirty dollars". The same holds for a quantified
+//!   object: "two of them, i mean three of them" retracts "two of them".
+//! * A repaired object replaces a pronoun: "send it over, i mean the deck"
+//!   drops the pronoun and keeps the particle -> "send over the deck".
+//! * A repeated connector is repair framing, not the repaired word: "to
+//!   Sarah, i mean, to Priya" contrasts on "Priya".
 //! * Cue + no replacement -> keep the text unchanged (ambiguous; never guess).
 //! * `actually` as emphasis -> keep (no contrasting replacement nearby).
 //! * Never delete the first or last word of the take unless it is explicitly
@@ -58,6 +63,14 @@ pub fn resolve_backtracks(text: &str, language: &str) -> String {
             continue;
         }
         remove[ret.start..ret.start + ret.len].fill(true);
+        for &(start, len) in &ret.extra_removals {
+            remove[start..start + len].fill(true);
+        }
+        if let Some(idx) = ret.strip_comma_at {
+            if idx < tokens.len() {
+                strip_after[idx] = true;
+            }
+        }
         if ret.strip_comma {
             let mut idx = ret.start + ret.len;
             while idx < tokens.len() && remove[idx] {
@@ -137,6 +150,46 @@ const NUM_WORDS: &[&str] = &[
 fn is_quantity_word(t: &Token) -> bool {
     let bare = t.bare.as_str();
     bare.chars().next().is_some_and(|c| c.is_ascii_digit()) || NUM_WORDS.contains(&bare)
+}
+
+/// True when a token carries content (not a function word or punctuation).
+fn is_content_word(t: &Token) -> bool {
+    !t.bare.is_empty() && !NON_FACTS.contains(&t.bare.as_str())
+}
+
+/// Determiners that open a repaired noun phrase: "I mean the deck".
+const DETERMINERS: &[&str] = &["the", "a", "an"];
+
+/// Object pronouns that a repaired noun phrase can replace: "ship it, i mean
+/// the fix" -> "ship the fix". Demonstratives ("that", "this") are left out:
+/// they far more often introduce a clause than stand in for a corrected
+/// object.
+const OBJECT_PRONOUNS: &[&str] = &["it", "them", "him", "her", "us"];
+
+/// Verb particles that can separate the replaced pronoun from the cue: "send
+/// it over, i mean the deck". English allows both "send the deck over" and
+/// "send over the deck", so dropping the pronoun alone reads naturally and
+/// the particle is kept.
+const PARTICLES: &[&str] = &[
+    "over", "out", "up", "down", "back", "through", "around", "along", "off", "away",
+];
+
+/// Extends a comma-bounded clause left over a quantified object.
+///
+/// In "buy two of them, i mean three of them" the comma walk retracts only
+/// "them", which leaves "buy two of three of them". The counted phrase is one
+/// fact, so the retraction includes the quantity and its "of".
+fn extend_clause_over_quantified_object(tokens: &[Token], clause_start: usize) -> usize {
+    if clause_start < 2 {
+        return clause_start;
+    }
+    if !OBJECT_PRONOUNS.contains(&tokens[clause_start].bare.as_str()) {
+        return clause_start;
+    }
+    if tokens[clause_start - 1].bare != "of" || !is_quantity_word(&tokens[clause_start - 2]) {
+        return clause_start;
+    }
+    extend_clause_over_quantity(tokens, clause_start - 2)
 }
 
 /// Extends a comma-bounded clause left over the quantity that modifies it.
@@ -310,6 +363,35 @@ fn tokenise(text: &str) -> Vec<Token> {
 
 // ── Cue matching ─────────────────────────────────────────────────────────────
 
+/// A resolved retraction: the clause a cue retracts, plus the cue itself.
+struct Clause {
+    /// First token of the retracted clause.
+    start: usize,
+    /// Number of tokens in the retracted clause (zero when only the cue is
+    /// removed and the repair lives in `extra_removals`).
+    len: usize,
+    keep_both: bool,
+    /// Tokens removed away from the main span, because the repair is not
+    /// contiguous ("send it over, i mean the deck": the pronoun is removed
+    /// while the particle between it and the cue is kept).
+    extra_removals: Vec<(usize, usize)>,
+    /// Token whose trailing comma is repair framing even though it is not the
+    /// first kept token after the retracted span.
+    strip_comma_at: Option<usize>,
+}
+
+impl Clause {
+    fn plain(start: usize, len: usize, keep_both: bool) -> Self {
+        Self {
+            start,
+            len,
+            keep_both,
+            extra_removals: Vec::new(),
+            strip_comma_at: None,
+        }
+    }
+}
+
 /// A retraction found in the text: the token span `start..start+len` that is
 /// retracted (the cue phrase plus the retracted clause), and whether both the
 /// retracted clause and the replacement must be kept (ambiguous replacement
@@ -322,6 +404,10 @@ struct Retraction {
     /// framing around a corrected name ("invite Frank, strike that, Gordon,
     /// to the review" -> "invite Gordon to the review").
     strip_comma: bool,
+    /// Tokens removed away from the main span (see [`Clause::extra_removals`]).
+    extra_removals: Vec<(usize, usize)>,
+    /// An additional token to strip a trailing comma from.
+    strip_comma_at: Option<usize>,
 }
 
 /// Finds every safe retraction in `tokens`. Each cue occurrence is resolved
@@ -385,12 +471,12 @@ fn find_retractions(tokens: &[Token]) -> Vec<Retraction> {
                 c if NAME_CUES.contains(&c) => retract_before_cue(tokens, cue_start, rep, n, true),
                 _ => None,
             };
-            if let Some((span_start, span_len, keep_both)) = retracted {
+            if let Some(clause) = retracted {
                 // The retracted span is the clause (span_start..span_start+span_len)
                 // plus the cue itself (i..cue_end). The cue is removed along
                 // with the clause so the output reads cleanly.
-                let clause_end = span_start + span_len;
-                let full_start = span_start.min(i);
+                let clause_end = clause.start + clause.len;
+                let full_start = clause.start.min(i);
                 let full_end = cue_end.max(clause_end);
                 // If the clause's last token carries a trailing comma, the
                 // comma is part of the retracted span: extend the span to
@@ -401,8 +487,10 @@ fn find_retractions(tokens: &[Token]) -> Vec<Retraction> {
                 out.push(Retraction {
                     start: full_start,
                     len: full_end - full_start,
-                    keep_both,
-                    strip_comma: should_strip_comma(cue, tokens, span_start, span_len, rep),
+                    keep_both: clause.keep_both,
+                    strip_comma: should_strip_comma(cue, tokens, clause.start, clause.len, rep),
+                    extra_removals: clause.extra_removals,
+                    strip_comma_at: clause.strip_comma_at,
                 });
                 // Skip past the retracted span and the cue.
                 i = cue_end;
@@ -429,20 +517,87 @@ fn find_retractions(tokens: &[Token]) -> Vec<Retraction> {
     cleaned
 }
 
-/// The clause span a cue at `cue_start` retracts, as `(start, len)` in token
-/// indices, or `None` when nothing safe can be retracted.
+/// The clause a cue at `cue_start` retracts, or `None` when nothing safe can
+/// be retracted.
 ///
 /// `needs_contrast` is true for the name cues (`sorry`, `i mean`,
 /// `never mind`): the replacement must be a contrasting word (number, time,
 /// name, entity), otherwise the cue is an apology/clarification, not a
 /// retraction, and the text is left unchanged.
+///
+/// When the clause walk finds nothing usable, a repaired object pronoun is
+/// still resolvable: "ship it, i mean the fix" -> "ship the fix".
 fn retract_before_cue(
     tokens: &[Token],
     cue_start: usize,
     replacement: usize,
     n: usize,
     needs_contrast: bool,
-) -> Option<(usize, usize, bool)> {
+) -> Option<Clause> {
+    retract_clause_before_cue(tokens, cue_start, replacement, n, needs_contrast)
+        .or_else(|| retract_replaced_pronoun(tokens, cue_start, replacement, n))
+}
+
+/// A repaired object replaces a pronoun: "send it over, i mean the deck" ->
+/// "send over the deck".
+///
+/// The repaired phrase must be a determiner-led noun phrase or a contrasting
+/// word (a name, number or entity), so an apology or a continuation after
+/// "i mean" is still left alone. Two shapes are handled:
+///
+/// * the pronoun sits right before the cue, and is removed with it;
+/// * a verb particle sits between the pronoun and the cue ("it over"): only
+///   the pronoun is removed, because "send over the deck" is as natural as
+///   "send the deck over" and keeping the particle avoids reordering words.
+fn retract_replaced_pronoun(
+    tokens: &[Token],
+    cue_start: usize,
+    replacement: usize,
+    n: usize,
+) -> Option<Clause> {
+    if replacement >= n || cue_start == 0 {
+        return None;
+    }
+    let head = replacement_head(tokens, cue_start, replacement, n);
+    let det_led = head != replacement && DETERMINERS.contains(&tokens[replacement].bare.as_str());
+    if !det_led {
+        let first_alpha = tokens[head].text.chars().find(|c| c.is_alphabetic());
+        if !is_contrast_word(&tokens[head].bare, first_alpha) {
+            return None;
+        }
+    }
+    if !is_content_word(&tokens[head]) {
+        return None;
+    }
+    // "send it over, i mean the deck": the particle stays, the pronoun goes.
+    if cue_start >= 2 {
+        let particle = &tokens[cue_start - 1];
+        let pronoun = &tokens[cue_start - 2];
+        if PARTICLES.contains(&particle.bare.as_str())
+            && OBJECT_PRONOUNS.contains(&pronoun.bare.as_str())
+        {
+            let mut clause = Clause::plain(cue_start, 0, false);
+            clause.extra_removals.push((cue_start - 2, 1));
+            if particle.trailing_punct() == ',' {
+                clause.strip_comma_at = Some(cue_start - 1);
+            }
+            return Some(clause);
+        }
+    }
+    // "ship it, i mean the fix": the pronoun is contiguous with the cue.
+    if OBJECT_PRONOUNS.contains(&tokens[cue_start - 1].bare.as_str()) {
+        return Some(Clause::plain(cue_start - 1, 1, false));
+    }
+    None
+}
+
+fn retract_clause_before_cue(
+    tokens: &[Token],
+    cue_start: usize,
+    replacement: usize,
+    n: usize,
+    needs_contrast: bool,
+) -> Option<Clause> {
     // The replacement must exist (cue + no replacement -> keep, ambiguous).
     if replacement >= n {
         return None;
@@ -480,8 +635,17 @@ fn retract_before_cue(
         // of the retracted phrase: the function word is NOT part of the
         // clause.
         if NON_FACTS.contains(&t.bare.as_str()) {
-            found_boundary = true;
-            break;
+            // A pronoun closing a counted object ("three of us") is part of
+            // the retracted phrase, not a boundary: retracting only the
+            // pronoun would leave "three of four of us".
+            let counted_object = OBJECT_PRONOUNS.contains(&t.bare.as_str())
+                && k >= 2
+                && tokens[k - 1].bare == "of"
+                && is_quantity_word(&tokens[k - 2]);
+            if !counted_object {
+                found_boundary = true;
+                break;
+            }
         }
         clause_end = k;
         if t.trailing_punct() == ',' {
@@ -506,6 +670,9 @@ fn retract_before_cue(
         // "twenty dollars," is one fact, not two: retract the whole phrase so
         // the retracted quantity cannot survive next to its replacement.
         clause_end = extend_clause_over_quantity(tokens, clause_end);
+        // "two of them," is one fact too: retracting only "them" would leave
+        // "buy two of three of them".
+        clause_end = extend_clause_over_quantified_object(tokens, clause_end);
     }
     // Without punctuation, the clause walk stopped on a function word. That
     // can leave only a suffix of a noun phrase ("the office" -> "office" in
@@ -531,12 +698,15 @@ fn retract_before_cue(
     if !has_content {
         return None;
     }
-    // Replacement check.
-    let rep_bare = &tokens[replacement].bare;
+    // Replacement check. The replacement can open with a determiner or with a
+    // repeated connector ("to Sarah, i mean, to Priya"); the word that
+    // contrasts is its head, not the connector.
+    let head = replacement_head(tokens, clause_end, replacement, n);
+    let rep_bare = &tokens[head].bare;
     if rep_bare.is_empty() {
         return None;
     }
-    let rep_first_alpha = tokens[replacement].text.chars().find(|c| c.is_alphabetic());
+    let rep_first_alpha = tokens[head].text.chars().find(|c| c.is_alphabetic());
     // For name cues (sorry, i mean, never mind), the replacement must be a
     // contrasting word (a number, time word, day name, or capitalised proper
     // noun). A lowercase common word is NOT a contrasting word: "sorry, i
@@ -587,7 +757,7 @@ fn retract_before_cue(
     // span and the caller extends it to include the cue.
     // Return: (clause_end, clause_len, keep_both). The caller extends the
     // span to include the cue tokens.
-    Some((clause_end, clause_len, keep_both))
+    Some(Clause::plain(clause_end, clause_len, keep_both))
 }
 
 /// `actually` as a retraction cue: "meet at five, actually six". The
@@ -605,7 +775,7 @@ fn retract_after_actuality(
     cue_start: usize,
     replacement: usize,
     n: usize,
-) -> Option<(usize, usize, bool)> {
+) -> Option<Clause> {
     if replacement >= n {
         return None;
     }
@@ -623,8 +793,17 @@ fn retract_after_actuality(
             break;
         }
         if NON_FACTS.contains(&t.bare.as_str()) {
-            found_boundary = true;
-            break;
+            // A pronoun closing a counted object ("three of us") is part of
+            // the retracted phrase, not a boundary: retracting only the
+            // pronoun would leave "three of four of us".
+            let counted_object = OBJECT_PRONOUNS.contains(&t.bare.as_str())
+                && k >= 2
+                && tokens[k - 1].bare == "of"
+                && is_quantity_word(&tokens[k - 2]);
+            if !counted_object {
+                found_boundary = true;
+                break;
+            }
         }
         clause_end = k;
         if t.trailing_punct() == ',' {
@@ -644,6 +823,7 @@ fn retract_after_actuality(
         // A quantity phrase is one fact: "twenty dollars, actually, thirty
         // dollars" must not leave "twenty thirty dollars".
         clause_end = extend_clause_over_quantity(tokens, clause_end);
+        clause_end = extend_clause_over_quantified_object(tokens, clause_end);
     }
     let clause_len = cue_start - clause_end;
     if clause_len == 0 {
@@ -656,11 +836,12 @@ fn retract_after_actuality(
     if !has_content {
         return None;
     }
-    let rep_bare = &tokens[replacement].bare;
+    let head = replacement_head(tokens, clause_end, replacement, n);
+    let rep_bare = &tokens[head].bare;
     if rep_bare.is_empty() {
         return None;
     }
-    let rep_first_alpha = tokens[replacement].text.chars().find(|c| c.is_alphabetic());
+    let rep_first_alpha = tokens[head].text.chars().find(|c| c.is_alphabetic());
     // `actually` as emphasis: no contrasting replacement nearby. We require
     // the replacement to be a contrasting word (number/name/time) to treat
     // it as a retraction; otherwise keep.
@@ -683,7 +864,7 @@ fn retract_after_actuality(
         && !NUM_WORDS.contains(&rep_bare.as_str());
     let keep_both = (clause_has_number && !rep_is_number)
         || (clause_has_name && !rep_is_name && !clause_has_number);
-    Some((clause_end, clause_len, keep_both))
+    Some(Clause::plain(clause_end, clause_len, keep_both))
 }
 
 /// `rather` as a retraction cue: "the meeting is at five, rather six". The
@@ -693,7 +874,7 @@ fn retract_after_rather(
     cue_start: usize,
     replacement: usize,
     n: usize,
-) -> Option<(usize, usize, bool)> {
+) -> Option<Clause> {
     if replacement >= n {
         return None;
     }
@@ -709,8 +890,17 @@ fn retract_after_rather(
             break;
         }
         if NON_FACTS.contains(&t.bare.as_str()) {
-            found_boundary = true;
-            break;
+            // A pronoun closing a counted object ("three of us") is part of
+            // the retracted phrase, not a boundary: retracting only the
+            // pronoun would leave "three of four of us".
+            let counted_object = OBJECT_PRONOUNS.contains(&t.bare.as_str())
+                && k >= 2
+                && tokens[k - 1].bare == "of"
+                && is_quantity_word(&tokens[k - 2]);
+            if !counted_object {
+                found_boundary = true;
+                break;
+            }
         }
         clause_end = k;
         if t.trailing_punct() == ',' {
@@ -729,6 +919,7 @@ fn retract_after_rather(
     if boundary_comma {
         // A quantity phrase is one fact, as in the other cue paths.
         clause_end = extend_clause_over_quantity(tokens, clause_end);
+        clause_end = extend_clause_over_quantified_object(tokens, clause_end);
     }
     let clause_len = cue_start - clause_end;
     if clause_len == 0 {
@@ -741,11 +932,12 @@ fn retract_after_rather(
     if !has_content {
         return None;
     }
-    let rep_bare = &tokens[replacement].bare;
+    let head = replacement_head(tokens, clause_end, replacement, n);
+    let rep_bare = &tokens[head].bare;
     if rep_bare.is_empty() {
         return None;
     }
-    let rep_first_alpha = tokens[replacement].text.chars().find(|c| c.is_alphabetic());
+    let rep_first_alpha = tokens[head].text.chars().find(|c| c.is_alphabetic());
     if !is_contrast_word(rep_bare, rep_first_alpha) {
         return None;
     }
@@ -765,7 +957,7 @@ fn retract_after_rather(
         && !NUM_WORDS.contains(&rep_bare.as_str());
     let keep_both = (clause_has_number && !rep_is_number)
         || (clause_has_name && !rep_is_name && !clause_has_number);
-    Some((clause_end, clause_len, keep_both))
+    Some(Clause::plain(clause_end, clause_len, keep_both))
 }
 
 /// True when `bare` is a contrasting word: a number, a time word, a day
@@ -819,6 +1011,42 @@ fn is_contrast_word(bare: &str, original_first_alpha: Option<char>) -> bool {
         }
     }
     false
+}
+
+/// The word a replacement actually contrasts on.
+///
+/// A repaired phrase can open with a connector that is not the repaired fact:
+///
+/// * "send it, i mean the deck" contrasts on "deck", not on "the";
+/// * "to Sarah, i mean, to Priya" contrasts on "Priya"; the repeated "to" is
+///   repair framing and is dropped from the output, so skipping it here is
+///   what lets the correction resolve.
+///
+/// A preposition is only skipped when it repeats the word before the retracted
+/// clause, so "from Monday, i mean to Tuesday" never resolves into "from to
+/// Tuesday".
+fn replacement_head(tokens: &[Token], clause_start: usize, replacement: usize, n: usize) -> usize {
+    if replacement + 1 >= n {
+        return replacement;
+    }
+    let lead = tokens[replacement].bare.as_str();
+    let next = &tokens[replacement + 1];
+    if next.bare.is_empty() || NON_FACTS.contains(&next.bare.as_str()) || next.is_sentence_stop() {
+        return replacement;
+    }
+    // A determiner belongs to the repaired noun phrase.
+    if DETERMINERS.contains(&lead) {
+        return replacement + 1;
+    }
+    // A repeated connector is repair framing around an unchanged phrase.
+    if clause_start > 0
+        && !lead.is_empty()
+        && lead == tokens[clause_start - 1].bare
+        && NON_FACTS.contains(&lead)
+    {
+        return replacement + 1;
+    }
+    replacement
 }
 
 /// True when `bare` looks like a name or entity: length >= 3, not a
@@ -1419,6 +1647,90 @@ mod tests {
         // "i mean it" — the replacement is a pronoun, not a contrasting word.
         let input = "the release is monday, i mean it, so ship it";
         assert_eq!(r(input), input);
+    }
+
+    // ── Repaired object pronouns ──────────────────────────────────────────
+
+    #[test]
+    fn i_mean_retracts_a_replaced_pronoun_object() {
+        // The corrected object replaces "it": the pronoun and the cue go, the
+        // repaired noun phrase stays.
+        assert_eq!(
+            r("we should ship it, I mean the fix"),
+            "we should ship the fix"
+        );
+        assert_eq!(
+            r("let's reopen them, I mean the tickets"),
+            "let's reopen the tickets"
+        );
+    }
+
+    #[test]
+    fn correction_replaces_a_pronoun_object_and_keeps_the_particle() {
+        // "it over" -> "over": only the pronoun is removed, because "send
+        // over the deck" is as natural as "send the deck over".
+        assert_eq!(
+            r("Can you send it over, I mean the PDF"),
+            "Can you send over the PDF"
+        );
+        assert_eq!(
+            r("print it out, correction, the invoice"),
+            "print out the invoice"
+        );
+    }
+
+    #[test]
+    fn replaced_pronoun_needs_a_noun_phrase() {
+        // A harmless continuation after "i mean" is not a repaired object.
+        let input = "can you send it over, i mean maybe later";
+        assert_eq!(r(input), input);
+        // A preposition that is not a verb particle is not moved.
+        let input = "put it in, i mean the box";
+        assert_eq!(r(input), input);
+    }
+
+    #[test]
+    fn repeated_connector_is_skipped_for_the_replacement() {
+        // The repeated "to" is repair framing, not the repaired word.
+        assert_eq!(
+            r("send the deck to Sarah, I mean, to Priya"),
+            "send the deck to Priya"
+        );
+        assert_eq!(
+            r("send the deck to Sarah, I mean, Priya"),
+            "send the deck to Priya"
+        );
+        // A different preposition is not skipped: skipping it would produce
+        // "from to Tuesday".
+        let input = "move the meeting from Monday, I mean to Tuesday";
+        assert_eq!(r(input), input);
+    }
+
+    #[test]
+    fn quantified_object_correction_retracts_the_quantity() {
+        // Retracting only "them" would leave "buy two of three of them".
+        assert_eq!(
+            r("buy two of them, I mean three of them"),
+            "buy three of them"
+        );
+        assert_eq!(
+            r("there are three of us, correction, four of us"),
+            "there are four of us"
+        );
+    }
+
+    #[test]
+    fn new_resolutions_are_idempotent() {
+        for input in [
+            "Can you send it over, I mean the PDF",
+            "send the deck to Sarah, I mean, to Priya",
+            "buy two of them, I mean three of them",
+            "we should ship it, I mean the fix",
+        ] {
+            let once = r(input);
+            assert_eq!(r(&once), once, "idempotent: {input}");
+            assert_ne!(once, input, "expected a resolution: {input}");
+        }
     }
 
     #[test]
