@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.21 head=8b4aa66 updated=2026-11-21 -->
+<!-- brain-freshness: version=v0.2.21 head=fb90826 updated=2026-11-22 -->
 
 This file is the durable working memory for this project.
 
@@ -412,7 +412,7 @@ no recommendation may change until it is recorded.
 | OS keychain | API key storage | `keyring` crate, `crates/teletype-desktop/src/secrets.rs` | service `com.teletype.app`, accounts `llm:<provider>`; never in settings.json |
 | Hugging Face / publisher CDNs | Model downloads | `crates/teletype-inference/src/download.rs`, catalog | SHA-256 verified; `requires_license_accept` gates entries whose license needs an in-app accept (no catalog entry sets it today) |
 | SpeakType (github.com/karansinghgit/speaktype, MIT) | Reference implementation | patterns reused (see `docs/architecture.md` Phase 0 audit) | Attribution required |
-| EnviousWispr (EW) | Feature/quality reference for roadmap | temp clone path recorded in `roadmap.md` | Analysis source for P0-P4 plan |
+| EnviousWispr (EW) | Feature/quality reference for roadmap | no local clone since 2026-11-22; public repos only (see §10 source table) | Analysis source for P0-P4 plan; teardown in `docs/research/competitor-enviouswispr-teardown-2026-11-22.md` |
 
 ### Data flow
 
@@ -540,6 +540,21 @@ scripts/build-llama-server.sh
   (`MockSpeechProvider`, `MockInferenceProvider`, `MockPlatform`, etc.)
 - One end-to-end pipeline test (Gmail + Professional + `/email` scenario)
 - Settings fields are serde-defaulted for backward compatibility
+- `release.yml` has a `workflow_dispatch` **rehearsal** (`dry_run`, the
+  default): it runs the guard, all three builds, the installer self-test and
+  the main-thread gate, then skips `publish`/`verify-release`. The v0.2.20 and
+  v0.2.21 tag-day failures were all build steps that only ran on tag day. A
+  dispatch has no tag, so the version-sync step keeps the workspace version
+  and the two tag-only guard checks are skipped
+- Windows from a Mac is `docs/windows-from-mac.md`: what is implemented, the
+  free UTM/Win11-ARM path, and the 10-point desktop checklist. `windows-latest`
+  is a compile + `--self-test` gate only; it is Session 0, so it can never
+  prove focused-window injection
+- Main-thread responsiveness is gated on the real bundle:
+  `scripts/check-main-thread-responsive.sh` (qa.sh stage 7, release.yml after
+  the bundle build) cycles the app background/foreground and fails on the
+  watchdog's unresponsive line (L096). It skips — loudly — when it cannot
+  observe; `--strict` makes a skip a failure
 
 ### Error handling
 
@@ -555,6 +570,9 @@ scripts/build-llama-server.sh
 - Never log transcripts, AutoText values, profile contents, or API keys
 - In dictation paths use `log_line()`, never raw `eprintln!` (closed stderr on
   relaunch can abort the app, see Gotcha G002)
+- `teletype-watchdog:` lines on stderr mean the main thread stopped answering
+  probes; they are written with `let _ =` on purpose (a watchdog must not need
+  the log mutex, and a closed stderr must not abort it), see L096
 
 ### API conventions
 
@@ -3129,6 +3147,9 @@ Keep only the most important summaries and links to detailed learnings.
 | L087 | **The persist actor lost queued history on quit and died silently on a transient open failure.** `PersistHandle::shutdown()` was fire-and-forget, so `AppState::drop` guessed with `sleep(500ms)` and anything still in the 250 ms coalescing window was dropped; two tests worked around it with 10 s wall-clock polling loops, which is why `coalescing_lands_all_messages` failed only under load. Also `run()` logged the first `PersistStores::open` error and returned, so one busy WAL/lock at launch meant history would not persist for the whole session with no visible failure. Fix: `shutdown()` takes the writer thread's exit `Receiver` out of an `Arc<Mutex<Option<_>>>` and joins with `SHUTDOWN_WAIT` (2 s, warn on timeout), a second call returns at once (the quit path calls it twice: Exit hook then `Drop`); `run()` retries the open `OPEN_ATTEMPTS`=3 with `OPEN_RETRY_WAIT`=200 ms and logs `error!` on giving up; `Drop` no longer sleeps; the polling loops became direct post-barrier assertions. Lesson: an async writer needs a join signal, not a sleep, and a test that polls the clock instead of the contract hides the defect it is guarding. | persistence / desktop teardown / test hygiene | verified (425 desktop tests green incl. `a_second_shutdown_does_not_wait_again`; full workspace + clippy `--all-targets` clean) | `learnings/2026-10-29-persist-shutdown-join-barrier.md` |
 | L088 | **A delegated worker reported "done" with two failing tests, the wrong platform gate, and a 307 MB size pin for a 2.16 GB model.** The catalog worker set `available_on` to include Windows (the Windows release llama-server omits `-DLLAMA_BUILD_TOOLS=ON`, so it has no mtmd/audio route), recorded the main GGUF as 307,018,165 bytes (actual: 2,165,034,944), and left `is_language_tag`'s `t.len() > 4` early-return short-circuiting the `LANGUAGE_WORDS` lookup. The three defects were found by re-running the worker's commands and reading the real diff, not by trusting its exit 0. Fix: macOS-only gate, re-pinned from the HF API (LFS oid = sha256 of the resolved bytes), marker-first `strip_language_prefix` with a strict allowlist. Lesson: exit 0 is not verification; re-run the worker's test commands, read the diff, and cross-check any numeric pin against a primary source before it ships in a download path. | speech / catalog / worker verification | verified (726 tests green across 4 crates; live transcription of 5 corpus clips WER 0; both downloaded files hash-match the pins) | `learnings/2026-10-29-qwen3-asr-worker-defects.md` |
 | L089 | **`--ctx-size 2048` is required for Qwen3-ASR: the default context allocates 9.6 GB RSS, 2048 tokens allocates 2.8 GB, for the same transcript and decode time.** llama-server allocates the full KV cache at load; the model's trained context is far larger than any dictation needs. Measured 2026-10-29 on M4 Pro 24 GB: default context 9,582 MB load RSS; `-c 2048` 2,795 MB; `-c 4096` 3,020 MB. All three produced the same 120-word transcript of the 33 s clip in ~2.16 s. The `min_ram_gb` catalog field is 4 (measured 2.8 GB, rounded up for comfortable use). | speech / llama-server / memory | verified (probe script, 3 context sizes, same clip) | `learnings/2026-10-29-qwen3-asr-ctx-size.md` |
+| L094 | **Backtrack recall comes from the deletions, so a spoken correction is retracted as a fact, not a suffix.** `is_content_word` + `extend_clause_over_quantified_object` + `replacement_head` walk the clause left over the number and its unit but stop at names and verbs; a replaced pronoun is dropped only when the replacement is a noun phrase; a repeated leading connector is skipped; applying a resolution twice is idempotent. 172 transform tests green. | transforms / backtrack | verified | `learnings/2026-11-22-backtrack-recall-is-deletion-only.md` |
+| L095 | **`CFRunLoopWakeUp` is dropped when the target run loop is not running yet, so an unbounded `pthread_join` in tap teardown froze the main thread for good.** v0.2.21 shipped it: `register_hotkey` → `unregister_hotkey` → `teletype_fn_tap_stop` → `pthread_join` on a worker asleep in its 3600 s `CFRunLoopRunInMode` timeout (`spindump` Event: hang, 11 s). Fix: the tap thread publishes `g_thread_alive` and broadcasts on exit, stop waits at most 1 s (`kStopTimeoutMs`), and a live Fn tap is kept instead of rebuilt on every permission-watcher retry. | desktop / fn_tap.m, mod_tap.m, dictation::register_hotkey | verified (spindump + gate cycles) | `learnings/2026-11-22-fn-tap-teardown-froze-the-main-thread.md` |
+| L096 | **A frozen main thread is invisible to stack sampling, so the app now proves it is alive.** `main_thread_watchdog.rs` queues a no-op closure via `run_on_main_thread` every 5 s and waits 5 s for it; a miss is written straight to stderr as `teletype-watchdog: main thread unresponsive for <ms> ms` (never through `log_entry`, whose mutex the wedged main thread may hold), the recovery summary lands in the Developer tab. `scripts/check-main-thread-responsive.sh` (qa.sh stage 7, release.yml after the bundle build) launches the built bundle with a temp `HOME`, cycles `open -a Finder` / `open -a <bundle>`, and fails on that line, on app death, or on a stalled heartbeat; skips when it cannot observe, `--strict` makes a skip a failure. Gate cadence is sped up through `TELETYPE_MAIN_THREAD_PROBE_MS` / `_TIMEOUT_MS` / `_HEARTBEAT_PROBES`. Verified: PASS over 3 real cycles, FAIL when the main thread was blocked 8 s. A hang also persists one `hang-*.json` next to the panic reports (no log tail: the main thread may hold that mutex), so the next launch says "stopped responding for Ns" instead of the generic crash banner; the panic and hang stores share the 10-file cap. Gotcha: the single-instance plugin keys on the *compiled-in* identifier, so a launch while Teletype runs exits instantly | desktop / main thread / release gate | verified | `learnings/2026-11-22-main-thread-watchdog-gate.md` |
 
 ---
 
@@ -3157,7 +3178,8 @@ Track important external sources that shaped the project.
 | Source | What we learned | Last checked | Notes |
 |---|---|---|---|
 | `github.com/karansinghgit/speaktype` (MIT) | Base patterns: audio, state machine, paste injection, hotkey, tray, model downloads | 2026-09-22 (via docs) | Attribution required; Phase 0 audit in `docs/architecture.md` |
-| EnviousWispr source clone (persistent as of 2026-09-23 at `enviouswispr/EnviousWispr`, gitignored; older temp path in `roadmap.md`) | EW feature map, EG-1/S1 delivery, paste cascade, VAD, splitter, keychain. **The `enviouswispr/enviouswispr-windows/` subfolder is the reference's real Windows port (23 documented phases with measured evidence)** and is the source for `docs/roadmap-windows.md` (thread-pinning, per-frame decode-loop hazard, Win32 single-item clipboard, UIPI/RDP, model residency, native-build requirement). Key files: `notes/spike-s1.md` (ASR latency by tier), `notes/load-bearing-constraints.md` (the two promises + threats), `notes/windows-native-stack.md` (M-series -> WinML/NPU mapping), `docs/plans/windows-master-plan.md` (24 phases), `docs/performance/windows-laptop-readiness.md` (measured budgets), `docs/phase-zero/porting-ledger.md` (retain/adapt/leave-behind). Spoken-lists implementation: prompt rules only, no deterministic pass. | 2026-09-26 | Reference only; a reference claim is a prior, not Teletype evidence |
+| `github.com/saurabhav88/EnviousWispr` (macOS, GPLv3; **not** `enviouswispr/EnviousWispr`, which is where the 2026-09 clone came from) and `github.com/Envious-Labs-LLC/enviouswispr-windows` (Windows, pre-release) | Where EW is as of 2026-11-22: v2.6.1 shipped 2026-11-20 with EnviousMeet (Beta) meeting recorder, EG-1 in 3 MLX sizes, SQLite History catalog with playback/re-polish, Live Preview, remote-refreshed cloud model list. Windows app is .NET 10/WinUI 3, pre-release, Store-only, 377 production tests, measured 390/696/3,786 ms Parakeet CPU on 10/20/91.5 s fixtures. Their instruction: a reference claim is a prior, not Teletype evidence. **No code may be copied (GPLv3)**. Parity call and gap order: `docs/research/competitor-enviouswispr-teardown-2026-11-22.md` | 2026-11-22 | Repo owners moved: macOS under `saurabhav88`, Windows + Android under the Envious-Labs-LLC org |
+| EnviousWispr source clone (persistent 2026-09-23 to 2026-11-22 at `enviouswispr/EnviousWispr`, gitignored; older temp path in `roadmap.md`) | EW feature map, EG-1/S1 delivery, paste cascade, VAD, splitter, keychain. **The `enviouswispr/enviouswispr-windows/` subfolder is the reference's real Windows port (23 documented phases with measured evidence)** and is the source for `docs/roadmap-windows.md` (thread-pinning, per-frame decode-loop hazard, Win32 single-item clipboard, UIPI/RDP, model residency, native-build requirement). Key files: `notes/spike-s1.md` (ASR latency by tier), `notes/load-bearing-constraints.md` (the two promises + threats), `notes/windows-native-stack.md` (M-series -> WinML/NPU mapping), `docs/plans/windows-master-plan.md` (24 phases), `docs/performance/windows-laptop-readiness.md` (measured budgets), `docs/phase-zero/porting-ledger.md` (retain/adapt/leave-behind). Spoken-lists implementation: prompt rules only, no deterministic pass. | 2026-09-26 | Reference only; a reference claim is a prior, not Teletype evidence |
 | `https://models.enviouslabs.co/eg1/EG-1-MODEL-LICENSE.txt` | EG-1 usage/redistribution terms (entry removed from the catalog 2026-10-15, P3.9) | 2026-09-22 (HTTP 200 verified per roadmap) | Drove D001 |
 | S1-mini download URL + SHA-256 (the EG-1 catalog entry and mirror were removed 2026-10-15, P3.9) | Catalog entry and checksum — now the Superwhisper Hugging Face repo | 2026-09-22 (verified live per roadmap); HF-primary re-verified 2026-10-15 | In `roadmap.md` and `catalog.rs` |
 | `prompt.md` (original spec) | Product requirements, quality bar, privacy rules | 2026-09-22 | In-repo primary spec |
