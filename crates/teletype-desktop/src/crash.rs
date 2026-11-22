@@ -39,6 +39,10 @@ pub const MAX_REPORT_BYTES: u64 = 256 * 1024;
 pub const LOG_TAIL: usize = 20;
 /// The panic message is stored truncated to this many characters.
 const PANIC_MSG_MAX_CHARS: usize = 200;
+/// File-name prefix of a report written by the panic hook.
+const CRASH_PREFIX: &str = "crash-";
+/// File-name prefix of a report written by the main-thread watchdog.
+const HANG_PREFIX: &str = "hang-";
 
 /// The `crashes` folder inside the app data directory.
 pub fn crash_dir(app_data_dir: &Path) -> PathBuf {
@@ -58,7 +62,7 @@ pub struct ReportLogEntry {
     pub duration_ms: Option<u64>,
 }
 
-/// The newest crash report, for the one-shot next-launch notice.
+/// The newest report, for the one-shot next-launch notice.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CrashNotice {
@@ -68,6 +72,25 @@ pub struct CrashNotice {
     pub timestamp_ms: u64,
     /// The app version from the report, when it could be read.
     pub app_version: Option<String>,
+    /// `"crash"` for a panic, `"hang"` for a main-thread freeze the watchdog
+    /// observed and the app survived. The banner says which, because "it
+    /// froze for 11 seconds" and "it crashed" need different sentences.
+    pub kind: String,
+    /// How long the main thread was unresponsive, for `kind == "hang"`.
+    pub unresponsive_ms: Option<u64>,
+}
+
+/// Unix milliseconds now, or 0 if the clock is before the epoch.
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// True for a live report file (not a `.shown` one) of either kind.
+fn is_report_name(name: &str) -> bool {
+    (name.starts_with(CRASH_PREFIX) || name.starts_with(HANG_PREFIX)) && name.ends_with(".json")
 }
 
 /// Writes one crash report under `dir` and prunes the folder to
@@ -84,10 +107,7 @@ pub fn write_report(
     location: Option<&str>,
     logs: &[crate::LogEntry],
 ) -> std::io::Result<PathBuf> {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let now_ms = now_ms();
 
     // Never echo more of the payload than the cap, and mark the cut.
     let truncated = message.chars().count() > PANIC_MSG_MAX_CHARS;
@@ -112,6 +132,7 @@ pub fn write_report(
         "timestampMs": now_ms,
         "appVersion": version,
         "os": os,
+        "kind": "crash",
         "thread": thread,
         "panic": {
             "message": if truncated {
@@ -127,6 +148,45 @@ pub fn write_report(
         },
     });
 
+    write_json(dir, CRASH_PREFIX, report)
+}
+
+/// Writes one hang report for a main-thread episode the watchdog observed and
+/// the app survived.
+///
+/// Deliberately carries no log tail: a wedged main thread may be holding the
+/// log mutex, so the only evidence is what the watchdog itself measured. That
+/// is enough to tell "the app froze for 11 seconds" (a shipped freeze with no
+/// error anywhere, the v0.2.21 case) apart from "it crashed", which the
+/// next-launch banner could not do before.
+///
+/// Called from the watchdog thread, never from the main thread, so the small
+/// synchronous write is safe.
+pub fn write_hang_report(
+    dir: &Path,
+    version: &str,
+    os: &str,
+    unresponsive_ms: u64,
+    missed_probes: u32,
+) -> std::io::Result<PathBuf> {
+    let report = json!({
+        "schemaVersion": SCHEMA_VERSION,
+        "timestampMs": now_ms(),
+        "appVersion": version,
+        "os": os,
+        "kind": "hang",
+        "thread": "main",
+        "hang": {
+            "unresponsiveMs": unresponsive_ms,
+            "missedProbes": missed_probes,
+            "detector": "main-thread-watchdog",
+        },
+    });
+    write_json(dir, HANG_PREFIX, report)
+}
+
+/// Encodes, bounds, writes and prunes one report.
+fn write_json(dir: &Path, prefix: &str, report: serde_json::Value) -> std::io::Result<PathBuf> {
     let bytes = serde_json::to_string(&report).map_err(|e| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -145,10 +205,10 @@ pub fn write_report(
     }
 
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("crash-{now_ms}.json"));
-    // Atomic enough for this purpose: two panics in the same millisecond
+    let path = dir.join(format!("{prefix}{}.json", now_ms()));
+    // Atomic enough for this purpose: two reports in the same millisecond
     // would collide, and the second write simply replaces the first (both
-    // describe the same crash).
+    // describe the same problem).
     std::fs::write(&path, bytes)?;
     prune(dir);
     Ok(path)
@@ -163,7 +223,7 @@ fn prune(dir: &Path) {
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.starts_with("crash-") || !name.ends_with(".json") {
+        if !is_report_name(&name) {
             continue;
         }
         let mtime = entry
@@ -189,7 +249,7 @@ pub fn newest_report(dir: &Path) -> Option<PathBuf> {
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        if !name.starts_with("crash-") || !name.ends_with(".json") {
+        if !is_report_name(&name) {
             continue;
         }
         let mtime = entry
@@ -340,6 +400,55 @@ mod tests {
         // The last panic written is the newest report.
         assert_eq!(parsed["panic"]["message"], "panic 12");
         let _ = name;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_hang_is_a_report_too_and_carries_no_log_text() {
+        let dir = temp_dir("hang");
+        let path = write_hang_report(&dir, "0.2.22", "macos", 11_000, 2).expect("hang written");
+        assert!(
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(HANG_PREFIX),
+            "a hang gets its own prefix so the two kinds stay distinguishable"
+        );
+        let json = std::fs::read_to_string(&path).expect("hang json");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+        assert_eq!(parsed["kind"], "hang");
+        assert_eq!(parsed["hang"]["unresponsiveMs"], 11_000);
+        assert_eq!(parsed["hang"]["missedProbes"], 2);
+        assert_eq!(parsed["schemaVersion"], SCHEMA_VERSION);
+        // The next-launch notice must pick a hang up, not only a panic.
+        assert_eq!(newest_report(&dir).as_deref(), Some(path.as_path()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hangs_and_crashes_share_the_cap() {
+        let dir = temp_dir("mixed-cap");
+        for i in 0..MAX_REPORTS {
+            write_report(&dir, "0.0.0", "macos", "t", &format!("p{i}"), None, &[])
+                .expect("crash written");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        for i in 0..3 {
+            write_hang_report(&dir, "0.0.0", "macos", 6_000 + i, 1).expect("hang written");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        let count = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter(|e| is_report_name(&e.as_ref().unwrap().file_name().to_string_lossy()))
+            .count();
+        assert_eq!(
+            count, MAX_REPORTS,
+            "hangs cannot grow the folder past the cap"
+        );
+        let newest = newest_report(&dir).expect("a report remains");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&newest).unwrap()).unwrap();
+        assert_eq!(parsed["kind"], "hang", "the newest is the last hang");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

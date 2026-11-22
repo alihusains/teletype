@@ -91,7 +91,17 @@ release_build() {
   cargo build --release --workspace >/dev/null 2>&1
 }
 
-# --- Stage 7: secret scan (no committed credentials) ------------------------
+# --- Stage 7: main thread stays responsive across a bg/fg cycle -------------
+# v0.2.21 shipped a main-thread hang (L095). The app's watchdog logs a
+# `teletype-watchdog: main thread unresponsive` line to stderr when the main
+# thread stops reaching its event loop; this drives the built bundle through a
+# background/foreground cycle and fails on that line. Skips (exit 0) when there
+# is no bundle to drive, so `--fast` runs stay quick.
+main_thread_responsive() {
+  bash scripts/check-main-thread-responsive.sh
+}
+
+# --- Stage 8: secret scan (no committed credentials) ------------------------
 secret_scan() {
   echo "  scanning tracked files for obvious secrets..."
   if git grep -nE "(sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH) PRIVATE KEY|ghp_[A-Za-z0-9]{36})" -- . ':!ew/' 2>/dev/null; then
@@ -102,7 +112,7 @@ secret_scan() {
   return 0
 }
 
-# --- Stage 8: ew/ reference not leaked into the build -----------------------
+# --- Stage 9: ew/ reference not leaked into the build -----------------------
 ew_leak_scan() {
   echo "  checking no ew/ reference files are tracked..."
   if git ls-files ew/ | grep -q .; then
@@ -113,7 +123,7 @@ ew_leak_scan() {
   return 0
 }
 
-# --- Stage 9: static repo consistency (pins, inventories, licenses) ---------
+# --- Stage 10: static repo consistency (pins, inventories, licenses) --------
 repo_checks() {
   local ok=0
   bash scripts/check-artifact-pins.sh || ok=1
@@ -122,7 +132,7 @@ repo_checks() {
   return "$ok"
 }
 
-# --- Stage 10: eval ratchet + soak harness selfcheck ------------------------
+# --- Stage 11: eval ratchet + soak harness selfcheck -----------------------
 eval_gate() {
   local ok=0
   python3 scripts/eval/command_suite_gate.py --self-test || ok=1
@@ -142,6 +152,7 @@ stage "rust tests (workspace)" rust_tests
 stage "ui typecheck (tsc)" ui_typecheck
 stage "ui build (vite)" ui_build
 stage "release build" release_build
+stage "main thread responsive after background/foreground" main_thread_responsive
 stage "secret scan" secret_scan
 stage "ew/ leak scan" ew_leak_scan
 stage "static repo checks (pins, inventory, licenses)" repo_checks

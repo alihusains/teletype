@@ -13,16 +13,18 @@ pub fn crash_notice(data_dir: &std::path::Path) -> Option<crash::CrashNotice> {
     let dir = crash::crash_dir(data_dir);
     let path = crash::newest_report(&dir)?;
     // One read, parsed once.
-    let (timestamp_ms, app_version) = std::fs::read_to_string(&path)
+    let (timestamp_ms, app_version, kind, unresponsive_ms) = std::fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .map(|v| {
             (
                 v["timestampMs"].as_u64().unwrap_or(0),
                 v["appVersion"].as_str().map(String::from),
+                v["kind"].as_str().unwrap_or("crash").to_string(),
+                v["hang"]["unresponsiveMs"].as_u64(),
             )
         })
-        .unwrap_or((0, None));
+        .unwrap_or((0, None, "crash".to_string(), None));
     // Consume now: the notice must not reappear if the window reloads or a
     // settings-changed refetch runs again. A failed read above still
     // consumes, since an unreadable report is not worth showing.
@@ -31,6 +33,8 @@ pub fn crash_notice(data_dir: &std::path::Path) -> Option<crash::CrashNotice> {
         path,
         timestamp_ms,
         app_version,
+        kind,
+        unresponsive_ms,
     })
 }
 
@@ -103,6 +107,28 @@ mod tests {
         assert!(
             crash_notice(&dir).is_none(),
             "a second read finds nothing: the notice was consumed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_hang_notice_reports_the_freeze_not_a_crash() {
+        let dir = temp_dir("hang");
+        let path = crate::crash::write_hang_report(
+            &crate::crash::crash_dir(&dir),
+            "0.0.0-test",
+            "macos",
+            11_000,
+            2,
+        )
+        .expect("hang report written");
+        let notice = crash_notice(&dir).expect("the notice is pending");
+        assert_eq!(notice.path, path);
+        assert_eq!(notice.kind, "hang");
+        assert_eq!(notice.unresponsive_ms, Some(11_000));
+        assert!(
+            crash_notice(&dir).is_none(),
+            "a hang notice is one-shot like a crash notice"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -4,6 +4,22 @@ on:
   push:
     tags:
       - "v*"
+  # Rehearse the release without publishing it.
+  #
+  # Why: v0.2.20 and v0.2.21 each needed fix(release) commits after the tag was
+  # already pushed (the UI build dir, the Windows prebuilt, the model-URL
+  # check). Every one of those was a *build step*, and build steps only ever
+  # ran on tag day, which is the most expensive moment to discover them. This
+  # entry point runs the whole build, the panel smoke tests, the installer
+  # self-test and the main-thread gate, then stops before `publish` and
+  # `verify-release`. Run it from Actions > Release > Run workflow on the
+  # branch you intend to tag.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and smoke-test everything, then stop before publishing"
+        type: boolean
+        default: true
 
 # Builds, signs, notarizes, and publishes the macOS and Windows releases, plus
 # the updater manifest that makes in-app updates work.
@@ -71,6 +87,11 @@ jobs:
       - name: Verify the tagged commit has a successful CI run
         # F-05: a tag must never be able to publish a commit CI never validated.
         # Query this commit's CI runs with the workflow token.
+        #
+        # A dispatch runs against a branch, which is CI'd by its own push, so
+        # the tag-only checks are skipped rather than failing a rehearsal for
+        # not being a tag.
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -85,6 +106,7 @@ jobs:
           fi
           echo "CI run ${GOOD} succeeded for ${GITHUB_SHA}."
       - name: Verify the tagged commit is reachable from main or a release branch
+        if: github.event_name == 'push'
         # A tag is pushed independently of any branch, so the checkout here is
         # the tag commit, which sits ABOVE the branch tip. `git branch -r
         # --contains` only sees the checkout's local remote-tracking refs and
@@ -194,9 +216,17 @@ jobs:
         # release assets are misnamed (e.g. a v0.2.4 tag ships
         # Teletype_0.2.2_aarch64.dmg). Rewrite both to the tag so the
         # artifact names and the app's version always match the release.
+        #
+        # On a dispatch (rehearsal) there is no tag: keep the workspace version
+        # instead of stamping the branch name into the artifacts.
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+          else
+            VER="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+            echo "Not a tag: keeping the workspace version $VER"
+          fi
           echo "Syncing version to $VER"
           sed -i '' "s/^version = \".*\"/version = \"$VER\"/" Cargo.toml
           python3 -c "import json; p='crates/teletype-desktop/tauri.conf.json'; d=json.load(open(p)); d['version']='$VER'; json.dump(d, open(p,'w'), indent=2); open(p,'a').write(chr(10))"
@@ -341,6 +371,16 @@ jobs:
             cargo tauri build --bundles app,dmg \
               --config '{"build":{"beforeBuildCommand":"node -e 0"}}'
           fi
+      - name: Main thread responsive after background/foreground
+        # v0.2.21 shipped a main-thread hang (learning L095). The app's
+        # watchdog writes `teletype-watchdog: main thread unresponsive` to
+        # stderr when the main thread stops reaching its event loop; this
+        # drives the freshly built bundle through a background/foreground
+        # cycle and fails on that line. No Accessibility or Automation grant
+        # is involved (plain `open -a`, no Apple Events). The step skips when
+        # the runner has no GUI session to observe, rather than inventing a
+        # failure it cannot justify.
+        run: bash scripts/check-main-thread-responsive.sh
       - name: Installer smoke (self-test)
         # Plan §9.2: the exact binary that ships must pass a headless
         # pipeline run (model loads, hello.wav transcribes, text pipeline
@@ -509,7 +549,12 @@ jobs:
       - name: Sync version to the tag
         run: |
           set -euo pipefail
-          VER="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+          else
+            VER="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+            echo "Not a tag: keeping the workspace version $VER"
+          fi
           echo "Syncing version to $VER"
           sed -i '' "s/^version = \".*\"/version = \"$VER\"/" Cargo.toml
           python3 -c "import json; p='crates/teletype-desktop/tauri.conf.json'; d=json.load(open(p)); d['version']='$VER'; json.dump(d, open(p,'w'), indent=2); open(p,'a').write(chr(10))"
@@ -718,7 +763,15 @@ jobs:
       - name: Sync version to the tag
         shell: pwsh
         run: |
-          $ver = $env:GITHUB_REF_NAME -replace '^v', ''
+          # A dispatch has no tag: keep the workspace version rather than
+          # stamping the branch name into the EXE.
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $ver = $env:GITHUB_REF_NAME -replace '^v', ''
+          } else {
+            $ver = ((Get-Content Cargo.toml) | Select-String '^version = "(.*)"' |
+              Select-Object -First 1).Matches.Groups[1].Value
+            Write-Host "Not a tag: keeping the workspace version $ver"
+          }
           Write-Host "Syncing version to $ver"
           (Get-Content Cargo.toml) -replace '^version = ".*"', "version = `"$ver`"" | Set-Content Cargo.toml
           $p = 'crates\teletype-desktop\tauri.conf.json'
@@ -883,6 +936,8 @@ jobs:
   verify-release:
     name: Verify the published release + updater manifest
     needs: [publish]
+    # A dispatch stops before publishing, so there is nothing to verify.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # `gh release edit` below mutates the release (pre-release flag,
     # "latest" marker), so this job needs contents: write. It is the only
@@ -964,6 +1019,11 @@ jobs:
   publish:
     name: Publish release & updater manifest
     needs: [release-macos, release-macos-intel, release-windows]
+    # The rehearsal boundary: a dispatch builds and smoke-tests, then stops
+    # here. Every failure this job could hit on tag day (a missing .sig, a
+    # zero-platform manifest, a duplicate asset name) is still discovered by
+    # the build jobs, which is where the recent tag-day failures came from.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write

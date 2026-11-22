@@ -65,6 +65,7 @@ mod hotkey_latch;
 mod hotkey_liveness;
 #[cfg(target_os = "macos")]
 pub mod input_engine;
+mod main_thread_watchdog;
 #[cfg(target_os = "macos")]
 pub mod mic_selection;
 #[cfg(target_os = "macos")]
@@ -601,7 +602,7 @@ static LOG_BUFFER: Mutex<VecDeque<LogEntry>> = Mutex::new(VecDeque::new());
 /// The app data directory, recorded once in `setup` so the panic hook (which
 /// has no `AppHandle`) can find the `crashes` folder. `None` until setup
 /// runs, and in `--e2e` runs the hook skips writing entirely.
-static CRASH_DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+pub(crate) static CRASH_DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Snapshot of the log ring buffer (oldest first).
 pub fn logs_snapshot() -> Vec<LogEntry> {
@@ -1055,6 +1056,12 @@ pub fn run() {
                 permission_watch::spawn(app.handle().clone());
             }
 
+            // Proves the main thread keeps reaching its event loop and logs a
+            // `teletype-watchdog` line to stderr when it does not. Runs in
+            // every mode: a frozen main thread is the one failure the user
+            // cannot report from inside the app.
+            main_thread_watchdog::spawn(app.handle().clone());
+
             // Escape recovery: if the last run crashed mid-dictation, a PCM
             // spool was left behind. Surface it as an event (the UI toast is
             // a follow-up task); the recovery commands are registered below.
@@ -1093,9 +1100,20 @@ pub fn run() {
                             LogLevel::Info,
                             format!("crash report found: {}", notice.path.display()),
                         );
+                        // A freeze is not a crash: say which happened, and
+                        // how long, instead of the one-size banner.
+                        let message = match (notice.kind.as_str(), notice.unresponsive_ms) {
+                            ("hang", Some(ms)) => format!(
+                                "Teletype stopped responding for {}s last time and recovered.",
+                                (ms / 1000).max(1)
+                            ),
+                            ("hang", None) => {
+                                "Teletype stopped responding last time and recovered.".to_string()
+                            }
+                            _ => "Teletype hit a problem and recovered.".to_string(),
+                        };
                         let _ = state.settings.update(|s| {
-                            s.crash_notice =
-                                Some("Teletype hit a problem and recovered.".to_string());
+                            s.crash_notice = Some(message);
                         });
                     }
                 }
