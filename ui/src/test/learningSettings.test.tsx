@@ -67,6 +67,7 @@ const SETTINGS_MOCK = {
   vadSilenceMs: 700,
   noiseReductionEnabled: false,
   enableDeveloperTab: false,
+      sendCrashReports: true,
   polishGateEnabled: false,
   polishGateThresholdWords: 10,
   polishMaxChangePercent: 40,

@@ -294,7 +294,16 @@ never a forced style.
 ## Security and privacy
 
 - Local-first: no network on the default path; model downloads are explicit.
-- No telemetry, no analytics, no remote transcript.
+- No analytics, no product telemetry, no remote transcript. The single
+  exception is **crash reporting** (`crates/teletype-desktop/src/telemetry.rs`,
+  Sentry): a panic, a main-thread hang the watchdog observed, and this app's
+  own error/warning log lines, plus app and device context (version, OS version,
+  chip, CPU count, locale, uptime). Never sent: dictated text, transcripts,
+  clipboard content, screen text, audio, the in-memory log ring, or any user
+  identity (`send_default_pii(false)`; the `user`/`request`/`server_name` fields
+  are deleted before send). On by default, switchable off in Settings → Privacy,
+  `TELETYPE_TELEMETRY=off` for a developer machine. Local crash reports keep
+  working either way.
 - AutoText values and the profile are never logged; transcripts are not logged
   by default (operational events only: `transform_started`, `model_loaded`, …).
 - Prompt injection: dictated text is wrapped and explicitly marked as data;

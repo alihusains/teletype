@@ -224,6 +224,11 @@ fn report_unresponsive(episode: Duration, missed: u32) {
     let _ = stderr.flush();
     if missed == 1 {
         persist_hang(episode, missed);
+        // Also report it remotely: a local file only helps the machine it is
+        // on, and the shipped freeze was seen on a user's Mac, not ours. This
+        // runs on the watchdog thread, so it cannot wait on the wedged main
+        // thread; the SDK's transport has its own thread.
+        crate::telemetry::capture_hang(episode.as_millis() as u64, missed);
     }
 }
 

@@ -49,7 +49,7 @@ describe('settings round-trip', () => {
       'removeFillerWords','fillerWords','pillPosition','alwaysShowPill','livePreviewEnabled',
       'cancelHotkey','smartInsertion','playRecordingSounds','recordingSound','warmEnginePolicy',
       'matchStrictness','dictionaryEnabled','pillStyle','appIcon','transcriptsDir','vadAutoStop',
-      'vadSilenceMs','enableDeveloperTab','polishGateEnabled','polishGateThresholdWords',
+      'vadSilenceMs','enableDeveloperTab','sendCrashReports','polishGateEnabled','polishGateThresholdWords',
       'polishMaxChangePercent',
       'restoreEmoji','spokenEmoji','spokenPunctuation','modelUnloadDelaySecs','activeStyleProfile',
       'appLanguageOverrides','enabledPacks','selectedLlmProvider','theme','reduceMotion',

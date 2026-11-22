@@ -626,6 +626,14 @@ pub struct Settings {
     /// Show the Developer tab (live app logs) in the sidebar.
     #[serde(default)]
     pub enable_developer_tab: bool,
+    /// Send crash, hang and error reports to the developer's Sentry project.
+    /// On by default: a report carries the panic/hang, the app and device
+    /// context, and this app's own error log lines — never dictated text,
+    /// transcripts, clipboard content, audio or the log ring. See
+    /// `telemetry.rs` for the exact list. Off means nothing leaves the
+    /// machine, and the local crash reports keep working either way.
+    #[serde(default = "default_true")]
+    pub send_crash_reports: bool,
     /// Command Mode master switch. When off, extracted commands are never
     /// executed and the take is delivered as plain dictation instead.
     #[serde(default)]
@@ -907,6 +915,7 @@ pub struct SettingsPatch {
     pub openai_base_url: Option<String>,
     pub openai_model: Option<String>,
     pub enable_developer_tab: Option<bool>,
+    pub send_crash_reports: Option<bool>,
     pub command_mode_enabled: Option<bool>,
     pub command_decider_model: Option<String>,
     pub pill_style: Option<PillStyle>,
@@ -986,6 +995,7 @@ impl SettingsPatch {
         apply!(openai_base_url);
         apply!(openai_model);
         apply!(enable_developer_tab);
+        apply!(send_crash_reports);
         apply!(command_mode_enabled);
         apply!(command_decider_model);
         apply!(pill_style);
@@ -1382,6 +1392,7 @@ impl Default for Settings {
             openai_base_url: default_openai_base_url(),
             openai_model: default_openai_model(),
             enable_developer_tab: false,
+            send_crash_reports: true,
             command_mode_enabled: false,
             command_decider_model: default_command_decider_model(),
             pill_style: default_pill_style(),

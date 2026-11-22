@@ -15,6 +15,7 @@ import {
 import {
   LicenseSection,
   PermissionsSection,
+  PrivacySection,
   UpdatesSection,
 } from "../settings/PermissionsUpdatesLicenseSections";
 import {
@@ -80,6 +81,9 @@ export interface Settings {
   vadSilenceMs: number;
   noiseReductionEnabled: boolean;
   enableDeveloperTab: boolean;
+  /// Send crash, hang and error reports to the developer's Sentry project.
+  /// On by default; the reports carry no dictated text. See PrivacySection.
+  sendCrashReports: boolean;
   polishGateEnabled: boolean;
   polishGateThresholdWords: number;
   /// Ceiling on how much of a polished take the model may replace, as a
@@ -977,6 +981,7 @@ export default function SettingsScreen({ active }: { active: boolean }) {
 
       <h3 style={groupHeading}>Input</h3>
       <PermissionsSection settings={settings} onChange={patch} />
+      <PrivacySection settings={settings} onChange={patch} />
       <KeybindsSection settings={settings} onChange={patch} />
       <ClipboardSection settings={settings} onChange={patch} />
       <MicrophoneSection settings={settings} onChange={patch} devices={devices} />

@@ -61,6 +61,16 @@ tauri-plugin-process = "2"
 # new process's argv to the running instance and exits it. 2.5.x is the line
 # built against tauri 2.12 and rustc 1.90 (2.4.x still requires tauri ^2.10).
 tauri-plugin-single-instance = "2.5"
+# Remote crash and hang reports. `debug-images` is deliberately off: the
+# release build keeps its own debug information, and the integration for
+# bundled debug files collides with it (sentry-rust #574). Errors + panics
+# only; no tracing, logs, metrics or session data is enabled.
+sentry = { version = "0.49", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "panic",
+    "transport",
+] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -22,6 +22,7 @@ import {
   Row,
   SecondaryButton,
   Section,
+  Toggle,
 } from "./primitives";
 import type { Settings } from "../screens/SettingsScreen";
 
@@ -208,6 +209,38 @@ export function PermissionsSection(props: {
           </span>
         </Row>
       )}
+    </Section>
+  );
+}
+
+/**
+ * Crash reports: what leaves the machine when something breaks, and the switch
+ * that stops it. Deliberately explicit about the contents, because the app is
+ * sold on staying local and this is the one exception. Local crash reports (the
+ * next-launch banner) keep working with the switch off.
+ */
+export function PrivacySection({
+  settings,
+  onChange,
+}: {
+  settings: Settings;
+  onChange: (p: Partial<Settings>) => void;
+}) {
+  return (
+    <Section
+      title="Privacy"
+      hint="Teletype never uploads dictated text, transcripts, clipboard content, audio or app logs. The one thing that can leave this Mac is a crash report."
+    >
+      <Row
+        label="Send crash reports"
+        hint="Sends the error, the stack trace, the app version, your macOS version and chip, plus this app's own error messages. No dictated text, no transcripts, no keystrokes. Off keeps crash reports on this Mac only."
+      >
+        <Toggle
+          label="Send crash reports"
+          checked={settings.sendCrashReports}
+          onChange={(v) => onChange({ sendCrashReports: v })}
+        />
+      </Row>
     </Section>
   );
 }

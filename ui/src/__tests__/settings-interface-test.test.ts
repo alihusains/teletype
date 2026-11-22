@@ -35,6 +35,7 @@ const SETTINGS_FIXTURE: Settings = {
   vadAutoStop: false,
   vadSilenceMs: 800,
   enableDeveloperTab: false,
+      sendCrashReports: true,
   polishGateEnabled: true,
   polishGateThresholdWords: 12,
   polishMaxChangePercent: 40,

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { useTauriEvent } from "./lib/useTauriEvent";
 import { messageDialog } from "./lib/dialogs";
 import { errorMessage } from "./lib/errors";
@@ -110,6 +111,9 @@ export default function App() {
   const [reduceMotion, setReduceMotion] = useState<boolean>(false);
   // Responsive: collapse the nav to icons-only when the window is narrow.
   const [narrow, setNarrow] = useState<boolean>(false);
+  // Shown under the sidebar status so a user can say which build they are on.
+  // Empty until the IPC answers; the row is not rendered while it is empty.
+  const [appVersion, setAppVersion] = useState<string>("");
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 760px)");
     setNarrow(mq.matches);
@@ -133,6 +137,12 @@ export default function App() {
   // Live model state for the nav footer. Polled coarsely and paused when the
   // window is hidden; see lib/runtimeStatus.tsx for why this is not an event.
   const runtime = useRuntimeStatus().status;
+
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch((e) => console.error("getVersion failed", e));
+  }, []);
 
   // A standing notice the backend set for itself (a migration, a degraded
   // fallback). It lives in settings so it survives a restart and stays until
@@ -649,6 +659,31 @@ export default function App() {
           />
           {!narrow && navStatus.label}
         </div>
+        {/* The build in use, bottom-left. Release notes and bug reports are
+            unanswerable without it, and the Settings footer is two screens
+            away. Same `getVersion` the updater reads, so it is the real
+            bundle version, not one compiled into the webview. */}
+        {appVersion && (
+          <div
+            data-app-version
+            title={`Teletype ${appVersion}`}
+            style={{
+              padding: narrow ? "2px 0 0" : "2px 14px 0",
+              marginTop: 2,
+              fontSize: 11,
+              fontVariantNumeric: "tabular-nums",
+              color: "var(--text-tertiary)",
+              textAlign: narrow ? "center" : "left",
+              overflow: "hidden",
+              whiteSpace: "nowrap",
+              textOverflow: "ellipsis",
+              userSelect: "text",
+              flex: "0 0 auto",
+            }}
+          >
+            {narrow ? appVersion.replace(/^v/, "") : `v${appVersion.replace(/^v/, "")}`}
+          </div>
+        )}
       </nav>
         <main style={{ flex: 1, overflow: "auto", padding: narrow ? 16 : 36 }}>
           <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto" }}>

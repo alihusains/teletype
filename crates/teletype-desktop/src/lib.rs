@@ -89,6 +89,7 @@ pub mod self_test;
 // which the Windows `libc` crate does not expose.
 #[cfg(unix)]
 mod sigterm;
+mod telemetry;
 mod tray;
 mod typing;
 
@@ -661,6 +662,16 @@ fn log_entry_with_ms(entry: LogEntry) {
     use std::io::Write as _;
     let _ = std::io::stderr().write_all(format!("{line}\n").as_bytes());
     let _ = std::io::stderr().flush();
+    // Mirror to Sentry as a breadcrumb (and, for `error`, a standalone event),
+    // so the remote report says what the app was doing, not only where it
+    // crashed. Nothing is sent unless the user has left crash reports on.
+    let level = match entry.level {
+        LogLevel::Error => "error",
+        LogLevel::Warn => "warn",
+        LogLevel::Success => "success",
+        LogLevel::Info => "info",
+    };
+    telemetry::record_log(level, &entry.message);
 }
 
 #[allow(
@@ -668,7 +679,25 @@ fn log_entry_with_ms(entry: LogEntry) {
     reason = "startup-only: the app cannot run without a valid Tauri context"
 )]
 pub fn run() {
-    std::panic::set_hook(Box::new(|info| {
+    // Remote crash and hang reports. Started first, before the panic hook and
+    // before any thread, so every thread inherits the client and a panic in
+    // startup is still reportable. `--e2e` and a test build get no client:
+    // the harness must never write to the developer's Sentry project.
+    let _sentry = if std::env::args().any(|a| a == "--e2e") {
+        None
+    } else {
+        telemetry::init()
+    };
+    // Sentry's panic integration installed its hook inside `init`; take it so
+    // our hook (which writes the local report) can chain to it instead of
+    // replacing it. Order: local report first (it must survive a dead
+    // network), then the remote one.
+    let previous_panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // The three lines below describe this same panic; the SDK reports it
+        // with a stack trace, so keep them as breadcrumbs on that event rather
+        // than as three separate issues.
+        telemetry::mute_error_events();
         let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
             (*s).to_string()
         } else if let Some(s) = info.payload().downcast_ref::<String>() {
@@ -709,6 +738,7 @@ pub fn run() {
             }
         }))
         .ok();
+        previous_panic_hook(info);
     }));
     // A second launch (Dock click, Finder double-click, `open -n`) must not
     // start a second process. Each process registers its own global hotkey
@@ -785,6 +815,9 @@ pub fn run() {
 
             let settings_store = JsonStore::new(&config_dir, "settings.json");
             let mut settings = settings_store.load(commands::Settings::default());
+            // The client started before the settings file was read; consent is
+            // applied here. Nothing is sent until this line runs.
+            crate::telemetry::set_enabled(settings.send_crash_reports);
             // P3.9: a removed model selection (EG-1) migrates to its
             // replacement before the state is built; persist immediately so
             // the one-time notice cannot be lost.

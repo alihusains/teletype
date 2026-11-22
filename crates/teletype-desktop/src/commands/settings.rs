@@ -328,6 +328,10 @@ pub mod settings_observers {
 /// Runs under the caller's `save_lock` guard.
 fn apply_settings_side_effects(app: &AppHandle, state: &AppState, old: &Settings, new: &Settings) {
     settings_observers::run_all(app, state, old, new);
+    // Crash-report consent can change without a restart: the telemetry client
+    // is already running and `before_send` re-checks this flag per event, so
+    // turning the toggle off stops the very next report.
+    crate::telemetry::set_enabled(new.send_crash_reports);
     // Let all webviews (main window + pill) refresh from the new settings.
     // The main window uses this to show/hide the Developer tab and re-fetch
     // settings; the pill uses it to update its visual style.

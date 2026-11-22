@@ -8,24 +8,24 @@ const REQUIRED_SETTINGS_FIELDS: (keyof Settings)[] = [
   'removeFillerWords', 'fillerWords', 'fillerStrength', 'pillPosition', 'alwaysShowPill', 'livePreviewEnabled',
   'cancelHotkey', 'smartInsertion', 'playRecordingSounds', 'recordingSound', 'warmEnginePolicy',
   'matchStrictness', 'dictionaryEnabled', 'pillStyle', 'appIcon', 'transcriptsDir',
-  'vadAutoStop', 'vadSilenceMs', 'enableDeveloperTab', 'polishGateEnabled',
+  'vadAutoStop', 'vadSilenceMs', 'enableDeveloperTab', 'sendCrashReports', 'polishGateEnabled',
   'polishGateThresholdWords', 'polishMaxChangePercent', 'restoreEmoji', 'spokenEmoji', 'spokenPunctuation',
   'modelUnloadDelaySecs', 'activeStyleProfile', 'appLanguageOverrides', 'enabledPacks',
   'selectedLlmProvider', 'theme', 'reduceMotion', 'polishRules', 'listStyle', 'quickAddHotkey',
 ]
 
 describe('Settings shape', () => {
-  it('has exactly 48 fields', () => {
-    expect(REQUIRED_SETTINGS_FIELDS.length).toBe(48)
+  it('has exactly 49 fields', () => {
+    expect(REQUIRED_SETTINGS_FIELDS.length).toBe(49)
   })
 
   it('all fields are unique', () => {
-    expect(new Set(REQUIRED_SETTINGS_FIELDS).size).toBe(48)
+    expect(new Set(REQUIRED_SETTINGS_FIELDS).size).toBe(49)
   })
 
-  it('fixture with all 48 fields serializes correctly', () => {
-    const fixture = Object.fromEntries(REQUIRED_SETTINGS_FIELDS.map((k) => [k, k.includes('Enabled') || k.startsWith('restore') || k.startsWith('keep') || k.startsWith('show') || k.startsWith('has') || k === 'removeFillerWords' || k === 'alwaysShowPill' || k === 'livePreviewEnabled' || k === 'smartInsertion' || k === 'playRecordingSounds' || k === 'dictionaryEnabled' || k === 'vadAutoStop' || k === 'enableDeveloperTab' || k === 'polishGateEnabled' || k === 'spokenEmoji' || k === 'restoreEmoji' || k === 'spokenPunctuation' || k === 'reduceMotion' ? false : typeof k === 'string' && (k.endsWith('Ms') || k.endsWith('Secs') || k === 'polishGateThresholdWords' || k === 'polishMaxChangePercent' ? 0 : Array.isArray([]) ? [] : typeof k)])) as Record<string, unknown>
-    expect(Object.keys(fixture).length).toBe(48)
+  it('fixture with all 49 fields serializes correctly', () => {
+    const fixture = Object.fromEntries(REQUIRED_SETTINGS_FIELDS.map((k) => [k, k.includes('Enabled') || k.startsWith('restore') || k.startsWith('keep') || k.startsWith('show') || k.startsWith('has') || k === 'removeFillerWords' || k === 'alwaysShowPill' || k === 'livePreviewEnabled' || k === 'smartInsertion' || k === 'playRecordingSounds' || k === 'dictionaryEnabled' || k === 'vadAutoStop' || k === 'enableDeveloperTab' || k === 'sendCrashReports' || k === 'polishGateEnabled' || k === 'spokenEmoji' || k === 'restoreEmoji' || k === 'spokenPunctuation' || k === 'reduceMotion' ? false : typeof k === 'string' && (k.endsWith('Ms') || k.endsWith('Secs') || k === 'polishGateThresholdWords' || k === 'polishMaxChangePercent' ? 0 : Array.isArray([]) ? [] : typeof k)])) as Record<string, unknown>
+    expect(Object.keys(fixture).length).toBe(49)
     const json = JSON.stringify(fixture)
     expect(JSON.parse(json)).toEqual(fixture)
   })
@@ -65,6 +65,7 @@ describe('Settings shape', () => {
       vadAutoStop: true,
       vadSilenceMs: 1200,
       enableDeveloperTab: false,
+      sendCrashReports: true,
       polishGateEnabled: true,
       polishGateThresholdWords: 20,
       polishMaxChangePercent: 40,
@@ -114,7 +115,8 @@ describe('Settings shape', () => {
       removeFillerWords: false, fillerWords: [], fillerStrength: '', pillPosition: '', alwaysShowPill: false, livePreviewEnabled: false,
       cancelHotkey: '', smartInsertion: false, playRecordingSounds: false, recordingSound: '', warmEnginePolicy: '',
       matchStrictness: '', dictionaryEnabled: false, pillStyle: '', appIcon: '', transcriptsDir: '', saveRecordings: false,
-      vadAutoStop: false, vadSilenceMs: 0, enableDeveloperTab: false, polishGateEnabled: false,
+      vadAutoStop: false, vadSilenceMs: 0, enableDeveloperTab: false,
+      sendCrashReports: true, polishGateEnabled: false,
       polishGateThresholdWords: 0, polishMaxChangePercent: 0, restoreEmoji: false, spokenEmoji: false, spokenPunctuation: false,
       modelUnloadDelaySecs: 0, activeStyleProfile: '', appLanguageOverrides: {}, enabledPacks: [],
       selectedLlmProvider: '', theme: '', reduceMotion: false, polishRules: {}, listStyle: '', quickAddHotkey: '',
