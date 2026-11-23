@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../components/Icon";
-import { Toggle } from "../settings/primitives";
-import HotkeyRecorder, { displayHotkey } from "../components/HotkeyRecorder";
+import { LinkButton, Toggle } from "../settings/primitives";
+import { displayHotkey } from "../components/HotkeyRecorder";
 import { Segmented, Slider } from "../settings/primitives";
 import { confirmDialog, messageDialog } from "../lib/dialogs";
 import { errorMessage } from "../lib/errors";
@@ -1230,54 +1230,12 @@ const statusLine =
             {/* Keyboard shortcut */}
             <div style={{ background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", padding: "14px 16px" }}>
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Keyboard shortcut</div>
-              {selected ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                  <HotkeyRecorder
-                    value={shortcutDraft}
-                    onSave={(sc) => {
-                      setShortcutDraft(sc);
-                      invoke("update_transform", {
-                        transform: { ...selected, shortcut: sc, updatedAt: Date.now() },
-                      })
-                        .then(() => refresh())
-                        .catch((e) => {
-                          // Registration failed (e.g. bare modifiers): revert
-                          // the display so the UI never shows a dead binding.
-                          setShortcutDraft(selected.shortcut || "");
-                          void messageDialog(`Could not set shortcut: ${errorMessage(e)}`, {
-                            title: "Shortcut not set",
-                            kind: "error",
-                          });
-                        });
-                    }}
-                  />
-                  {shortcutDraft && (
-                    <button
-                      onClick={() => {
-                        setShortcutDraft("");
-                        invoke("update_transform", {
-                          transform: { ...selected, shortcut: "", updatedAt: Date.now() },
-                        })
-                          .then(() => refresh())
-                          .catch((e) => {
-                            // A rejected clear must put the binding back: the
-                            // display and the backend cannot disagree.
-                            setShortcutDraft(selected.shortcut || "");
-                            void messageDialog(`Could not clear the shortcut: ${errorMessage(e)}`, {
-                              title: "Shortcut not cleared",
-                              kind: "error",
-                            });
-                          });
-                      }}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", fontSize: 12 }}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Select a preset to set its shortcut.</div>
-              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13 }}>
+                <span style={{ color: "var(--text-secondary)" }}>
+                  {selected?.shortcut ? displayHotkey(shortcutDraft || selected.shortcut) : "Not set"}
+                </span>
+                <LinkButton onClick={() => navigateTo("settings:shortcuts")}>Change in Settings → Shortcuts</LinkButton>
+              </div>
             </div>
 
             {/* Prompt Engineer: a direct editor on the stored instruction,
@@ -1514,24 +1472,17 @@ const statusLine =
                 />
               </div>
 
-              {/* Keyboard shortcut */}
+              {/* Keyboard shortcut: assigned in the one canonical place. */}
               <div>
                 <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
-                  Choose a keyboard shortcut
+                  Keyboard shortcut
                 </label>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                  <HotkeyRecorder value={modalShortcut} onSave={setModalShortcut} />
-                  {modalShortcut && (
-                    <button
-                      onClick={() => setModalShortcut("")}
-                      style={{ background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 12px", fontSize: 12, cursor: "pointer", color: "var(--text-secondary)" }}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--text-tertiary, var(--text-secondary))" }}>
-                  Press it anywhere to polish the text you have selected in that app.
+                <p style={{ margin: 0, fontSize: 12, color: "var(--text-secondary)" }}>
+                  Create the preset first, then assign its shortcut in{" "}
+                  <LinkButton onClick={() => { setModalOpen(false); navigateTo("settings:shortcuts"); }}>
+                    Settings → Shortcuts
+                  </LinkButton>
+                  .
                 </p>
               </div>
 

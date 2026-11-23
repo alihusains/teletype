@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.21 head=f5a2fe6 updated=2026-11-22 -->
+<!-- brain-freshness: version=v0.2.21 head=49ad13b updated=2026-11-23 -->
 
 This file is the durable working memory for this project.
 
@@ -3168,6 +3168,9 @@ Keep only the most important summaries and links to detailed learnings.
 | L095 | **`CFRunLoopWakeUp` is dropped when the target run loop is not running yet, so an unbounded `pthread_join` in tap teardown froze the main thread for good.** v0.2.21 shipped it: `register_hotkey` → `unregister_hotkey` → `teletype_fn_tap_stop` → `pthread_join` on a worker asleep in its 3600 s `CFRunLoopRunInMode` timeout (`spindump` Event: hang, 11 s). Fix: the tap thread publishes `g_thread_alive` and broadcasts on exit, stop waits at most 1 s (`kStopTimeoutMs`), and a live Fn tap is kept instead of rebuilt on every permission-watcher retry. | desktop / fn_tap.m, mod_tap.m, dictation::register_hotkey | verified (spindump + gate cycles) | `learnings/2026-11-22-fn-tap-teardown-froze-the-main-thread.md` |
 | L097 | **A Sentry panic hook replaces yours, so chain instead of re-registering — and mute the hook's own log lines.** `sentry::init` (with the `panic` feature) installs its hook; calling `std::panic::set_hook` after it silently discards the remote report, so `run()` calls `set_hook` once and ends with `previous_panic_hook(info)`. The hook then logged `PANIC: …`, `  at …` and `  thread: …` through `log_entry`, which the new error-log bridge turned into three separate issues for one crash; `telemetry::mute_error_events()` (breadcrumb only, no standalone event) fixes it, and only the SDK's own `panic:` issue remains. Also: a smoke test must go through the built binary's real `init` (a `capture_message` in a scratch bin proves nothing about the app), and a client that only starts at `run()` cannot report a panic before `before_send` consent is set — the consent flag starts `false` and is applied after the settings file loads. | desktop / telemetry / panic | verified | `learnings/2026-11-22-sentry-panic-hook-chaining.md` |
 | L096 | **A frozen main thread is invisible to stack sampling, so the app now proves it is alive.** `main_thread_watchdog.rs` queues a no-op closure via `run_on_main_thread` every 5 s and waits 5 s for it; a miss is written straight to stderr as `teletype-watchdog: main thread unresponsive for <ms> ms` (never through `log_entry`, whose mutex the wedged main thread may hold), the recovery summary lands in the Developer tab. `scripts/check-main-thread-responsive.sh` (qa.sh stage 7, release.yml after the bundle build) launches the built bundle with a temp `HOME`, cycles `open -a Finder` / `open -a <bundle>`, and fails on that line, on app death, or on a stalled heartbeat; skips when it cannot observe, `--strict` makes a skip a failure. Gate cadence is sped up through `TELETYPE_MAIN_THREAD_PROBE_MS` / `_TIMEOUT_MS` / `_HEARTBEAT_PROBES`. Verified: PASS over 3 real cycles, FAIL when the main thread was blocked 8 s. A hang also persists one `hang-*.json` next to the panic reports (no log tail: the main thread may hold that mutex), so the next launch says "stopped responding for Ns" instead of the generic crash banner; the panic and hang stores share the 10-file cap. Gotcha: the single-instance plugin keys on the *compiled-in* identifier, so a launch while Teletype runs exits instantly | desktop / main thread / release gate | verified | `learnings/2026-11-22-main-thread-watchdog-gate.md` |
+| L098 | **The pill's "click-through, no room for a button" comment is stale; the result-card plumbing already supports an interactive learned-word pill.** `overlay.rs::show_result`/`dismiss_result` already flip `set_ignore_cursor_events` and `resize_to` sizes the window from a frontend measurement; `set_pill_size` carries a card id that gates the pending show and late dismiss. `dictionary.rs::LearnedChange` already distinguishes added vs. updated, and `LearnedOffer.matches` accepts the `offer:<id>` sentinel for any offer. The learned word is saved but only appears as a tray Undo item and a main-window toast; the plan is `docs/learned-word-pill-plan.md`. | desktop/overlay, dictation edit-watch, ui/pill | verified (source read at HEAD 49ad13b) | `learnings/2026-11-23-learned-pill-overlay-plumbing-already-exists.md` |
+
+| L099 | **Polish formatting is a code layer, not a prompt promise.** Small models ignore generic capitalization advice (L059) and card-locked cleanup prompts cannot be reprompted, so transforms/capitalization.rs and transforms/agreement.rs run at the engine exit for accepted Polish results: sentence-start capitals after .?!, ellipsis, newlines and quotes (protecting abbreviations/initials/decimals/domains), plus a closed set of unambiguous subject-verb fixes (she don't -> she doesn't, I has -> I have). The 2B/0.8B prompts now name tense/agreement with inline examples; fallback stays byte-for-byte. All bindings moved into one Shortcuts section inside Settings, with read-only links elsewhere. | polish / transforms / settings | candidate (unit + integration tests, no live model A/B yet) | learnings/2026-11-24-polish-formatting-is-a-code-layer.md |
 
 ---
 
@@ -3320,7 +3323,10 @@ When enabled:
 
 ## 17. Project skills (.agents/skills/)
 
-Reusable `/ali-*` skills for this repo (read the SKILL.md when the trigger fires):
+The eight Teletype team roles are generated into this directory from
+`.agents/agents/*.md`; invocation and drift checks are in
+`.agents/agents/REGISTRY.md`. The `/ali-*` entries below are historical
+pointers, not committed files (see AGENTS.md):
 
 | Skill | Trigger | Purpose |
 |---|---|---|
@@ -3330,10 +3336,11 @@ Reusable `/ali-*` skills for this repo (read the SKILL.md when the trigger fires
 | `ali-agent-health` | `/ali-agent-health` | Validate the agent system + brain for drift: registry/reality mismatch, dead brain references, stale decisions, orphaned or overlapping specialists. A report, not a fixer. |
 | `ali-evolve-agents` | `/ali-evolve-agents` | After meaningful work, decide whether the brain, a specialist, or the team needs an evidence-based update. Promote a learning to a gotcha/rule when it recurs; add a specialist only for a genuinely new recurring domain. |
 
-**Convention:** when Ali gives a build task, default to `/ali-pi-team`. After any pi
-task, run `/ali-verify-pi-work` before reporting done. When the app needs a live check
-or comes up blank, use `/ali-app-dev-loop`. When the team or brain feels stale, run
-`/ali-agent-health`; after a big or novel task, run `/ali-evolve-agents`.
+**Convention:** the `/ali-*` skills above are historical, not loadable in this repo.
+Route real work through the roles in `.agents/agents/REGISTRY.md`: hand a multi-part
+build to `teletype-engineering-manager` and verify with `teletype-qa-engineer`.
+Run the checks in `.agents/workflows/task-classification.md` by hand after meaningful
+work.
 
 ---
 

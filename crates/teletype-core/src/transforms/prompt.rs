@@ -145,7 +145,7 @@ pub const QWEN_POLISH_SYSTEM_PROMPT: &str = "You are an editor for speech-to-tex
 \n\
 Edit the transcript. Do all five:\n\
 1. Make it more concise: tighten the wording but never delete a fact, name, date, time, source or recipient.\n\
-2. Reword for clarity: fix grammar, punctuation, capitalization and vague wording.\n\
+2. Reword for clarity: fix grammar, punctuation, capitalization, verb tense and subject-verb agreement (I has -> I have, she don't -> she doesn't, yesterday we go -> yesterday we went). Change only the word that is wrong, never the speaker's meaning.\n\
 3. Reorder for readability: lead with the main point, group related ideas, put steps in sequence.\n\
 4. Add structure for readability. Obey the Structure setting exactly: prose = running sentences in short paragraphs, never a line that starts with \"- \" or a number; lists = \"- \" bullets, one complete sentence each.\n\
 5. Keep the selected tone. Obey the Styling setting exactly: casual = contractions and everyday words; semi-casual = plain, friendly, light contractions; semi-formal = polished, neutral, few contractions; formal = precise, professional, no contractions or slang.\n\
@@ -181,7 +181,7 @@ pub fn build_qwen_polish_messages(input: &str, control: &S1Control) -> (String, 
 pub const QWEN08_POLISH_SYSTEM_PROMPT: &str = r#"You edit speech-to-text transcripts. The first line of the user message has settings; the rest is the transcript.
 
 Apply the settings and edit the text:
-1. Fix grammar, punctuation and capitalization. Write spoken numbers, dates, URLs and emails in real form (four hundred and fifty dollars -> $450, example dot com -> example.com).
+1. Fix grammar, punctuation and capitalization, including verb tense and subject-verb agreement (she don't -> she doesn't, I has -> I have, we was -> we were). Write spoken numbers, dates, URLs and emails in real form (four hundred and fifty dollars -> $450, example dot com -> example.com).
 2. Tighten wording. Keep every fact, name, number, date and recipient.
 3. Structure: prose = short paragraphs, no bullets. lists = each item on its own line starting with "- ".
 4. Styling: casual = contractions, everyday words. semi-casual = plain and friendly. semi-formal = neutral and polished. formal = professional, no contractions.

@@ -60,6 +60,83 @@ impl LearnedOffer {
     }
 }
 
+/// The user-facing kind of a learned dictionary change. "added" when a word
+/// was created, "updated" when an existing word gained provenance or an alias.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LearnedWordKind {
+    Added,
+    Updated,
+}
+
+/// Pure kind mapping, shared by the edit-watch emitter and its unit tests.
+/// Unchanged is never emitted (it is filtered out at the write site), so it
+/// maps to None rather than silently claiming a word changed.
+pub(crate) fn learned_kind(change: &LearnedChange) -> Option<LearnedWordKind> {
+    match change {
+        LearnedChange::Created { .. } => Some(LearnedWordKind::Added),
+        LearnedChange::Backfilled { .. } | LearnedChange::AliasAdded { .. } => {
+            Some(LearnedWordKind::Updated)
+        }
+        LearnedChange::Unchanged => None,
+    }
+}
+
+/// Notice delivered to the pill window (learned-word) for a single learned
+/// word. card is the overlay card id; offer_id is the undo offer id.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LearnedWordNotice {
+    pub card: u64,
+    pub offer_id: u64,
+    pub word: String,
+    pub kind: LearnedWordKind,
+}
+
+/// Notice delivered to the pill window (learned-word-error) when the
+/// dictionary write failed. No undo offer is created in that case.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LearnedWordSaveError {
+    pub card: u64,
+    pub word: String,
+}
+
+/// Which surface a learn uses. A failed dictionary write never creates an
+/// undo offer, tray item or toast; it only gets the pill's error notice when
+/// the pill can take it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LearnedNoticePlan {
+    /// Single learned word, pill free: emit learned-word, no main-window toast.
+    Pill,
+    /// Single-word save failure, pill free: emit learned-word-error only.
+    PillError,
+    /// Multi-word / preference-only / pill busy: keep the toast and tray offer.
+    Toast,
+    /// Save failed with no single word to name: log only, no offer at all.
+    None,
+}
+
+/// Pure decision behind the emit path, so the "no success offer on save
+/// failure" rule is testable without a Tauri AppHandle.
+pub(crate) fn learned_notice_plan(
+    word_count: usize,
+    save_failed: bool,
+    pill_available: bool,
+) -> LearnedNoticePlan {
+    if save_failed {
+        if word_count == 1 && pill_available {
+            LearnedNoticePlan::PillError
+        } else {
+            LearnedNoticePlan::None
+        }
+    } else if word_count == 1 && pill_available {
+        LearnedNoticePlan::Pill
+    } else {
+        LearnedNoticePlan::Toast
+    }
+}
+
 /// What an undo changed in each store.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UndoOutcome {
@@ -383,6 +460,63 @@ pub(crate) fn undo_offer_in(
     outcome
 }
 
+/// Atomically inspects and removes the live offer when it matches. This is
+/// the claim-on-click the pill needs: once it returns Some, no other Undo
+/// path can claim the same offer, so a concurrent tray click gets Stale.
+fn take_offer_from(
+    slot: &std::sync::Mutex<Option<LearnedOffer>>,
+    matches: impl Fn(&LearnedOffer) -> bool,
+) -> Option<LearnedOffer> {
+    let mut slot = slot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let offer = slot.as_ref()?;
+    if !matches(offer) {
+        return None;
+    }
+    let claimed = offer.clone();
+    // Clearing under the same lock is the claim: a concurrent second caller
+    // cannot observe this offer any more.
+    *slot = None;
+    Some(claimed)
+}
+
+fn take_offer(
+    state: &AppState,
+    matches: impl Fn(&LearnedOffer) -> bool,
+) -> Result<Option<LearnedOffer>, String> {
+    Ok(take_offer_from(&state.last_learned, matches))
+}
+
+/// Puts a failed claim back, but only when no newer offer has taken the slot.
+fn restore_offer_into(slot: &std::sync::Mutex<Option<LearnedOffer>>, offer: LearnedOffer) {
+    let mut slot = slot
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if slot.is_none() {
+        *slot = Some(offer);
+    }
+}
+
+fn restore_offer(state: &AppState, offer: LearnedOffer) {
+    restore_offer_into(&state.last_learned, offer);
+}
+
+/// Applies a claimed offer, restoring it if the write fails so a transient
+/// store error does not throw away the user's Undo.
+fn apply_claimed_offer(
+    state: &AppState,
+    offer: LearnedOffer,
+) -> Result<Option<UndoOutcome>, String> {
+    match apply_learned_offer(state, &offer) {
+        Ok(outcome) => Ok(outcome),
+        Err(e) => {
+            restore_offer(state, offer);
+            Err(e)
+        }
+    }
+}
+
 /// Undoes the live offer when `preference_ids` names it. Returns `None` when
 /// there is no live offer or the ids belong to an older one (nothing was
 /// touched). The caller owns clearing the tray/UI offer.
@@ -390,30 +524,21 @@ pub(crate) fn undo_offer_from_state(
     state: &AppState,
     preference_ids: &[String],
 ) -> Result<Option<UndoOutcome>, String> {
-    let offer = state
-        .last_learned
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    let Some(offer) = offer.filter(|offer| offer.matches(preference_ids)) else {
+    let Some(offer) = take_offer(state, |offer| offer.matches(preference_ids))? else {
         return Ok(None);
     };
-    apply_learned_offer(state, &offer)
+    apply_claimed_offer(state, offer)
 }
 
 /// Undoes the live offer without id matching, for the tray Undo item. The
 /// tray menu is rebuilt whenever the offer changes or expires, so the live
-/// slot itself is the authority there.
+/// slot itself is the authority there. It claims under the same lock as the
+/// pill, so the two cannot double-apply.
 pub(crate) fn undo_last_offer_from_state(state: &AppState) -> Result<Option<UndoOutcome>, String> {
-    let Some(offer) = state
-        .last_learned
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
-    else {
+    let Some(offer) = take_offer(state, |_| true)? else {
         return Ok(None);
     };
-    apply_learned_offer(state, &offer)
+    apply_claimed_offer(state, offer)
 }
 
 fn apply_learned_offer(
@@ -1120,6 +1245,29 @@ fn term_id(term: &str) -> i64 {
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
     (hash & ((1u64 << 52) - 1)) as i64
+}
+
+/// Number of pairs the user permanently refused (the Dictionary > Learn
+/// from memory row). Opening a missing store creates an empty one.
+#[tauri::command]
+pub async fn learn_memory_blocked_count(state: State<'_, AppState>) -> CommandResult<usize> {
+    let path = learning_store_path(&state.data_dir);
+    let store = teletype_core::learning::store::LearningStore::open(&path)
+        .map_err(|e| format!("open learning store: {e}"))?;
+    Ok(teletype_core::learning::learn_memory::blocked_count(&store)
+        .map_err(|e| format!("count blocked pairs: {e}"))?)
+}
+
+/// Wipes every recorded refusal/block (the Learn-from tab's Forget button).
+/// Learned words and preferences are cleared separately by `clear_learned`;
+/// this is the memory of corrections the user said "no" to.
+#[tauri::command]
+pub async fn forget_learning_memory(state: State<'_, AppState>) -> CommandResult<usize> {
+    let path = learning_store_path(&state.data_dir);
+    let store = teletype_core::learning::store::LearningStore::open(&path)
+        .map_err(|e| format!("open learning store: {e}"))?;
+    Ok(teletype_core::learning::learn_memory::forget_memory(&store)
+        .map_err(|e| format!("forget learning memory: {e}"))?)
 }
 
 /// The learning store lives at `<app_data>/learning/learning.sqlite` — the
@@ -2177,5 +2325,110 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("learning").join("learning.sqlite");
         assert!(undo_learned_term_at(&path, 1).is_err());
+    }
+
+    #[test]
+    fn learned_kind_maps_every_change_arm() {
+        // Every arm is asserted: a swapped Created/Backfilled mapping would
+        // show "Updated in dictionary" for a brand-new word.
+        assert_eq!(
+            learned_kind(&LearnedChange::Created { id: "w1".into() }),
+            Some(LearnedWordKind::Added)
+        );
+        assert_eq!(
+            learned_kind(&LearnedChange::Backfilled {
+                id: "w1".into(),
+                from: "margets".into(),
+                alias_added: false,
+            }),
+            Some(LearnedWordKind::Updated)
+        );
+        assert_eq!(
+            learned_kind(&LearnedChange::AliasAdded {
+                id: "w1".into(),
+                from: "margets".into(),
+            }),
+            Some(LearnedWordKind::Updated)
+        );
+        assert_eq!(learned_kind(&LearnedChange::Unchanged), None);
+        // The wire values are exactly "added" / "updated".
+        assert_eq!(
+            serde_json::to_value(LearnedWordKind::Added).unwrap(),
+            serde_json::json!("added")
+        );
+        assert_eq!(
+            serde_json::to_value(LearnedWordKind::Updated).unwrap(),
+            serde_json::json!("updated")
+        );
+        let notice = LearnedWordNotice {
+            card: 7,
+            offer_id: 42,
+            word: "Markets".into(),
+            kind: LearnedWordKind::Added,
+        };
+        assert_eq!(
+            serde_json::to_value(notice).unwrap(),
+            serde_json::json!({
+                "card": 7,
+                "offerId": 42,
+                "word": "Markets",
+                "kind": "added",
+            })
+        );
+        let err = LearnedWordSaveError {
+            card: 8,
+            word: "Markets".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(err).unwrap(),
+            serde_json::json!({ "card": 8, "word": "Markets" })
+        );
+    }
+
+    #[test]
+    fn undo_offer_is_claimed_once_and_stale_ids_never_claim() {
+        let slot = std::sync::Mutex::new(Some(LearnedOffer {
+            id: 42,
+            preference_ids: vec!["p1".into()],
+            dictionary_changes: Vec::new(),
+            lexicon_terms: Vec::new(),
+        }));
+        // A second Undo (tray or pill) must see Stale, not apply twice.
+        let first = take_offer_from(&slot, |o| o.matches(&["offer:42".into()]))
+            .expect("the live offer is claimable by offer id");
+        assert!(take_offer_from(&slot, |o| o.matches(&["offer:42".into()])).is_none());
+        assert!(slot.lock().unwrap().is_none());
+        // A stale id never claims, even when an offer is live.
+        restore_offer_into(&slot, first);
+        assert!(take_offer_from(&slot, |o| o.matches(&["offer:41".into()])).is_none());
+        assert!(
+            slot.lock().unwrap().is_some(),
+            "a stale id must not consume it"
+        );
+        // A failed apply restores the claim, but a newer offer wins.
+        let claimed = take_offer_from(&slot, |o| o.matches(&["offer:42".into()])).unwrap();
+        *slot.lock().unwrap() = Some(LearnedOffer {
+            id: 43,
+            ..LearnedOffer::default()
+        });
+        restore_offer_into(&slot, claimed);
+        assert_eq!(slot.lock().unwrap().as_ref().unwrap().id, 43);
+    }
+
+    #[test]
+    fn a_failed_save_never_produces_a_success_offer() {
+        use LearnedNoticePlan::*;
+        // A single-word save failure shows the error pill only; no offer,
+        // tray Undo or main-window toast is created by the emit path.
+        assert_eq!(learned_notice_plan(1, true, true), PillError);
+        // Multi-word or pill-busy failures have nothing safe to surface:
+        // log only, never a "Learned" toast with no undo behind it.
+        assert_eq!(learned_notice_plan(2, true, true), None);
+        assert_eq!(learned_notice_plan(1, true, false), None);
+        // Success: exactly one word admits the pill, everything else toasts.
+        assert_eq!(learned_notice_plan(1, false, true), Pill);
+        assert_eq!(learned_notice_plan(2, false, true), Toast);
+        assert_eq!(learned_notice_plan(0, false, true), Toast);
+        assert_eq!(learned_notice_plan(1, false, false), Toast);
     }
 }

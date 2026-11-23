@@ -191,14 +191,24 @@ function GroupCard({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
-export default function KeybindsScreen() {
-  const [settings, setSettings] = useState<Settings | null>(null);
+// The one canonical shortcut editor. SettingsScreen embeds it as a section;
+// the standalone screen export remains for direct links and existing tests.
+export function ShortcutsSection({
+  settings: provided,
+  onChange,
+}: {
+  settings?: Settings | null;
+  onChange?: (p: Partial<Settings>) => void;
+} = {}) {
+  const embedded = provided !== undefined;
+  const [loaded, setLoaded] = useState<Settings | null>(null);
+  const settings = embedded ? provided : loaded;
   const [transforms, setTransforms] = useState<Transform[]>([]);
   const [error, setError] = useState<string | null>(null);
   const writes = useWrites();
 
   const refresh = () => {
-    invoke<Settings>("get_settings").then(setSettings).catch(console.error);
+    if (!embedded) invoke<Settings>("get_settings").then(setLoaded).catch(console.error);
     invoke<Transform[]>("list_transforms").then(setTransforms).catch(console.error);
   };
   useEffect(refresh, []);
@@ -208,10 +218,15 @@ export default function KeybindsScreen() {
   // backend can drop one of them (A-3).
   const save = async (updated: Settings, prev: Settings, key: string) => {
     if (writes.busy(key)) return;
-    setSettings(updated);
+    if (onChange) {
+      // Settings owns the persisted object; its patch save is the single write.
+      onChange(updated);
+      return;
+    }
+    setLoaded(updated);
     const res = await writes.run(key, () => invoke("save_settings", { settings: updated }));
     if (!res.ok) {
-      setSettings(prev);
+      setLoaded(prev);
       console.error("save_settings failed; restored previous hotkey");
     }
   };
@@ -336,7 +351,7 @@ export default function KeybindsScreen() {
 
   return (
     <div style={{ width: "100%" }}>
-      <div style={{ marginBottom: 24 }}>
+      {!embedded && <div style={{ marginBottom: 24 }}>
         <h2 className="tt-screen-title">Keybinds</h2>
         <p
           style={{
@@ -349,7 +364,7 @@ export default function KeybindsScreen() {
           Every shortcut Teletype uses, in one place. Tap a key to record a new combination; press{" "}
           <kbd>Esc</kbd> while recording to cancel without changing it.
         </p>
-      </div>
+      </div>}
 
       {conflicts.length > 0 && (
         <div
@@ -600,3 +615,5 @@ export default function KeybindsScreen() {
     </div>
   );
 }
+
+export default ShortcutsSection;

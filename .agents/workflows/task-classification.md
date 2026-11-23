@@ -2,8 +2,9 @@
 
 Deterministic rules that tell an agent **when** it must run a review, so the
 maintenance steps are not left to memory. This is the missing determinism layer
-on top of the existing `ali-evolve-agents` (what to check) and `ali-agent-health`
-(what to validate) skills.
+on top of the historical `ali-evolve-agents` (what to check) and `ali-agent-health`
+(what to validate) checklists. Those skills are not committed in this repo; run the
+checks in this file by hand.
 
 Source: `PROJECT_AGENT_OS_PRODUCTION.md` §3 (task levels), §17 (frequency),
 §18 (state). Adapted to the existing `.agents/` layout — no layout change.
@@ -46,8 +47,9 @@ When unsure between levels, take the higher one.
 
 ## 2. Post-task evolution check (every MEANINGFUL task)
 
-Run the `ali-evolve-agents` skill (its 8 questions + promotion rules are the
-checklist). Then, and only if evidence supports it, update the affected brain
+Run the post-task evolution check by hand: did we learn a durable gotcha, confirm
+a decision, hit an external constraint, or make a brain entry stale? Promote only
+with evidence. Then, and only if evidence supports it, update the affected brain
 entry / specialist / rule / skill / test — never every file. Then update the
 counters in §4.
 
@@ -61,7 +63,7 @@ counters**, not wall-clock time.
 |---|---|---|
 | Every MEANINGFUL task | Post-task evolution check (§2) | — |
 | `meaningful_tasks_since_specialist_review` reaches **10** | **Specialist Review**: for each ACTIVE specialist check stale refs, ownership, repeated mistakes, missing/unnecessary specialists; update only where evidence supports it | reset counter to 0 |
-| `meaningful_tasks_since_full_health_review` reaches **30** | **Full Health Review**: run the `ali-agent-health` skill (indexes, registry↔reality, brain references, decision staleness, learning lifecycle, duplicates, specialist overlap) | reset counter to 0 |
+| `meaningful_tasks_since_full_health_review` reaches **30** | **Full Health Review**: run the health checklist by hand (indexes, registry↔reality, brain references, decision staleness, learning lifecycle, duplicates, specialist overlap) | reset counter to 0 |
 | Before a major release | At least a Full Health Review + validate affected brain/specialist refs | — |
 
 ### Immediate triggers (do not wait for the next checkpoint)

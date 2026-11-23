@@ -1,6 +1,8 @@
 //! Transform definitions: reusable AI instructions.
 
+pub mod agreement;
 pub mod backtrack;
+pub mod capitalization;
 pub mod engine;
 pub mod families;
 pub mod gate;
@@ -210,7 +212,7 @@ Style floor, applied after the rules above and never allowed to change meaning:
 "#;
 
 pub const POLISH_INSTRUCTION: &str = r#"
-Polish the text: fix grammar, spelling and punctuation; improve clarity and readability. Keep the original voice, word choices and level of formality. Do not add, remove or reinterpret content.
+Polish the text: fix grammar, spelling, verb tense, subject-verb agreement and punctuation; improve clarity and readability. Keep the original voice, word choices and level of formality. Do not add, remove or reinterpret content.
 "#;
 
 pub const PROFESSIONAL_INSTRUCTION: &str = r#"

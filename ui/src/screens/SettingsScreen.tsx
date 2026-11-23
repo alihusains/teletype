@@ -4,10 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { WriteFailed } from "../components/StateRows";
 import { errorMessage } from "../lib/errors";
 import { useTauriEvent } from "../lib/useTauriEvent";
-import {
-  ClipboardSection,
-  KeybindsSection,
-} from "../settings/KeybindsClipboardSections";
+import { ClipboardSection } from "../settings/KeybindsClipboardSections";
+import { ShortcutsSection } from "./KeybindsScreen";
 import {
   MicrophoneSection,
   SoundsSection,
@@ -112,6 +110,8 @@ export interface Settings {
   preferBuiltinMicWithBt: boolean;
   audioConditioning: boolean;
   learnFromEdits: boolean;
+  /** How long a learned-word Undo offer stays live, in seconds (3..300). */
+  learnUndoSecs?: number;
   learnNamesFromScreen: boolean;
   keepAudioForSelfTests: boolean;
   duckOtherAudio: boolean;
@@ -780,7 +780,13 @@ function TranscriptsDirField({
   );
 }
 
-export default function SettingsScreen({ active }: { active: boolean }) {
+export default function SettingsScreen({
+  active,
+  focusShortcuts = false,
+}: {
+  active: boolean;
+  focusShortcuts?: boolean;
+}) {
   const [settings, setSettings] = useState<Settings | null>(null);
   // The last rejected save, shown under the header until the next save or a
   // dismissal. Without it a failed write silently reverted the control and
@@ -864,6 +870,14 @@ export default function SettingsScreen({ active }: { active: boolean }) {
     setQuery("");
     searchInputRef.current?.focus();
   };
+
+  // Cross-screen links (Dictionary Quick Add, Command Mode, AI Polish) land
+  // on the one canonical shortcuts section instead of a second editor.
+  useEffect(() => {
+    if (!focusShortcuts || !active || !settings) return;
+    const node = document.getElementById("shortcuts-section");
+    node?.scrollIntoView({ block: "start" });
+  }, [focusShortcuts, active, settings]);
 
   const save = async (updated: Settings) => {
     const prev = settings;
@@ -982,7 +996,10 @@ export default function SettingsScreen({ active }: { active: boolean }) {
       <h3 style={groupHeading}>Input</h3>
       <PermissionsSection settings={settings} onChange={patch} />
       <PrivacySection settings={settings} onChange={patch} />
-      <KeybindsSection settings={settings} onChange={patch} />
+      <div id="shortcuts-section">
+        <h3 style={groupHeading}>Keyboard shortcuts</h3>
+        <ShortcutsSection settings={settings} onChange={patch} />
+      </div>
       <ClipboardSection settings={settings} onChange={patch} />
       <MicrophoneSection settings={settings} onChange={patch} devices={devices} />
       <SoundsSection settings={settings} onChange={patch} />

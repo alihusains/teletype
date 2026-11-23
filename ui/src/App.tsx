@@ -19,7 +19,6 @@ import AutoTextScreen from "./screens/AutoTextScreen";
 import PersonalizationScreen from "./screens/PersonalizationScreen";
 import ModelsScreen from "./screens/ModelsScreen";
 import SettingsScreen from "./screens/SettingsScreen";
-import KeybindsScreen from "./screens/KeybindsScreen";
 import OnboardingScreen from "./screens/OnboardingScreen";
 import { shouldShowPermissionRepair, type Permission } from "./lib/permissions";
 import DeveloperScreen from "./screens/DeveloperScreen";
@@ -38,7 +37,6 @@ type Screen =
   | "personalization"
   | "models"
   | "settings"
-  | "keybinds"
   | "developer";
 
 // Grouped sidebar (item 11): items are arranged into product sections so the
@@ -80,7 +78,6 @@ const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
     label: "System",
     items: [
       { id: "models", label: "Models", icon: "models" },
-      { id: "keybinds", label: "Keybinds", icon: "keyboard" },
       { id: "settings", label: "Settings", icon: "settings" },
     ],
   },
@@ -100,7 +97,9 @@ const APP_ICON_SRC: Record<string, string> = {
 };
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>("home");  const [dictationState, setDictationState] = useState<string>("idle");
+  const [screen, setScreen] = useState<Screen>("home");
+  const [focusShortcuts, setFocusShortcuts] = useState(false);
+  const [dictationState, setDictationState] = useState<string>("idle");
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
   // Decided once at launch: onboarding was done earlier but a required
   // permission is missing (revoked, or reset by a changed signature).
@@ -194,8 +193,17 @@ export default function App() {
   // does `open_main_window(route)`, and the cross-screen links in Settings emit
   // the same event. An unknown route is ignored rather than blanking the UI.
   useTauriEvent<string>("navigate", ({ payload }) => {
-    if (NAVIGABLE_SCREENS.includes(payload as Screen)) setScreen(payload as Screen);
-    else console.warn(`[teletype] navigate("${payload}"): unknown screen`);
+    // "settings:shortcuts" is a deep link, not a screen: it lands on the
+    // single canonical Shortcuts section inside Settings.
+    if (payload === "settings:shortcuts") {
+      setFocusShortcuts(true);
+      setScreen("settings");
+    } else if (NAVIGABLE_SCREENS.includes(payload as Screen)) {
+      setFocusShortcuts(false);
+      setScreen(payload as Screen);
+    } else {
+      console.warn(`[teletype] navigate("${payload}"): unknown screen`);
+    }
   });
 
   // Launch-time permission check (once). Settings may still be loading, so it
@@ -775,10 +783,7 @@ export default function App() {
             <ModelsScreen />
           </div>
           <div style={{ display: screen === "settings" ? "block" : "none" }}>
-            <SettingsScreen active={screen === "settings"} />
-          </div>
-          <div style={{ display: screen === "keybinds" ? "block" : "none" }}>
-            <KeybindsScreen />
+            <SettingsScreen active={screen === "settings"} focusShortcuts={focusShortcuts} />
           </div>
           <div style={{ display: screen === "developer" ? "block" : "none" }}>
             <DeveloperScreen />

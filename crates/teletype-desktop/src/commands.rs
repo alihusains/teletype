@@ -853,6 +853,12 @@ pub struct Settings {
     /// this flag is wired in a later unit.
     #[serde(default = "default_true")]
     pub learn_from_edits: bool,
+    /// How long a learned-word Undo offer stays live, in seconds. Both the
+    /// tray Undo expiry and the floating learned-word pill's dwell use this
+    /// value (clamped to 3..300), so the two clocks cannot drift apart. A
+    /// change applies to the next learn offer. Default 12 s.
+    #[serde(default = "default_learn_undo_secs")]
+    pub learn_undo_secs: u64,
     /// Phase 7.8: promote names seen on screen (screen-context ephemeral
     /// terms) into the learned lexicon. On by default.
     #[serde(default = "default_true")]
@@ -950,6 +956,7 @@ pub struct SettingsPatch {
     pub date_format: Option<String>,
     pub quick_add_hotkey: Option<String>,
     pub show_language_coach: Option<bool>,
+    pub learn_undo_secs: Option<u64>,
 }
 
 impl SettingsPatch {
@@ -1029,8 +1036,22 @@ impl SettingsPatch {
         apply!(date_format);
         apply!(quick_add_hotkey);
         apply!(show_language_coach);
+        apply!(learn_undo_secs);
         changed
     }
+}
+
+/// Default live window for a learned-word Undo offer, in seconds. Matches
+/// the reference app's pill dwell; the tray offer uses the same value.
+fn default_learn_undo_secs() -> u64 {
+    12
+}
+
+/// Clamp a persisted undo window to a sane range. Both the tray expiry and
+/// the pill dwell call this, so a hand-edited settings file cannot arm a
+/// 0-second (unclickable) or multi-day offer.
+pub fn clamped_learn_undo_secs(secs: u64) -> u64 {
+    secs.clamp(3, 300)
 }
 
 fn default_polish_rules() -> std::collections::BTreeMap<String, bool> {
@@ -1437,6 +1458,7 @@ impl Default for Settings {
             instant_start: default_instant_start(),
             prefer_builtin_mic_with_bt: default_true(),
             learn_from_edits: default_true(),
+            learn_undo_secs: default_learn_undo_secs(),
             learn_names_from_screen: default_true(),
             keep_audio_for_self_tests: false,
             duck_other_audio: default_true(),
@@ -2789,5 +2811,37 @@ mod tests {
         let json = serde_json::to_value(Settings::default()).unwrap();
         assert_eq!(json["fillerStrength"], "standard");
         assert!(json.get("filler_strength").is_none());
+    }
+
+    #[test]
+    fn learn_undo_secs_defaults_to_twelve_and_round_trips_the_patch() {
+        // A settings file written before this field existed still loads on
+        // the 12 s default (the tray expiry and pill dwell share it).
+        let legacy: Settings =
+            serde_json::from_value(serde_json::json!({ "hotkey": "Cmd+Shift+Space" })).unwrap();
+        assert_eq!(legacy.learn_undo_secs, 12);
+        assert_eq!(Settings::default().learn_undo_secs, 12);
+        assert_eq!(clamped_learn_undo_secs(0), 3);
+        assert_eq!(clamped_learn_undo_secs(12), 12);
+        assert_eq!(clamped_learn_undo_secs(9999), 300);
+
+        // The Settings wire key is camelCase.
+        let json = serde_json::to_value(Settings::default()).unwrap();
+        assert_eq!(json["learnUndoSecs"], 12);
+        assert!(json.get("learn_undo_secs").is_none());
+
+        // SettingsPatch carries the same camelCase key and applies only when
+        // it is present, without clobbering other fields.
+        let patch: SettingsPatch =
+            serde_json::from_value(serde_json::json!({ "learnUndoSecs": 30 })).unwrap();
+        assert_eq!(patch.learn_undo_secs, Some(30));
+        let mut settings = Settings::default();
+        assert!(patch.apply_to(&mut settings));
+        assert_eq!(settings.learn_undo_secs, 30);
+        assert!(!patch.apply_to(&mut settings), "a second apply is a no-op");
+        let empty: SettingsPatch = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(empty.learn_undo_secs.is_none());
+        assert!(!empty.apply_to(&mut settings));
+        assert_eq!(settings.learn_undo_secs, 30);
     }
 }

@@ -4,7 +4,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { Icon } from "../components/Icon";
 import { TabRail, TabPane, type TabRailItem } from "../components/TabRail";
 import { useTauriEvent, navigateTo } from "../lib/useTauriEvent";
-import { Explainer, LinkButton, Segmented, Toggle } from "../settings/primitives";
+import { Explainer, LinkButton, SecondaryButton, Segmented, Toggle } from "../settings/primitives";
 import { LoadFailed } from "../components/StateRows";
 import { useWrites } from "../lib/writeGuard";
 import { confirmDialog } from "../lib/dialogs";
@@ -47,6 +47,7 @@ type MatchStrictness = "loose" | "standard" | "strict";
 interface Settings {
   matchStrictness: string;
   dictionaryEnabled: boolean;
+  learnFromEdits?: boolean;
 }
 
 const STRICTNESS_OPTIONS: { value: MatchStrictness; label: string; title: string }[] = [
@@ -95,6 +96,15 @@ export default function DictionaryScreen() {
   const [dictEnabled, setDictEnabled] = useState(true);
   const [saveError, setSaveError] = useState("");
   const [notice, setNotice] = useState("");
+  // Your Words search / auto-learned filter.
+  const [wordQuery, setWordQuery] = useState("");
+  const [learnedOnly, setLearnedOnly] = useState(false);
+  // Learn-from tab mirrors the profile gate; the same state Personalization
+  // and Settings use, never a second independent switch.
+  const [learnFromEdits, setLearnFromEdits] = useState<boolean | null>(null);
+  const [learnSettings, setLearnSettings] = useState<Settings | null>(null);
+  const [blockedCount, setBlockedCount] = useState(0);
+  const [forgetting, setForgetting] = useState(false);
 
   // Your Words: add / edit form.
   const [word, setWord] = useState("");
@@ -137,6 +147,7 @@ export default function DictionaryScreen() {
       .then((s) => {
         setStrictness(strictnessValue(s.matchStrictness));
         setDictEnabled(s.dictionaryEnabled !== false);
+        setLearnSettings(s);
       })
       .catch(console.error);
   }, []);
@@ -384,6 +395,59 @@ export default function DictionaryScreen() {
 
   const allPacks = useMemo(() => [...packs, ...userPacks], [packs, userPacks]);
   const learnedCount = words.filter((w) => w.learnedFrom).length;
+  const visibleWords = useMemo(() => {
+    const q = wordQuery.trim().toLowerCase();
+    return words.filter((w) => {
+      if (learnedOnly && !w.learnedFrom) return false;
+      if (!q) return true;
+      return (
+        w.word.toLowerCase().includes(q) ||
+        w.pronunciation.toLowerCase().includes(q) ||
+        (w.learnedFrom ?? "").toLowerCase().includes(q) ||
+        w.aliases.some((a) => a.toLowerCase().includes(q))
+      );
+    });
+  }, [words, wordQuery, learnedOnly]);
+
+  useEffect(() => {
+    invoke<{ learnFromEdits: boolean }>("get_profile")
+      .then((p) => setLearnFromEdits(!!p.learnFromEdits))
+      .catch(() => setLearnFromEdits(null));
+    invoke<number>("learn_memory_blocked_count")
+      .then(setBlockedCount)
+      .catch(() => setBlockedCount(0));
+  }, []);
+
+  // Same gate path as Settings > Learning and Personalization: one switch,
+  // kept in sync through the profile, never an independent local toggle.
+  const toggleLearnFromEdits = (v: boolean) => {
+    setLearnFromEdits(v);
+    invoke("set_personalization_enabled", { enabled: v }).catch((e) => {
+      setLearnFromEdits(!v);
+      console.error("set_personalization_enabled failed; reverted toggle", e);
+    });
+  };
+
+  const forgetLearning = async () => {
+    if (forgetting) return;
+    const confirmed = await confirmDialog(
+      "Forget everything Teletype remembers about your fixes?\n\nThis removes all learned preferences and dictionary words, and the memory of corrections you rejected. Blocked words may be learned again. Your dictations are not affected.",
+      { title: "Forget learned words", kind: "info" },
+    );
+    if (!confirmed) return;
+    setForgetting(true);
+    try {
+      await invoke("clear_learned");
+      await invoke("forget_learning_memory");
+      setBlockedCount(0);
+      setNotice("Forgot everything Teletype learned.");
+      await refresh();
+    } catch (e) {
+      setSaveError("Could not forget learned words: " + errorMessage(e));
+    } finally {
+      setForgetting(false);
+    }
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%" }}>
@@ -471,7 +535,12 @@ export default function DictionaryScreen() {
         <TabPane>
           {tab === "words" && (
             <YourWordsTab
-              words={words}
+              words={visibleWords}
+              totalCount={words.length}
+              query={wordQuery}
+              onQuery={setWordQuery}
+              learnedOnly={learnedOnly}
+              onLearnedOnly={setLearnedOnly}
               form={word}
               onForm={setWord}
               pronunciation={pronunciation}
@@ -543,7 +612,16 @@ export default function DictionaryScreen() {
               />
             ))}
           {tab === "learn" && (
-            <LearnTab learnedCount={learnedCount} total={words.length} onOpenWords={() => setTab("words")} />
+            <LearnTab
+              learnedCount={learnedCount}
+              total={words.length}
+              onOpenWords={() => setTab("words")}
+              learnFromEdits={learnFromEdits ?? learnSettings?.learnFromEdits ?? true}
+              onToggleLearnFromEdits={toggleLearnFromEdits}
+              onForget={() => void forgetLearning()}
+              forgetting={forgetting}
+              blockedCount={blockedCount}
+            />
           )}
           {tab === "quick" && <QuickAddTab />}
         </TabPane>
@@ -556,6 +634,11 @@ export default function DictionaryScreen() {
 
 function YourWordsTab(props: {
   words: DictionaryWord[];
+  totalCount: number;
+  query: string;
+  onQuery: (v: string) => void;
+  learnedOnly: boolean;
+  onLearnedOnly: (v: boolean) => void;
   form: string;
   onForm: (v: string) => void;
   pronunciation: string;
@@ -597,8 +680,36 @@ function YourWordsTab(props: {
         }}
       >
         <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-          {p.words.length} words
+          {p.words.length === p.totalCount ? p.totalCount + " words" : p.words.length + " of " + p.totalCount + " words"}
         </span>
+        <input
+          aria-label="Search words"
+          placeholder="Search words…"
+          value={p.query}
+          onChange={(e) => p.onQuery(e.target.value)}
+          style={{
+            padding: "5px 10px",
+            fontSize: 12,
+            color: "var(--text)",
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-sm)",
+            minWidth: 150,
+          }}
+        />
+        <button
+          aria-pressed={p.learnedOnly}
+          onClick={() => p.onLearnedOnly(!p.learnedOnly)}
+          style={{
+            ...pill,
+            color: p.learnedOnly ? "var(--on-action)" : "var(--text-secondary)",
+            background: p.learnedOnly ? "var(--action)" : "transparent",
+            border: "1px solid var(--border)",
+            cursor: "pointer",
+          }}
+        >
+          Auto-learned
+        </button>
         <span style={{ flex: 1 }} />
         <button className="primary" onClick={p.onAddClick} style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <Icon name="plus" size={14} /> {p.editing ? "Done editing" : "Add word"}
@@ -769,6 +880,11 @@ function YourWordsTab(props: {
                   </span>
                 )}
               </div>
+              {w.learnedFrom && (
+                <div style={{ fontSize: 11.5, color: "var(--accent)", marginTop: 2 }}>
+                  Learned from “{w.learnedFrom}”
+                </div>
+              )}
               {(w.pronunciation || w.aliases.length > 0) && (
                 <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
                   {[w.pronunciation, ...w.aliases].filter(Boolean).join(" · ")}
@@ -964,10 +1080,20 @@ function LearnTab({
   learnedCount,
   total,
   onOpenWords,
+  learnFromEdits,
+  onToggleLearnFromEdits,
+  onForget,
+  forgetting,
+  blockedCount,
 }: {
   learnedCount: number;
   total: number;
   onOpenWords: () => void;
+  learnFromEdits: boolean;
+  onToggleLearnFromEdits: (v: boolean) => void;
+  onForget: () => void;
+  forgetting: boolean;
+  blockedCount: number;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -988,6 +1114,57 @@ function LearnTab({
         <strong style={{ color: "var(--text)" }}>{learnedCount}</strong> of your{" "}
         <strong style={{ color: "var(--text)" }}>{total}</strong> words this way.
       </div>
+
+      {/* Self-Learning Dictionary card: the same profile gate the Settings
+          and Personalization screens use, not a second independent switch. */}
+      <div
+        style={{
+          padding: "14px 16px",
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600 }}>
+              Self-Learning Dictionary
+              <Explainer text="Teletype checks the corrections you make after dictation and files genuine mishearings into your dictionary." />
+            </div>
+            <div style={{ fontSize: "var(--text-xs)", color: "var(--text-tertiary)", marginTop: 2 }}>
+              Checked by: on-device rules · no audio or text leaves this Mac
+            </div>
+          </div>
+          <Toggle
+            label="Learn from my edits"
+            checked={learnFromEdits}
+            onChange={onToggleLearnFromEdits}
+          />
+        </div>
+        <LinkButton onClick={() => navigateTo("personalization")}>
+          More learning controls in Personalization
+        </LinkButton>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            paddingTop: 10,
+            borderTop: "1px solid var(--border-subtle)",
+          }}
+        >
+          <div style={{ flex: 1, fontSize: 12, color: "var(--text-secondary)" }}>
+            Learning memory · {blockedCount} blocked pair{blockedCount === 1 ? "" : "s"}
+          </div>
+          <SecondaryButton onClick={onForget} disabled={forgetting}>
+            {forgetting ? "Forgetting…" : "Forget"}
+          </SecondaryButton>
+        </div>
+      </div>
+
       <div
         style={{
           padding: "12px 14px",
@@ -1045,9 +1222,9 @@ function QuickAddTab() {
         </code>
       </div>
       <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-        Configure the shortcut on the{" "}
-        <LinkButton onClick={() => navigateTo("keybinds")}>Keybinds</LinkButton> screen. Terminal
-        windows do not share their selection, so Quick Add will not work there.
+        Configure the shortcut in{" "}
+        <LinkButton onClick={() => navigateTo("settings:shortcuts")}>Settings → Shortcuts</LinkButton>.
+        Terminal windows do not share their selection, so Quick Add will not work there.
       </div>
     </div>
   );

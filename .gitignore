@@ -20,8 +20,10 @@ src-tauri/gen/
 # CodeGraph (local index)
 .codegraph/
 
-# Agent tooling state
-.pi/
+# Agent tooling state. Project-local Pi prompt templates are shared with the
+# team (see .agents/agents/REGISTRY.md); everything else under .pi/ stays local.
+.pi/*
+!.pi/prompts/
 
 # Design scratch / local assets
 docs/assets/
@@ -70,6 +72,10 @@ tasks/pi-logs/
 !.agents/brain/
 !.agents/state/
 !.agents/workflows/
+# Canonical role definitions and their generated Agent Skills adapters ship with
+# the repo so OpenCode, Pi, and any Agent Skills harness can invoke them.
+!.agents/agents/
+!.agents/skills/
 
 # Local reference clone (third-party source, not ours to ship)
 ew/

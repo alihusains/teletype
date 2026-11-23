@@ -235,24 +235,28 @@ At task completion, briefly report:
 
 ## Agent team
 
-The table below is the only committed definition of the Teletype build team.
-There are no per-agent files in this repository (`.claude/agents/`,
-`.agents/agents/registry.md` and `.agents/agents/changelog.md` do not exist).
-Treat the roles as routing labels: change this table when a specialist is added,
-retired, or gains a new domain.
+The table below is the routing index. Each role has a canonical definition in
+`.agents/agents/<role>.md` (the single source of truth), with generated adapters
+for OpenCode (`.opencode/agents/`), Pi (`.pi/prompts/`), and Agent Skills
+harnesses (`.agents/skills/<role>/SKILL.md`). See `.agents/agents/REGISTRY.md`
+for invocation and run `python3 scripts/generate-project-agents.py --check` to
+detect drift. Edit the canonical file and regenerate; change this table when a
+specialist is added, retired, or gains a new domain.
 
 | Agent | Role |
 |---|---|
 | `teletype-product-manager` | Roadmap, issue triage, README/release accuracy, feature-by-feature shipping |
 | `teletype-engineering-manager` | Decomposes roadmap items, dispatches the team, enforces verification before "done" |
 | `teletype-architect` | Cross-crate design, security and stability review, durable decisions in the brain |
-| `teletype-backend-engineer` | Rust: `crates/*` and `evals/` |
+| `teletype-backend-engineer` | Rust: `crates/*`, `evals/`, `Cargo.toml`, `fuzz/` (eval harness also in `crates/teletype-eval/`) |
 | `teletype-frontend-engineer` | React/TypeScript: `ui/` and the Tauri IPC JS surface |
 | `teletype-qa-engineer` | Tests, eval harness, regression verification, release gate |
 | `teletype-deployment-engineer` | CI/release pipelines, signing, notarization, updater manifest, "why did the release not ship" |
 | `teletype-productivity-monitor` | Observes the work, writes learnings/skills/tasks, keeps the brain honest |
 
 Routing: hand a multi-part build task to `teletype-engineering-manager`; a single-crate fix to the matching engineer; a "is this really done?" question to `teletype-qa-engineer`; a CI failure, release build failure, signing/notarization, or updater-manifest problem to `teletype-deployment-engineer`; a finished piece of work to `teletype-productivity-monitor` for the knowledge review. All agents share this brain and its precedence rules.
+
+Invoke a role by name: in OpenCode select `@<role>` or ask for it as a subagent; in Pi type `/<role> <task>`; in an Agent Skills harness type `/<role>` or `/skill:<role>`; from any other agent, read `.agents/agents/<role>.md` and follow it.
 
 ## Task classification & evolution checkpoints
 
@@ -267,7 +271,9 @@ from the workflow files by hand.
 
 ## Project skills (.agents/skills/)
 
-Only one skill is committed today:
+The eight team roles are also exposed as generated, user-invoked skills in
+`.agents/skills/<role>/SKILL.md` (see `.agents/agents/REGISTRY.md`). The only
+hand-written, model-invoked skill is:
 
 | Skill | Trigger | Purpose |
 |---|---|---|

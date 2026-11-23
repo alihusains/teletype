@@ -427,8 +427,9 @@ pub async fn set_reduce_motion(
 /// window can be resized to fit the active style. The "well" style is 120px
 /// tall and the capsules are 44px, so a single fixed window would clip or
 /// letterbox them; resizing per style matches the reference implementation.
-/// `card` is the polish result card's id when the report is that card's (see
-/// `overlay::show_result`); every other report omits it.
+/// `card` is the notice card's id when the report is a polish result or
+/// learned-word card (see `overlay::show_result` / `show_learned`); every
+/// other report omits it.
 #[tauri::command]
 pub fn set_pill_size(
     app: AppHandle,
@@ -443,8 +444,9 @@ pub fn set_pill_size(
     Ok(())
 }
 
-/// The pill webview dismissed the polish result card (its X, a click through
-/// to the app, or its timeout). Rust hides the window only if that card is
+/// The pill webview dismissed a notice card (polish result or learned word:
+/// its X, a click through to the app, or its timeout). Rust hides the window
+/// only if that card is
 /// still the one on screen and always_show is off; see
 /// `overlay::dismiss_result`.
 #[tauri::command]

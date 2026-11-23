@@ -76,6 +76,8 @@ export function glowView(machine: PillMachineState): GlowView | null {
   switch (pill.phase) {
     case "idle":
     case "result":
+    case "learned":
+    case "learnedError":
       return null;
     case "warming":
       return "warming";
@@ -101,6 +103,8 @@ export function glowSentence(machine: PillMachineState): string {
   switch (pill.phase) {
     case "idle":
     case "result":
+    case "learned":
+    case "learnedError":
       return "";
     case "recording":
       return pill.command ? "Recording a command" : "Recording";

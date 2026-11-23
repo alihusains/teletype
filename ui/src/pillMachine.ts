@@ -11,6 +11,55 @@ export const SKIP_MESSAGE_TTL_MS = 6000;
 /** How long the post-insertion polish card stays up before collapsing (ms). */
 export const POLISH_DIFF_TTL_MS = 8000;
 
+/** Learned-word pill timings. The backend's offer expiry uses the same
+ * learnUndoSecs setting, so the two clocks stay in step; these constants are
+ * the independent phases of the pill's own life. */
+export const LEARN_UNDO_DEFAULT_SECS = 12;
+export const LEARN_UNDO_MIN_SECS = 3;
+export const LEARN_UNDO_MAX_SECS = 300;
+export const LEARN_PENDING_MS = 3000;
+export const LEARN_UNDONE_MS = 1500;
+export const LEARN_ERROR_MS = 3000;
+export const LEARN_HOVER_RESUME_FLOOR_MS = 2000;
+export const LEARN_TICK_MS = 100;
+
+/** The clamp both sides apply to the persisted undo window. */
+export function clampLearnUndoSecs(secs: number | undefined): number {
+  if (typeof secs !== "number" || !Number.isFinite(secs)) return LEARN_UNDO_DEFAULT_SECS;
+  return Math.min(LEARN_UNDO_MAX_SECS, Math.max(LEARN_UNDO_MIN_SECS, Math.round(secs)));
+}
+
+/** Remaining dwell at a given elapsed time (never negative). */
+export function learnRemainingMs(dwellMs: number, elapsedMs: number): number {
+  return Math.max(0, dwellMs - Math.max(0, elapsedMs));
+}
+
+/** A hover that leaves with under two seconds left rewinds the rail so the
+ * user always gets at least two seconds to reach Undo. */
+export function learnResumeElapsedMs(
+  dwellMs: number,
+  elapsedMs: number,
+  floorMs: number = LEARN_HOVER_RESUME_FLOOR_MS,
+): number {
+  return learnRemainingMs(dwellMs, elapsedMs) >= floorMs
+    ? elapsedMs
+    : Math.max(0, dwellMs - floorMs);
+}
+
+/** Notice delivered by Rust (event `learned-word`) for one learned word. */
+export interface LearnedWordPayload {
+  card: number;
+  offerId: number;
+  word: string;
+  kind: "added" | "updated";
+}
+
+/** Notice delivered by Rust (event `learned-word-error`) on a save failure. */
+export interface LearnedWordErrorPayload {
+  card: number;
+  word: string;
+}
+
 /** The backend's post-insertion summary (event `polish-diff`). */
 export interface PolishDiffPayload {
   raw: string;
@@ -73,7 +122,10 @@ export type PillMachinePhase =
   | { phase: "streaming"; message: string }
   | { phase: "done"; message: string }
   | { phase: "error"; message: string }
-  | { phase: "result"; raw: string; polished: string; ms: number; card?: number; profile?: string; reason?: string; ran?: boolean; model?: string | null; original?: string };
+  | { phase: "result"; raw: string; polished: string; ms: number; card?: number; profile?: string; reason?: string; ran?: boolean; model?: string | null; original?: string }
+  | { phase: "learned"; word: string; kind: "added" | "updated"; offerId: number; card: number;
+      status: "live" | "pending" | "undone" | "undoError"; elapsedMs: number }
+  | { phase: "learnedError"; word: string; card: number };
 
 export type PillPhaseName = PillMachinePhase["phase"];
 
@@ -105,6 +157,9 @@ export interface PillSettings {
   alwaysShowPill?: boolean;
   /** The app's own Reduce Motion setting, on top of the OS preference. */
   reduceMotion?: boolean;
+  /** Undo window in seconds for learned words; both the tray offer and the
+   * pill dwell follow it (default 12, clamped to 3..300). */
+  learnUndoSecs?: number;
 }
 
 export interface PillInputDevice {
@@ -129,6 +184,10 @@ export interface PillMachineState {
   interimText: string;
   languageChip: { code: string; detected: boolean } | null;
   levels: number[];
+  /** Highest notice card id accepted; a stale id from an older card drops. */
+  learnedCardSeq: number;
+  /** Hover state of the live learned pill (pauses the countdown). */
+  learnedHovered: boolean;
   /** Receipt time of the current warming phase (warming clock). */
   warmingSinceMs: number;
   /** Fallback recording clock when the event omits startedAtMs. */
@@ -168,6 +227,8 @@ export function initialPillMachineState(): PillMachineState {
     micFailure: false,
     loadProgress: null,
     levelArrived: false,
+    learnedCardSeq: 0,
+    learnedHovered: false,
   };
 }
 
@@ -193,6 +254,15 @@ export type PillAction =
   | { type: "model-load-progress"; fraction: number }
   | { type: "polish-diff"; payload: PolishDiffPayload }
   | { type: "result-dismiss" }
+  | { type: "learned-show"; payload: LearnedWordPayload }
+  | { type: "learned-hover"; card: number; hovered: boolean }
+  | { type: "learned-tick"; card: number; elapsedMs: number }
+  | { type: "learned-undo"; card: number }
+  | { type: "learned-undo-result"; card: number; result: "applied" | "stale" | "error" }
+  | { type: "learned-expire"; card: number }
+  | { type: "learned-error-show"; payload: LearnedWordErrorPayload }
+  | { type: "learned-error-expire"; card: number }
+  | { type: "learned-dismiss"; card: number }
   | { type: "error"; message: string };
 
 /** Refine a processing message into its machine phase. The only progress
@@ -223,6 +293,9 @@ export function errorHasSettingsAction(message: string): boolean {
 
 function applyPillState(s: PillMachineState, payload: PillWireState, now: number): PillMachineState {
   const prev = s.pill.phase;
+  // A learned pill outlives the take's trailing idle push (learning fires
+  // seconds after insertion). Only a *new* take replaces it, never idle.
+  if (payload.phase === "idle" && (prev === "learned" || prev === "learnedError")) return s;
   // A new session begins: drop leftovers exactly like the previous handler.
   if (payload.phase === "recording") {
     const startedAtMs =
@@ -414,6 +487,9 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
       // side, which only shows the fraction while warming.
       return { ...s, loadProgress: a.fraction };
     case "polish-diff":
+      // A live learned pill owns the slot; the polish card is declined here
+      // and its event handler hands the card straight back to Rust.
+      if (s.pill.phase === "learned" && s.pill.status === "live") return s;
       if (!polishDiffShowable(a.payload)) return s;
       return {
         ...s,
@@ -438,6 +514,69 @@ export function pillReducer(s: PillMachineState, a: PillAction): PillMachineStat
       // Only the card is dismissible: a late timer must not reset a newer
       // take that has already taken the pill over.
       return s.pill.phase === "result" ? { ...s, pill: { phase: "idle" } } : s;
+    case "learned-show": {
+      const c = a.payload.card;
+      if (!Number.isFinite(c) || c <= s.learnedCardSeq) return s;
+      return {
+        ...s,
+        learnedCardSeq: c,
+        learnedHovered: false,
+        pill: {
+          phase: "learned",
+          word: a.payload.word,
+          kind: a.payload.kind === "updated" ? "updated" : "added",
+          offerId: a.payload.offerId,
+          card: c,
+          status: "live",
+          elapsedMs: 0,
+        },
+        skipMessage: null,
+        languageChip: null,
+        micFailure: false,
+        cancelArmed: false,
+      };
+    }
+    case "learned-hover":
+      if (s.pill.phase !== "learned" || s.pill.card !== a.card || s.pill.status !== "live") return s;
+      return { ...s, learnedHovered: a.hovered };
+    case "learned-tick":
+      if (s.pill.phase !== "learned" || s.pill.card !== a.card || s.pill.status !== "live") return s;
+      return { ...s, pill: { ...s.pill, elapsedMs: a.elapsedMs } };
+    case "learned-undo":
+      if (s.pill.phase !== "learned" || s.pill.card !== a.card || s.pill.status !== "live") return s;
+      // Morph before the await; the controls are hidden but their space is
+      // reserved so the pill does not resize mid-undo.
+      return { ...s, learnedHovered: false, pill: { ...s.pill, status: "pending" } };
+    case "learned-undo-result": {
+      if (s.pill.phase !== "learned" || s.pill.card !== a.card || s.pill.status !== "pending") return s;
+      const status = a.result === "applied" ? "undone" : "undoError";
+      return { ...s, pill: { ...s.pill, status } };
+    }
+    case "learned-expire":
+      if (s.pill.phase !== "learned" || s.pill.card !== a.card || s.pill.status !== "live") return s;
+      return { ...s, learnedHovered: false, pill: { phase: "idle" } };
+    case "learned-error-show": {
+      const c = a.payload.card;
+      if (!Number.isFinite(c) || c <= s.learnedCardSeq) return s;
+      return {
+        ...s,
+        learnedCardSeq: c,
+        learnedHovered: false,
+        pill: { phase: "learnedError", word: a.payload.word, card: c },
+        skipMessage: null,
+        micFailure: false,
+        cancelArmed: false,
+      };
+    }
+    case "learned-error-expire":
+      if (s.pill.phase !== "learnedError" || s.pill.card !== a.card) return s;
+      return { ...s, pill: { phase: "idle" } };
+    case "learned-dismiss": {
+      const p = s.pill;
+      if (p.phase !== "learned" && p.phase !== "learnedError") return s;
+      if (p.card !== a.card) return s;
+      return { ...s, learnedHovered: false, pill: { phase: "idle" } };
+    }
     case "error":
       return {
         ...s,
@@ -456,12 +595,134 @@ export interface PillMachine {
   selectDevice: (id: string, name: string) => Promise<void>;
   lockLanguage: (code: string) => Promise<void>;
   toggleRecordingMode: () => Promise<void>;
+  hoverLearnedWord: (card: number, hovered: boolean) => void;
+  undoLearnedWord: (card: number, offerId: number) => Promise<void>;
+  keepLearnedWord: (card: number) => void;
 }
 
 export function usePillMachine(): PillMachine {
   const [machine, dispatch] = useReducer(pillReducer, undefined, initialPillMachineState);
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resultTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Learned-pill timing lives in refs, not in the rendered phase: an
+  // elapsedMs tick re-renders every 100 ms and must not re-arm the deadline.
+  // React state remains the single source of what is on screen; these refs
+  // only own the wall-clock (performance.now, immune to clock changes).
+  interface LearnTimer {
+    card: number;
+    dwellMs: number;
+    elapsedBase: number;
+    startedAt: number;
+    hovered: boolean;
+    schedule: () => void;
+    tick: ReturnType<typeof setInterval> | null;
+    expiry: ReturnType<typeof setTimeout> | null;
+    settle: ReturnType<typeof setTimeout> | null;
+  }
+  const learnTimer = useRef<LearnTimer | null>(null);
+  const learnErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const learnedCardRef = useRef(0);
+  const settingsRef = useRef(machine.settings);
+  settingsRef.current = machine.settings;
+  const learnedRef = useRef(machine.pill);
+  learnedRef.current = machine.pill;
+
+  const clearLearnTimers = useCallback(() => {
+    const t = learnTimer.current;
+    if (t) {
+      if (t.tick) clearInterval(t.tick);
+      if (t.expiry) clearTimeout(t.expiry);
+      if (t.settle) clearTimeout(t.settle);
+    }
+    learnTimer.current = null;
+    if (learnErrorTimer.current) clearTimeout(learnErrorTimer.current);
+    learnErrorTimer.current = null;
+  }, []);
+
+  const startLearnTimers = useCallback((card: number) => {
+    clearLearnTimers();
+    const dwellMs = clampLearnUndoSecs(settingsRef.current?.learnUndoSecs) * 1000;
+    const t: LearnTimer = {
+      card,
+      dwellMs,
+      elapsedBase: 0,
+      startedAt: 0,
+      hovered: false,
+      tick: null,
+      expiry: null,
+      settle: null,
+      schedule: () => {},
+    };
+    t.schedule = () => {
+      if (t.tick) clearInterval(t.tick);
+      if (t.expiry) clearTimeout(t.expiry);
+      const remaining = learnRemainingMs(t.dwellMs, t.elapsedBase);
+      t.startedAt = performance.now();
+      t.tick = setInterval(() => {
+        if (t.hovered) return;
+        const elapsed = Math.min(t.dwellMs, t.elapsedBase + (performance.now() - t.startedAt));
+        dispatch({ type: "learned-tick", card: t.card, elapsedMs: elapsed });
+      }, LEARN_TICK_MS);
+      t.expiry = setTimeout(() => {
+        dispatch({ type: "learned-expire", card: t.card });
+        if (learnTimer.current === t) learnTimer.current = null;
+      }, remaining);
+    };
+    learnTimer.current = t;
+    t.schedule();
+  }, [clearLearnTimers]);
+
+  const hoverLearnedWord = useCallback((card: number, hovered: boolean) => {
+    const t = learnTimer.current;
+    if (!t || t.card !== card) return;
+    const p = learnedRef.current;
+    if (p.phase !== "learned" || p.status !== "live") return;
+    dispatch({ type: "learned-hover", card, hovered });
+    if (hovered === t.hovered) return;
+    if (hovered) {
+      t.elapsedBase = Math.min(t.dwellMs, t.elapsedBase + (performance.now() - t.startedAt));
+      t.hovered = true;
+      if (t.tick) clearInterval(t.tick);
+      if (t.expiry) clearTimeout(t.expiry);
+      t.tick = null;
+      t.expiry = null;
+    } else {
+      t.elapsedBase = learnResumeElapsedMs(t.dwellMs, t.elapsedBase);
+      t.hovered = false;
+      t.schedule();
+    }
+  }, []);
+
+  const undoLearnedWord = useCallback(async (card: number, offerId: number) => {
+    const t = learnTimer.current;
+    if (!t || t.card !== card) return;
+    if (t.tick) clearInterval(t.tick);
+    if (t.expiry) clearTimeout(t.expiry);
+    t.tick = null;
+    t.expiry = null;
+    dispatch({ type: "learned-undo", card });
+    let result: "applied" | "stale" | "error" = "error";
+    try {
+      const reply = await invoke<string>("undo_learned", { ids: ["offer:" + offerId] });
+      result = reply === "applied" ? "applied" : "stale";
+    } catch {
+      result = "error";
+    }
+    if (learnTimer.current !== t) return;
+    dispatch({ type: "learned-undo-result", card, result });
+    const settleMs = result === "applied" ? LEARN_UNDONE_MS : LEARN_ERROR_MS;
+    t.settle = setTimeout(() => {
+      dispatch({ type: "learned-dismiss", card });
+      if (learnTimer.current === t) learnTimer.current = null;
+    }, settleMs);
+  }, []);
+
+  const keepLearnedWord = useCallback((card: number) => {
+    if (!learnTimer.current || learnTimer.current.card !== card) return;
+    clearLearnTimers();
+    dispatch({ type: "learned-dismiss", card });
+  }, [clearLearnTimers]);
 
   const refreshSettings = useCallback(async () => {
     try {
@@ -584,7 +845,39 @@ export function usePillMachine(): PillMachine {
   });
 
   useTauriEvent<PillWireState>("pill-state", ({ payload }) => {
+    // Only a new take (not the trailing idle push) reclaims the slot from a
+    // learned pill; learning fires seconds after the take has gone idle.
+    if (payload.phase !== "idle") clearLearnTimers();
     dispatch({ type: "pill-state", payload, now: Date.now() });
+  });
+
+  // The backend emits these only to the pill window, after allocating the
+  // overlay card id. A stale id (an older learn arriving late) must hand the
+  // card straight back, or Rust waits forever for its size report.
+  useTauriEvent<LearnedWordPayload>("learned-word", ({ payload }) => {
+    if (!payload || typeof payload.card !== "number") return;
+    if (payload.card <= learnedCardRef.current) {
+      invoke("dismiss_pill_result", { card: payload.card }).catch(() => {});
+      return;
+    }
+    learnedCardRef.current = payload.card;
+    startLearnTimers(payload.card);
+    dispatch({ type: "learned-show", payload });
+  });
+
+  useTauriEvent<LearnedWordErrorPayload>("learned-word-error", ({ payload }) => {
+    if (!payload || typeof payload.card !== "number") return;
+    if (payload.card <= learnedCardRef.current) {
+      invoke("dismiss_pill_result", { card: payload.card }).catch(() => {});
+      return;
+    }
+    learnedCardRef.current = payload.card;
+    clearLearnTimers();
+    dispatch({ type: "learned-error-show", payload });
+    learnErrorTimer.current = setTimeout(
+      () => dispatch({ type: "learned-error-expire", card: payload.card }),
+      LEARN_ERROR_MS,
+    );
   });
 
   useTauriEvent<DictationStatePayload>("dictation-state", ({ payload }) => {
@@ -614,6 +907,15 @@ export function usePillMachine(): PillMachine {
   // Post-insertion polish summary. The backend emits it only after a delivery
   // that actually landed, and only when polish changed words.
   useTauriEvent<PolishDiffPayload>("polish-diff", ({ payload }) => {
+    // A live learned pill has precedence; decline the polish card so it does
+    // not displace the Undo the user is about to click.
+    const current = learnedRef.current;
+    if (current.phase === "learned" && current.status === "live") {
+      if (typeof payload.card === "number") {
+        invoke("dismiss_pill_result", { card: payload.card }).catch(() => {});
+      }
+      return;
+    }
     // Rust already made the pill clickable and is waiting for this card's
     // size report (overlay::show_result). A card the reducer drops never
     // renders, so hand it straight back, or the pill would stay waiting,
@@ -632,18 +934,19 @@ export function usePillMachine(): PillMachine {
     );
   });
 
-  // The card came back from a hidden window (overlay::show_result); once it
-  // is dismissed (result -> idle), Rust hides the window again. A take that
-  // replaced the card (result -> recording) owns the window, so no call.
+  // A notice card (polish result or learned word) came back from a hidden
+  // window; once it leaves for idle, Rust hides the window again. A take that
+  // replaced it owns the window, so no call in that case.
   const shownCard = useRef<number | null>(null);
   useEffect(() => {
-    if (machine.pill.phase === "result") {
-      shownCard.current = machine.pill.card ?? null;
+    const p = machine.pill;
+    if (p.phase === "result" || p.phase === "learned" || p.phase === "learnedError") {
+      shownCard.current = p.card ?? null;
       return;
     }
     const card = shownCard.current;
     shownCard.current = null;
-    if (card !== null && machine.pill.phase === "idle") {
+    if (card !== null && p.phase === "idle") {
       invoke("dismiss_pill_result", { card }).catch(() => {});
     }
   }, [machine.pill]);
@@ -665,8 +968,18 @@ export function usePillMachine(): PillMachine {
   useEffect(() => {
     return () => {
       if (skipTimer.current) clearTimeout(skipTimer.current);
+      clearLearnTimers();
     };
-  }, []);
+  }, [clearLearnTimers]);
 
-  return { machine, dispatch, selectDevice, lockLanguage, toggleRecordingMode };
+  return {
+    machine,
+    dispatch,
+    selectDevice,
+    lockLanguage,
+    toggleRecordingMode,
+    hoverLearnedWord,
+    undoLearnedWord,
+    keepLearnedWord,
+  };
 }

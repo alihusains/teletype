@@ -12,7 +12,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useNow } from "./lib/useNow";
-import { isBusyPhase, pillMessage, usePillMachine, errorHasSettingsAction, type PillInputDevice, type PillSettings } from "./pillMachine";
+import { isBusyPhase, pillMessage, usePillMachine, errorHasSettingsAction, clampLearnUndoSecs, type PillInputDevice, type PillSettings } from "./pillMachine";
 
 import { SIZES } from "./lib/rainbow";
 import { glowView, isWorkingMessage, knownPillStyle } from "./lib/glowModel";
@@ -2108,10 +2108,252 @@ function LegacyProcessingBody({
   );
 }
 
+
+/** Whole sentences live here so the pill and its tests assert the same copy. */
+export const LEARNED_COPY = {
+  added: "Added to dictionary",
+  updated: "Updated in dictionary",
+  undo: "Undo",
+  undone: "Undone",
+  undoError: "Couldn’t undo",
+  removed: (word: string) => "“" + word + "” removed",
+  saveError: (word: string) => "Couldn’t save “" + word + "”",
+  closeLabel: (word: string) => "Close and keep “" + word + "”",
+  announcement: (word: string, subtitle: string) => word + ", " + subtitle + ". Undo available.",
+};
+
+const LEARN_ACCENT = "#8bbaff";
+const LEARN_WASH = "rgba(79,142,247,0.18)";
+
+/** A one-word learned notice. The phase lives in pillMachine; this component
+ * is a pure view so tests can freeze elapsedMs and read every control. */
+export function LearnedWordPill({
+  word,
+  kind,
+  status,
+  elapsedMs,
+  dwellSecs,
+  onUndo,
+  onKeep,
+  onHover,
+}: {
+  word: string;
+  kind: "added" | "updated";
+  status: "live" | "pending" | "undone" | "undoError";
+  elapsedMs: number;
+  dwellSecs: number;
+  onUndo: () => void;
+  onKeep: () => void;
+  onHover: (hovered: boolean) => void;
+}) {
+  const reduced = useReducedMotion();
+  const subtitle = kind === "added" ? LEARNED_COPY.added : LEARNED_COPY.updated;
+  const live = status === "live";
+  const pending = status === "pending";
+  const terminal = status === "undone" || status === "undoError";
+  const removedTitle = LEARNED_COPY.removed(word);
+  const title = status === "undone"
+    ? kind === "added"
+      ? removedTitle.length > 30 ? LEARNED_COPY.undone : removedTitle
+      : LEARNED_COPY.undone
+    : status === "undoError" ? LEARNED_COPY.undoError
+    : word;
+  // Long words shrink to half size before the tail is truncated (plan 4.3).
+  const wordFontSize = Math.max(7.5, Math.min(15, 400 / (Math.max(1, word.length) * 0.55)));
+  const fraction = dwellSecs > 0 ? Math.min(1, Math.max(0, elapsedMs / (dwellSecs * 1000))) : 0;
+  const railWidth = Math.max(1.5, fraction * 100) + "%";
+
+  return (
+    <div
+      data-testid="learned-pill"
+      onMouseEnter={() => onHover(true)}
+      onMouseLeave={() => onHover(false)}
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 10px 10px 12px",
+        borderRadius: 999,
+        background: DARK_SURFACE,
+        border: DARK_BORDER_W + "px solid " + DARK_BORDER,
+        boxShadow: TOP_HIGHLIGHT,
+        color: "rgba(255,255,255,0.94)",
+        fontFamily: "inherit",
+        overflow: "hidden",
+        flexShrink: 0,
+      }}
+    >
+      {terminal ? (
+        <div
+          data-testid="learned-result"
+          role="status"
+          aria-label={title}
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: status === "undoError" ? ERROR_TEXT : "rgba(255,255,255,0.94)",
+            padding: "4px 6px",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {title}
+        </div>
+      ) : (
+        <>
+          <div
+            aria-hidden="true"
+            style={{
+              width: 36,
+              height: 36,
+              flexShrink: 0,
+              borderRadius: 18,
+              background: LEARN_WASH,
+              color: LEARN_ACCENT,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Icon name="dictionary" size={16} color={LEARN_ACCENT} />
+          </div>
+          <div
+            data-testid="learned-text"
+            role="status"
+            aria-label={live ? LEARNED_COPY.announcement(word, subtitle) : word + ", " + subtitle}
+            style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}
+          >
+            <span
+              style={{
+                fontSize: wordFontSize,
+                fontWeight: 600,
+                maxWidth: 400,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {word}
+            </span>
+            <span style={{ fontSize: 12, fontWeight: 400, color: SECONDARY_TEXT, whiteSpace: "nowrap" }}>
+              {subtitle}
+            </span>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginLeft: 16,
+              flexShrink: 0,
+              visibility: pending ? "hidden" : "visible",
+            }}
+          >
+            <button
+              type="button"
+              aria-label={LEARNED_COPY.undo}
+              disabled={!live}
+              onClick={onUndo}
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                padding: "6px 14px",
+                borderRadius: 999,
+                border: "none",
+                background: LEARN_WASH,
+                color: LEARN_ACCENT,
+                cursor: live ? "pointer" : "default",
+                fontFamily: "inherit",
+              }}
+            >
+              {LEARNED_COPY.undo}
+            </button>
+            <button
+              type="button"
+              aria-label={LEARNED_COPY.closeLabel(word)}
+              onClick={onKeep}
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 14,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                border: "none",
+                background: "transparent",
+                color: SECONDARY_TEXT,
+                fontSize: 11,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </>
+      )}
+      {live && (
+        <div
+          data-testid="learned-rail"
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            left: 2,
+            right: 2,
+            bottom: 2,
+            height: 3,
+            borderRadius: 2,
+            background: "rgba(255,255,255,0.08)",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: railWidth,
+              height: "100%",
+              background: "linear-gradient(90deg," + RAINBOW.join(",") + ")",
+              boxShadow: reduced ? "none" : "0 0 6px rgba(139,186,255,0.55)",
+              transition: reduced ? "none" : "width 0.1s linear",
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Single-line save failure: no Undo, no ×, and deliberately click-through. */
+export function LearnedSaveErrorPill({ word }: { word: string }) {
+  return (
+    <div
+      data-testid="learned-error-pill"
+      role="status"
+      aria-label={LEARNED_COPY.saveError(word)}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "10px 14px",
+        borderRadius: 999,
+        background: DARK_SURFACE,
+        border: DARK_BORDER_W + "px solid " + DARK_BORDER,
+        boxShadow: TOP_HIGHLIGHT,
+        color: ERROR_TEXT,
+        fontSize: 13,
+        fontWeight: 600,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      {LEARNED_COPY.saveError(word)}
+    </div>
+  );
+}
+
 export function Pill() {
   // All session/phase/timer state lives in the explicit machine
   // (ui/src/pillMachine.ts); this component derives layout and renders.
-  const { machine, dispatch, selectDevice, lockLanguage, toggleRecordingMode } = usePillMachine();
+  const { machine, dispatch, selectDevice, lockLanguage, toggleRecordingMode, hoverLearnedWord, undoLearnedWord, keepLearnedWord } = usePillMachine();
   // The input-device list opened from the recording mic chip. The chip is a
   // plain button (not the press-and-hold capsule), so it needs its own open
   // flag; the list itself is the same DeviceList the panel styles use.
@@ -2249,10 +2491,13 @@ export function Pill() {
   // (machine.streamText) re-render every frame during polish, and re-invoking
   // set_pill_size with the same size is a wasted IPC round-trip.
   const lastReported = useRef<{ w: number; h: number; card?: number } | null>(null);
-  // The result card's report carries its id: a hidden pill waiting for the
-  // card (overlay::show_result) shows only for that report, never for the
-  // idle pill's that precedes it.
-  const resultCard = machine.pill.phase === "result" ? machine.pill.card : undefined;
+  // A notice card's report carries its id: a hidden pill waiting for the
+  // card (overlay::show_result / show_learned) shows only for that report,
+  // never for the idle pill's that precedes it.
+  const noticeCard =
+    machine.pill.phase === "result" || machine.pill.phase === "learned" || machine.pill.phase === "learnedError"
+      ? machine.pill.card
+      : undefined;
   // Idle with always_show off: Rust has hidden the window.
   const windowHidden = phase === "idle" && !settings?.alwaysShowPill;
   const legacyRef = useRef<HTMLDivElement | null>(null);
@@ -2282,7 +2527,7 @@ export function Pill() {
         invoke("set_pill_size", args).catch(() => {});
       }
     };
-    if (!usesPortedStyle && phase !== "result") {
+    if (!usesPortedStyle && phase !== "result" && phase !== "learned" && phase !== "learnedError") {
       const capsule = { w: size.width, h: size.height };
       const prev = lastCapsule.current;
       lastCapsule.current = capsule;
@@ -2332,7 +2577,7 @@ export function Pill() {
     if (!node) return;
     const measure = () => {
       const r = node.getBoundingClientRect();
-      report(r.width, r.height, resultCard);
+      report(r.width, r.height, noticeCard);
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -2353,7 +2598,7 @@ export function Pill() {
     machine.micFailure,
     machine.levelArrived,
     glowKey,
-    resultCard,
+    noticeCard,
     windowHidden,
   ]);
 
@@ -2362,6 +2607,33 @@ export function Pill() {
   useEffect(() => {
     if (!expanded || !deviceName) setMicMenuOpen(false);
   }, [expanded, deviceName]);
+
+  // Learned-word notices are their own surface: like the polish card they
+  // are measured (so Rust anchors them in the configured pill slot) and are
+  // independent of the selected pill style, so Undo never moves with a style.
+  if (machine.pill.phase === "learned" || machine.pill.phase === "learnedError") {
+    const p = machine.pill;
+    return (
+      <div style={rootStyle}>
+        <div ref={pillRef}>
+          {p.phase === "learned" ? (
+            <LearnedWordPill
+              word={p.word}
+              kind={p.kind}
+              status={p.status}
+              elapsedMs={p.elapsedMs}
+              dwellSecs={clampLearnUndoSecs(settings?.learnUndoSecs)}
+              onUndo={() => void undoLearnedWord(p.card, p.offerId)}
+              onKeep={() => keepLearnedWord(p.card)}
+              onHover={(hovered) => hoverLearnedWord(p.card, hovered)}
+            />
+          ) : (
+            <LearnedSaveErrorPill word={p.word} />
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // The polish card is its own surface: it keeps the same measured-size
   // contract (the ResizeObserver above resizes the OS window to fit it) and is

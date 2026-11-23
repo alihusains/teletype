@@ -309,7 +309,7 @@ export default function CommandModeScreen() {
           <li>
             {commandHotkey.trim()
               ? `Press the command hotkey (${commandHotkey.trim()}) and say what to do, for example "open Safari". You can also start a normal dictation and begin it with the wake phrase "teletype" or "hey teletype"; the rest of the sentence runs as a command instead.`
-              : 'Start a normal dictation and begin it with the wake phrase "teletype" or "hey teletype"; the rest of the sentence runs as a command instead. Or set a command hotkey on the Keybinds screen to start a command take directly.'}
+              : 'Start a normal dictation and begin it with the wake phrase "teletype" or "hey teletype"; the rest of the sentence runs as a command instead. Or set a command hotkey in Settings → Shortcuts to start a command take directly.'}
           </li>
           <li>
             Teletype transcribes, classifies and runs the command. Each run appears in

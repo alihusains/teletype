@@ -42,11 +42,11 @@ static PENDING_SHOW: Mutex<Option<PendingShow>> = Mutex::new(None);
 enum PendingShow {
     /// A take: any size report shows it, and so does the fallback.
     Take,
-    /// Result card `n`: only that card's own size report shows it. The card
-    /// follows an Idle push, and the idle pill's report must not show the
-    /// window first (a blink of idle bars, or a stray idle pill if the
-    /// webview then drops the card). No fallback: a card that never renders
-    /// is better left hidden.
+    /// Notice card `n` (a polish result or a learned word): only that
+    /// card's own size report shows it. The card follows an Idle push, and
+    /// the idle pill's report must not show the window first (a blink of idle
+    /// bars, or a stray idle pill if the webview then drops the card). No
+    /// fallback: a card that never renders is better left hidden.
     Card(u64),
 }
 
@@ -63,15 +63,17 @@ fn report_shows(pending: Option<PendingShow>, card: Option<u64>) -> bool {
 /// How long a fresh take waits for its size report before showing regardless.
 const SHOW_FALLBACK: Duration = Duration::from_millis(150);
 
-/// The polish result card on screen, if any. The card arrives after the take
-/// has gone idle, which hid the window (always_show off), so `show_result`
-/// brings it back and `dismiss_result` hides it again. Every state push
-/// (`update`) ends the card, which is how a late dismiss from an old card is
-/// told apart from the take that replaced it.
+/// The notice card on screen, if any (polish result or learned word). The
+/// card arrives after the take has gone idle, which hid the window
+/// (always_show off), so `show_result`/`show_learned` bring it back and
+/// `dismiss_result` hides it again. Every state push (`update`) ends the
+/// card, which is how a late dismiss from an old card is told apart from the
+/// take that replaced it.
 static RESULT_CARD: Mutex<ResultCard> = Mutex::new(ResultCard::new());
 
-/// Generation bookkeeping for the result card. Each card gets a fresh id; a
-/// dismiss only counts for the id that is still on screen.
+/// Generation bookkeeping for the notice card. One monotonic id space is
+/// shared by all notice kinds, so a stale dismiss can never match a different
+/// card. A dismiss only counts for the id that is still on screen.
 #[derive(Debug, PartialEq, Eq)]
 struct ResultCard {
     last: u64,
@@ -113,7 +115,7 @@ pub fn update(app: &AppHandle, state: PillState, position: PillPosition, always_
         tracing::warn!("pill window missing; not showing {state:?}");
         return;
     };
-    // Any new pill state replaces a result card still on screen. Cleared
+    // Any new pill state replaces a notice card still on screen. Cleared
     // before the visibility read: `dismiss_result` checks the card and hides
     // under the same lock, so a dismiss racing this push either hid the
     // window before the read below (and the take is shown again) or finds no
@@ -279,23 +281,52 @@ mod ax_announce {
     }
 }
 
-/// Brings the pill back for the polish result card and returns the card's id.
-/// The card is emitted after `go_idle`, which already hid the window and
-/// cancelled any pending show, so without this it would lay out in a hidden
-/// window. The pill keeps its current position; the card's own size report
-/// (`resize_to` with this card id) re-anchors it and shows it.
-pub fn show_result(app: &AppHandle) -> u64 {
+/// Brings the pill back for a notice card and returns the card's id. Shared
+/// by the polish result card and the learned-word pill: both are emitted
+/// after `go_idle`, which already hid the window and cancelled any pending
+/// show, so without this they would lay out in a hidden window. The pill
+/// keeps its current position; the card's own size report (`resize_to` with
+/// this card id) re-anchors it and shows it.
+fn show_notice(app: &AppHandle, interactive: bool) -> u64 {
     let card = RESULT_CARD.lock().map(|mut c| c.show()).unwrap_or(0);
     if let Some(window) = app.get_webview_window(PILL_LABEL) {
         if !window.is_visible().unwrap_or(false) {
             request_show(app, PendingShow::Card(card));
         }
     }
-    set_interactive(app, true);
+    set_interactive(app, interactive);
     card
 }
 
-/// The webview dismissed result card `card` (its X, its timeout, or a card
+/// Brings the pill back for the polish result card (it has Undo/retry
+/// buttons) and returns the card's id.
+pub fn show_result(app: &AppHandle) -> u64 {
+    show_notice(app, true)
+}
+
+/// Brings the pill back for a learned-word notice that has live Undo and ×
+/// buttons. The frontend gets the returned id in the `learned-word` event
+/// and reports its measured size with the same id.
+pub fn show_learned(app: &AppHandle) -> u64 {
+    show_notice(app, true)
+}
+
+/// Brings the pill back for a learned-word save failure. That notice has no
+/// buttons, so the window stays click-through.
+pub fn show_learned_error(app: &AppHandle) -> u64 {
+    show_notice(app, false)
+}
+
+/// VoiceOver cannot read the non-focusable pill webview, so the app posts the
+/// learned notice as an accessibility announcement when it is admitted.
+pub fn announce_learned(app: &AppHandle, word: &str, subtitle: &str) {
+    #[cfg(target_os = "macos")]
+    announce(app, format!("{word}, {subtitle}. Undo available."));
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, word, subtitle);
+}
+
+/// The webview dismissed notice card `card` (its X, its timeout, or a card
 /// it rejected without rendering). When that card is still the one on
 /// screen (a newer take may own the pill by now), the pill goes back to
 /// click-through idle, and it hides unless `always_show` is on.
@@ -326,8 +357,9 @@ pub fn dismiss_result(app: &AppHandle, card: u64, always_show: bool) {
 /// Open Settings) stays clickable. Warming, progress labels, plain notes and
 /// idle are click-through, so the transparent window never swallows a click
 /// meant for the app underneath. Every error stays clickable rather than
-/// repeating the webview's "has a settings action" rule here. The result card
-/// is made interactive by `show_result`.
+/// repeating the webview's "has a settings action" rule here. Notice cards
+/// are made interactive by `show_result` / `show_learned` (the save-error
+/// card deliberately stays click-through).
 pub fn interactive_for(state: &PillState, alert: bool) -> bool {
     match state {
         PillState::Recording { .. } => true,
@@ -384,8 +416,9 @@ pub fn place(app: &AppHandle, position: PillPosition) {
 /// as two calls, a Bottom slot grew downwards first and then jumped back up,
 /// which reads as a jitter under the cursor every time the well grows a line.
 ///
-/// `card` is set when the report is the polish result card's, so a hidden
-/// pill waiting for that card (`PendingShow::Card`) shows only for it.
+/// `card` is set when the report is a notice card's (polish result or
+/// learned word), so a hidden pill waiting for that card
+/// (`PendingShow::Card`) shows only for it.
 pub fn resize_to(
     app: &AppHandle,
     width: u32,

@@ -1061,6 +1061,17 @@ fn run_single_chunk(
     // proofs live in tests/polish_punctuation.rs.
     if transform.id == "builtin-polish" {
         outcome.text = sanitize_punctuation(&outcome.text);
+        // Wispr Flow keeps formatting as its own deterministic layer: the
+        // model edits words, while casing and the small set of unambiguous
+        // agreement errors are fixed in code. Card-locked cleanup models
+        // cannot be reprompted, and small instruct models ignore generic
+        // "fix capitalization" rules (L059). A rejected model output is still
+        // returned byte-for-byte as the fallback contract requires; every
+        // accepted Polish result gets the formatting guarantee.
+        if outcome.transformed {
+            outcome.text = super::agreement::fix_common_agreement(&outcome.text);
+            outcome.text = super::capitalization::capitalize_sentences(&outcome.text);
+        }
     }
     outcome
 }

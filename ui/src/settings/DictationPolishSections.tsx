@@ -974,6 +974,26 @@ export function LearningSection(props: SectionProps) {
           {importing ? "Checking…" : "Import"}
         </SecondaryButton>
       </Row>
+      <Row
+        label="Undo window for learned words"
+        hint="How long Undo stays available after Teletype learns a word. Applies to the next learned word; the tray Undo uses the same window."
+      >
+        {(() => {
+          const current = Math.min(300, Math.max(3, Math.round(settings.learnUndoSecs || 12)));
+          const options = [3, 5, 8, 12, 20, 30, 60, 120, 300].map((s) => ({ value: String(s), label: s + " seconds" }));
+          if (!options.some((o) => o.value === String(current))) {
+            options.unshift({ value: String(current), label: current + " seconds" });
+          }
+          return (
+            <Select
+              label="Undo window for learned words"
+              value={String(current)}
+              options={options}
+              onChange={(v) => onChange({ learnUndoSecs: Number(v) } as Partial<SectionSettings>)}
+            />
+          );
+        })()}
+      </Row>
       <Row label="Delete all learning data" hint="Removes every learned term, every learned dictionary word, and the recorded edit history permanently.">
         <SecondaryButton onClick={onDelete} danger>
           Delete all learning data

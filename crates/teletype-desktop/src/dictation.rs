@@ -7494,7 +7494,7 @@ impl Session {
             }
         }
 
-        let (changed, dictionary_changes) = {
+        let (changed, dictionary_changes, learned_words, dictionary_save_failed, failed_word) = {
             let mut profile = (*state.profile.get()).clone();
             let changed = commands::record_edit_core_public(
                 &mut profile,
@@ -7526,8 +7526,14 @@ impl Session {
                 .collect::<Vec<_>>();
             // Keep exactly what the dictionary write changed, so undo can put
             // it back: remove a word learning created, clear provenance it
-            // backfilled, or drop only the alias it added.
-            let mut dictionary_changes = Vec::new();
+            // backfilled, or drop only the alias it added. Alongside the
+            // change, keep the canonical word and its user-facing kind so a
+            // single-word learn can be shown on the pill without a second
+            // dictionary lookup.
+            let mut learned_words: Vec<(LearnedChange, String, commands::LearnedWordKind)> =
+                Vec::new();
+            let mut dictionary_save_failed = false;
+            let mut failed_word = String::new();
             if changed.iter().any(|(_, _, l)| l.is_some()) {
                 let mut dict = (*state.dictionary.get()).clone();
                 for (_, _, learned) in &changed {
@@ -7561,14 +7567,25 @@ impl Session {
                                 }
                             }
                         }
+                        if failed_word.is_empty() {
+                            failed_word = to.to_string();
+                        }
                         match dict.insert_learned(from, to) {
                             LearnedChange::Unchanged => {}
-                            change => dictionary_changes.push(change),
+                            change => {
+                                if let Some(kind) = commands::learned_kind(&change) {
+                                    learned_words.push((change, to.to_string(), kind));
+                                }
+                            }
                         }
                     }
                 }
-                if !dictionary_changes.is_empty() {
+                if !learned_words.is_empty() {
                     if let Err(e) = state.dictionary.update(|d| *d = dict) {
+                        // A failed write must not become a success offer: there
+                        // is nothing to undo and nothing was saved. Surface it
+                        // on the pill instead of toasting a learned word.
+                        dictionary_save_failed = true;
                         crate::log_entry(
                             crate::LogLevel::Error,
                             format!("edit watch: dictionary save failed: {e}"),
@@ -7576,11 +7593,21 @@ impl Session {
                     }
                 }
             }
+            let dictionary_changes: Vec<LearnedChange> = learned_words
+                .iter()
+                .map(|(change, _, _)| change.clone())
+                .collect();
             let changed = changed
                 .into_iter()
                 .map(|(id, description, _)| (id, description))
                 .collect::<Vec<_>>();
-            (changed, dictionary_changes)
+            (
+                changed,
+                dictionary_changes,
+                learned_words,
+                dictionary_save_failed,
+                failed_word,
+            )
         };
         // A dictionary word or lexicon term can be learned without any
         // preference changing (the Phase 7 path). It still deserves a visible
@@ -7588,7 +7615,27 @@ impl Session {
         // message and ids.
         let learned_something =
             !changed.is_empty() || !dictionary_changes.is_empty() || !lexicon_terms.is_empty();
-        if learned_something {
+        let notice_plan = commands::learned_notice_plan(
+            learned_words.len(),
+            dictionary_save_failed,
+            self.phase == Phase::Idle,
+        );
+        if notice_plan == commands::LearnedNoticePlan::PillError {
+            // Nothing was saved, so there is nothing to undo: no offer, no
+            // tray item and no success toast. If the slot is free and this
+            // was a single-word learn, the failure surfaces on the pill.
+            if learned_words.len() == 1 && self.phase == Phase::Idle {
+                let card = crate::overlay::show_learned_error(&app);
+                let _ = app.emit_to(
+                    crate::overlay::PILL_LABEL,
+                    "learned-word-error",
+                    &commands::LearnedWordSaveError {
+                        card,
+                        word: failed_word.clone(),
+                    },
+                );
+            }
+        } else if learned_something && notice_plan != commands::LearnedNoticePlan::None {
             if !changed.is_empty() {
                 crate::log_entry(
                     crate::LogLevel::Info,
@@ -7604,10 +7651,11 @@ impl Session {
                     ),
                 );
             }
-            // Undo offer: the tray menu gains an Undo item and the main
-            // window toasts with an Undo button. The pill stays out of it:
-            // it is click-through outside recordings and its fixed sizes
-            // leave no room for a button without resizing surgery.
+            // The pill tells an honest one-word story with its own Undo and
+            // countdown. Multi-word learns, preference/lexicon-only learns,
+            // and learns while the pill is busy keep the main-window toast,
+            // whose Undo reverts the whole offer.
+            let pill_admitted = notice_plan == commands::LearnedNoticePlan::Pill;
             let (message, ids) = if !changed.is_empty() {
                 let first = changed
                     .first()
@@ -7638,8 +7686,8 @@ impl Session {
                 (format!("Learned: {first}"), Vec::new())
             };
             let offer_id = teletype_core::storage::now_ms();
-            // Word-only offers have no preference ids; the UI toast carries
-            // an offer-id sentinel so a stale toast cannot undo newer learning.
+            // Word-only offers have no preference ids; the pill/toast carries
+            // an offer-id sentinel so a stale Undo cannot undo newer learning.
             let event_ids = if ids.is_empty() {
                 vec![format!("offer:{offer_id}")]
             } else {
@@ -7656,21 +7704,45 @@ impl Session {
                     lexicon_terms,
                 });
             crate::tray::offer_undo(&app, &message, offer_id);
-            // The expiry runs on the controller thread through a spawned
-            // timer that posts the event: it may need to clear the tray
-            // menu, and only the controller owns the session state (F-84).
+            // Both clocks follow the same setting: the tray offer expires on
+            // this timer, and the pill reads the same value for its dwell.
+            // A change applies to the next learn offer, not a live one.
+            let undo_secs = commands::clamped_learn_undo_secs(state.settings().learn_undo_secs);
             let expiry_controller = self.controller.clone();
             std::thread::Builder::new()
                 .name("teletype-undo-expiry".into())
                 .spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(30));
+                    std::thread::sleep(std::time::Duration::from_secs(undo_secs));
                     expiry_controller.send(Event::OfferUndoExpired { offer_id });
                 })
                 .ok();
-            let _ = app.emit(
-                "learned-preference",
-                &serde_json::json!({ "message": message, "ids": event_ids }),
-            );
+            if pill_admitted {
+                let (_, word, kind) = &learned_words[0];
+                let subtitle = match kind {
+                    commands::LearnedWordKind::Added => "Added to dictionary",
+                    commands::LearnedWordKind::Updated => "Updated in dictionary",
+                };
+                // show_learned allocates the card id before the event is
+                // emitted, so a size report with that id can show the window.
+                let card = crate::overlay::show_learned(&app);
+                let _ = app.emit_to(
+                    crate::overlay::PILL_LABEL,
+                    "learned-word",
+                    &commands::LearnedWordNotice {
+                        card,
+                        offer_id,
+                        word: word.clone(),
+                        kind: *kind,
+                    },
+                );
+                crate::overlay::announce_learned(&app, word, subtitle);
+                // No toast: two live Undo buttons for one offer would race.
+            } else {
+                let _ = app.emit(
+                    "learned-preference",
+                    &serde_json::json!({ "message": message, "ids": event_ids }),
+                );
+            }
         }
     }
 

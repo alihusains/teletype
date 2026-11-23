@@ -1449,6 +1449,8 @@ pub fn run() {
             commands::set_s1_control,
             commands::list_learned_terms,
             commands::undo_learned_term,
+            commands::learn_memory_blocked_count,
+            commands::forget_learning_memory,
             // Models
             commands::list_models,
             commands::select_model,
