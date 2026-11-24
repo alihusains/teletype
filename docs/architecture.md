@@ -22,45 +22,57 @@ required stack, so those patterns are reused deliberately (not translated):
 | Tray / pill | `tray.rs` (menu bar + panel), `pill.rs` (small always-on-top window) | Reused pattern; pill becomes the dictation overlay |
 | Model downloads | `models.rs` — Hugging Face streaming download with cancellation, `.part` files, size check | Reused for speech models; LLM models use the same store |
 | Settings persistence | `settings.rs` — JSON in the app config dir, per-field defaults, corrupt file moved aside | Same mechanism via `storage` |
-| Permissions | `platform/macos/permissions.rs` (objc TCC checks) | Reused in `platform/macos.rs` |
+| Permissions | `platform/macos/permissions.rs` (objc TCC checks) | Reused in `platform/macos_impl.rs` |
 
 Not reused: the Swift `speaktype/` app (replaced by the Rust desktop app),
-history/statistics screens
-(deferred), update service (deferred), legacy v1 import (N/A).
+history/statistics screens (shipped as History + Insights), update service
+(deferred), legacy v1 import (N/A).
 
 ## Workspace layout
 
 ```
 teletype/
-├── Cargo.toml                     # workspace
+├── Cargo.toml                     # workspace (11 members — source of truth: Cargo.toml)
 ├── crates/
-│   ├── teletype-core/             # platform-independent business logic
-│   │   └── src/
-│   │       ├── audio/             # mic capture (cpal), resampling
-│   │       ├── state.rs           # dictation state machine (pure core)
-│   │       ├── autotext/          # entries, tokenizer/protector, expander
-│   │       ├── transforms/        # definitions, repository, engine, prompt, validator
-│   │       ├── personalization/   # profile, explicit + learned prefs, comparator
-│   │       ├── context/           # ApplicationContext + normalization
-│   │       ├── pipeline.rs        # UnifiedInput → ... → final text
-│   │       ├── injector.rs        # TextInjector (clipboard+paste, preservation)
-│   │       ├── storage.rs         # JsonStore (atomic JSON files, corrupt-quarantining)
-│   │       ├── repo.rs            # Repo<T>: ArcSwap snapshot over a JsonStore + broadcast
-│   │       ├── persist.rs         # SQLite durable backend (teletype.db, WAL) + JSON→SQLite migration
-│   │       ├── shortcuts.rs       # abstract hotkey representation + conflict detection
-│   │       └── platform/          # Platform trait + mock
-│   ├── teletype-speech/           # SpeechProvider trait + Whisper / Parakeet / Parakeet.cpp providers + model catalog
-│   ├── teletype-inference/        # InferenceProvider trait, ModelManager, llama-server sidecar provider, EngineHandle, mock
-│   └── teletype-desktop/          # Tauri app
-│       └── src/
-│           ├── lib.rs             # AppState, command wiring
-│           ├── commands.rs        # #[tauri::command] surface
-│           ├── dictation.rs       # controller thread driving the state machine
-│           ├── tray.rs            # menu bar / system tray
-│           ├── overlay.rs         # floating pill window
-│           ├── typing.rs          # direct-typing AutoText watcher (enigo)
-│           └── platform/          # Platform impls (macos.rs, windows.rs)
-├── ui/                            # React 19 + Tailwind 4 frontend
+│   ├── Sys / build crates
+│   │   ├── parakeet-sys/          # builds and links the Parakeet TDT engine (whisper.cpp C API)
+│   │   ├── needle-sys/            # FFI bindings for the Needle 3 / Cactus runtime C API
+│   │   └── parakeet-cpp-sys/      # build driver for parakeet.cpp (C++/ggml Parakeet, C API)
+│   ├── Core logic
+│   │   └── teletype-core/         # platform-independent business logic
+│   │       └── src/
+│   │           ├── audio/             # mic capture (cpal), resampling
+│   │           ├── state.rs           # dictation state machine (pure core)
+│   │           ├── autotext/          # entries, tokenizer/protector, expander
+│   │           ├── transforms/        # definitions, repository, engine, prompt, validator
+│   │           ├── personalization/   # profile, explicit + learned prefs, comparator
+│   │           ├── context/           # ApplicationContext + normalization
+│   │           ├── pipeline.rs        # UnifiedInput → ... → final text
+│   │           ├── injector.rs        # TextInjector (clipboard+paste, preservation)
+│   │           ├── storage.rs         # JsonStore (atomic JSON files, corrupt-quarantining)
+│   │           ├── repo.rs            # Repo<T>: ArcSwap snapshot over a JsonStore + broadcast
+│   │           ├── persist.rs         # SQLite durable backend (teletype.db, WAL) + JSON→SQLite migration
+│   │           ├── shortcuts.rs       # abstract hotkey representation + conflict detection
+│   │           └── platform/          # Platform trait + mock
+│   ├── Speech / inference
+│   │   ├── teletype-speech/       # SpeechProvider trait + Whisper / Parakeet / Parakeet.cpp providers + model catalog
+│   │   ├── teletype-inference/    # InferenceProvider trait, ModelManager, llama-server sidecar provider, EngineHandle, mock
+│   │   ├── teletype-fluid/        # FluidAudio Parakeet (Core ML / Neural Engine) provider, macOS 14+ Apple Silicon
+│   │   ├── teletype-apple/        # Apple on-device speech provider, macOS 26+
+│   │   └── teletype-decider/      # NeuDecide ONNX runtime: speech → tool calls
+│   ├── App
+│   │   └── teletype-desktop/      # Tauri app
+│   │       └── src/
+│   │           ├── lib.rs             # AppState, command wiring
+│   │           ├── commands.rs        # #[tauri::command] surface
+│   │           ├── dictation.rs       # controller thread driving the state machine
+│   │           ├── tray.rs            # menu bar / system tray
+│   │           ├── overlay.rs         # floating pill window
+│   │           ├── typing.rs          # direct-typing AutoText watcher (enigo)
+│   │           └── platform/          # Platform impls (macos_impl.rs, windows_impl.rs)
+│   └── Eval
+│       └── teletype-eval/         # dictation eval harness: WER, polish judging, latency percentiles
+├── ui/                            # React 19 + Vite 6 frontend; CSS design tokens in index.html
 │   ├── index.html                 # settings main window
 │   ├── pill.html                  # dictation overlay
 │   └── src/

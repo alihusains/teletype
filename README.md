@@ -237,9 +237,12 @@ scripts/build-llama-server.sh
 
 - **macOS** — fully implemented: dictation, text injection, global hotkeys,
   tray, onboarding, insights, transcript archive, app icon, and crash recovery.
-- **Windows** — the workspace compiles on a real Windows host (CI gate), but
-  the platform layer is still stubbed: UIA/OCR context reading, keyboard
-  injection, hotkey registration, and the tray are not yet implemented.
+- **Windows** — the workspace compiles on a real Windows host (CI gate) and the
+  shipped exe passes `--self-test`. Text injection (enigo/arboard), the typed
+  AutoText `WH_KEYBOARD_LL` hook, the global hotkey and the tray all exist;
+  UIA/OCR context reading is the remaining platform gap. No human has run a
+  real dictation on a Windows desktop yet — see the evidence checklist in
+  [docs/windows-from-mac.md](docs/windows-from-mac.md).
 - **Linux** — not targeted.
 
 ## License

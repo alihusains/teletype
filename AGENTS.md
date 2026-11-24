@@ -288,7 +288,7 @@ the task reports committed under `tasks/pi-reports/`.
 ## Decisions (ADR)
 
 Durable architecture and product decisions live in `PROJECT_BRAIN.md` under
-Decisions (D001–D044). Decisions that arrive with a code change and deserve a
+Decisions (D001–D051). Decisions that arrive with a code change and deserve a
 standalone record live in `.agents/brain/adr/` as `ADR-NNN-short-name.md`
 (decision, context, alternatives, consequences, evidence, status, date). Do not
 duplicate a decision in both places: the brain keeps the one-line pointer, the

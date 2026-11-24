@@ -1,9 +1,17 @@
 # Signing, notarization, and in-app updates
 
-Teletype ships signed and notarized macOS builds and self-updating installs on
-both platforms. This is what has to be true, and what you have to do once.
+Teletype currently ships **unsigned** builds: macOS installers are downloadable
+from the release page, but in-app updates are off because no signing key is
+configured. Releases write an empty-platform updater manifest on purpose
+(`.github/workflows/release.yml`, `ALLOW_NO_UPDATER=true`), which is the posture
+for the v0.2.22 line. Signed/notarized builds and self-updates become available
+once a Developer ID certificate and updater signing key exist; the rest of this
+document describes that future state and the one-time setup it requires.
 
 ## Why this exists
+
+Once credentials exist, this is what signing, notarization and the updater buy
+us; none of it applies to today's unsigned builds:
 
 An unsigned build makes macOS show a Gatekeeper warning on first launch, and
 the user has to right-click the app and choose Open. For a dictation app that
@@ -83,8 +91,11 @@ key escrow. Put it in a password manager, not just in a CI secret.
 
 ## Verifying it worked
 
+This section describes the signed-release path, available once credentials exist;
+the check for today's unsigned release is in the tag section below.
+
 ```bash
-# Local build, signed and notarized
+# Local build, signed/notarized once credentials are configured
 cd ui && npm run build && cd ..
 cargo tauri build --bundles app,dmg
 
@@ -97,23 +108,31 @@ spctl --assess --type execute --verbose \
 Then push a tag and watch the run:
 
 ```bash
-git tag v0.1.1 && git push origin v0.1.1
+git tag v0.2.22 && git push origin v0.2.22
 ```
 
-In the Release page, confirm all of these are present:
+In the Release page, confirm the installers are present:
 
 - `Teletype_*.dmg`
-- `Teletype_*.app.tar.gz` and its `.sig` (the updater payload)
 - `Teletype_*_setup.exe`
-- `*.nsis.zip` and its `.sig`
 - `latest.json`
 
-`latest.json` must list **both** `darwin-*` and `windows-x86_64`. A manifest
-missing a platform means that platform's users are never offered an update,
-which is the failure mode that is easiest to ship and hardest to notice.
+The updater payloads (`Teletype_*.app.tar.gz`, `*.nsis.zip` and their `.sig`
+files) are produced only when the updater signing key is configured. With no
+key — the current posture — the release intentionally publishes a `latest.json`
+whose `platforms` object is empty. To verify that state, open `latest.json` on
+the release page and confirm that `platforms` is `{}` and the release is a
+pre-release; the updater-signing preflight in `.github/workflows/release.yml`
+logs that this is deliberate. In-app updates stay off, so install from the
+downloadable installers.
 
-Finally, install the release build on a clean machine, launch it once, then
-check that a later tag is picked up without a manual download.
+Once `TAURI_SIGNING_PRIVATE_KEY` is configured, the preflight checks the key
+and each build job produces signed artifacts. `latest.json` must then list
+**both** `darwin-*` and `windows-x86_64`: a manifest missing a platform means
+that platform's users are never offered an update, which is the failure mode
+that is easiest to ship and hardest to notice. At that point, install the
+release build on a clean machine, launch it once, then check that a later tag
+is picked up without a manual download.
 
 ## How the updater behaves
 

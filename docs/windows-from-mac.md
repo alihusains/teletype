@@ -13,7 +13,7 @@ The Windows layer is further along than "stubbed":
 | Foreground-app detection | `crates/teletype-desktop/src/platform/windows_impl.rs` (`GetForegroundWindow` → `QueryFullProcessImageNameW`) | implemented |
 | Microphone capture | `cpal` default device, same path as macOS | implemented |
 | Text injection | `enigo` + `arboard` via `teletype-core` (tiered paste, `Ctrl+V`) | implemented |
-| Typed AutoText key hook | `crates/teletype-desktop/src/typing_windows.rs` (`WH_KEYBOARD_LL`, own message-pump thread) | implemented |
+| Typed AutoText key hook | `crates/teletype-desktop/src/typing/typing_windows.rs` (`WH_KEYBOARD_LL`, own message-pump thread) | implemented |
 | Hotkey | Tauri global-shortcut plugin (`Ctrl+Shift+Space`) | implemented |
 | Tray | Tauri tray | implemented |
 | Build + pipeline smoke | `release.yml` `release-windows` runs the shipped `.exe --self-test` | green in v0.2.21 |
@@ -22,6 +22,9 @@ The Windows layer is further along than "stubbed":
 So the gap is **not a missing implementation, it is missing evidence on a real
 Windows desktop**. Nothing in this repo has ever run the app with a human
 holding a hotkey, in a real window station, and watched text land.
+
+README.md's Status section now reflects this table: the remaining gap is
+hardware evidence from a real Windows desktop, not missing implementation.
 
 ## 2. What a Mac cannot check, and what it can
 
