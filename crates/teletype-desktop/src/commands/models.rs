@@ -1332,6 +1332,19 @@ pub async fn rewrite_with_transform(
     result
 }
 
+/// Atomically claims the local-LLM loading flag: returns true only for the
+/// single caller that flips it from false to true under one lock acquisition.
+fn claim_loading(flag: &std::sync::Mutex<bool>) -> bool {
+    let mut loading = flag
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if *loading {
+        return false;
+    }
+    *loading = true;
+    true
+}
+
 /// Lazily loads the selected local polish model on first use (local models
 /// are not preloaded at launch). Called
 /// from the dictation path just before a transform runs, so the first
@@ -1382,20 +1395,28 @@ pub fn ensure_local_provider(app: &AppHandle) {
         return;
     }
     // P1-A: guard against concurrent spawns. If another thread is already
-    // warming up the server, skip — it will install the provider.
-    {
-        if *state
-            .llm_loading
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-        {
-            return;
-        }
-        *state
-            .llm_loading
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+    // warming up the server, skip — it will install the provider. Claim the
+    // flag under a single lock acquisition so two threads cannot both observe
+    // false before either writes true.
+    if !claim_loading(&state.llm_loading) {
+        return;
     }
+    // Hold the flag set across warm_up() AND the install decision below. The
+    // RAII guard clears it on every exit path (success, warm-up error, or a
+    // discarded provider), so no second spawn window opens while a provider
+    // is being installed. The guard does not hold the MutexGuard itself, so
+    // runtime-status readers of llm_loading are never blocked for 120 s.
+    struct ClearLoading<'a>(&'a AppState);
+    impl Drop for ClearLoading<'_> {
+        fn drop(&mut self) {
+            *self
+                .0
+                .llm_loading
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
+        }
+    }
+    let _clear_loading = ClearLoading(&state);
     let provider = teletype_inference::ServerProvider::new(entry.id, entry.name, &path);
     crate::log_entry(
         crate::LogLevel::Info,
@@ -1406,11 +1427,6 @@ pub fn ensure_local_provider(app: &AppHandle) {
     );
     let started = std::time::Instant::now();
     let result = provider.warm_up();
-    // Clear the loading flag regardless of outcome.
-    *state
-        .llm_loading
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
     if let Err(e) = result {
         crate::log_entry(
             crate::LogLevel::Error,
@@ -3024,6 +3040,27 @@ mod tests {
     #[test]
     fn should_install_local_installs_when_still_wanted_and_slot_is_free() {
         assert!(should_install_local(false, "local-server"));
+    }
+
+    #[test]
+    fn claim_loading_allows_exactly_one_caller() {
+        // P1-A: the single-lock claim admits exactly one winner even when
+        // several threads race to flip the same flag concurrently.
+        let flag = std::sync::Mutex::new(false);
+        let winners: Vec<bool> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| scope.spawn(|| claim_loading(&flag)))
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
+        });
+        assert_eq!(
+            winners.iter().filter(|&&won| won).count(),
+            1,
+            "expected exactly one winning claim, got {winners:?}"
+        );
     }
 
     #[test]
