@@ -1,0 +1,24 @@
+{
+  "clips": 185,
+  "manifest_sha256_12": "2ab0ded1d4c0",
+  "overall_accuracy": 0.8378378378378378,
+  "per_category_accuracy": {
+    "edit_verb": 1.0,
+    "focus_control": 1.0,
+    "itn_sensitive": 1.0,
+    "negative": 1.0,
+    "open_app": 0.0,
+    "pointer": 1.0
+  },
+  "per_category_scored": {
+    "edit_verb": 30,
+    "focus_control": 21,
+    "itn_sensitive": 31,
+    "negative": 50,
+    "open_app": 30,
+    "pointer": 23
+  },
+  "schema": "teletype-command-suite-baseline-v1",
+  "source_date": "2026-10-17",
+  "source_report": "evals/runs/command_suite_2026-10-18/report.json"
+}

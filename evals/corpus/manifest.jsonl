@@ -1,0 +1,17 @@
+{"id":"plain-01","audio":"audio/plain-01.wav","reference":"The deploy went out this morning and it is all good","tags":["plain"],"human":false}
+{"id":"plain-02","audio":"audio/plain-02.wav","reference":"Please call me back after the standup meeting","tags":["plain"],"human":false}
+{"id":"plain-03","audio":"audio/plain-03.wav","reference":"The build is green and the tests are passing","tags":["plain"],"human":false}
+{"id":"filler-01","audio":"audio/filler-01.wav","reference":"Um the deploy went out this morning and uh it is all good","tags":["filler"],"human":false}
+{"id":"filler-02","audio":"audio/filler-02.wav","reference":"I mean basically the build is green and actually all the tests pass","tags":["filler"],"human":false}
+{"id":"filler-03","audio":"audio/filler-03.wav","reference":"So um like the standup is at nine and er I need to be there","tags":["filler"],"human":false}
+{"id":"list-01","audio":"audio/list-01.wav","reference":"Things to do today: fix the login bug, update the docs, and review the pull request","tags":["list"],"human":false}
+{"id":"list-02","audio":"audio/list-02.wav","reference":"The steps are first clone the repo, second run the setup script, and third start the dev server","tags":["list"],"human":false}
+{"id":"numbers-01","audio":"audio/numbers-01.wav","reference":"The release is scheduled for the fourteenth of March at two thirty pm","tags":["numbers"],"human":false}
+{"id":"numbers-02","audio":"audio/numbers-02.wav","reference":"Our error budget is ninety nine point nine five percent and we have used up forty two percent of it","tags":["numbers"],"human":false}
+{"id":"names-01","audio":"audio/names-01.wav","reference":"Ask Priya Sharma about the Kafka consumer in the payments service","tags":["names"],"human":false}
+{"id":"names-02","audio":"audio/names-02.wav","reference":"The S3 bucket for the ETL pipeline is in the us east one region","tags":["names"],"human":false}
+{"id":"question-01","audio":"audio/question-01.wav","reference":"Did the migration finish before the maintenance window closed","tags":["question"],"human":false}
+{"id":"multi-01","audio":"audio/multi-01.wav","reference":"The build failed on CI. The error is in the auth module. I will take a look after lunch","tags":["multi"],"human":false}
+{"id":"long-01","audio":"audio/long-01.wav","reference":"The quarterly review is on the fourteenth and we need to cover the launch of the mobile app, the results of the customer research, the state of the platform migration, the hiring plan for the second half of the year, and the budget proposal for next year. I will send the agenda by Friday and everyone should come prepared with a short update on their area. Please keep your updates under five minutes so we have time for discussion. The meeting will be recorded and the notes will go to the team channel after the call. If you cannot attend, please leave a written update in the document before the meeting starts so the facilitator can cover your area","tags":["long"],"human":false}
+{"id":"awkward-01","audio":"audio/awkward-01.wav","reference":"The semicolon in the SQL query is the one that is causing the timeout","tags":["awkward"],"human":false}
+{"id":"awkward-02","audio":"audio/awkward-02.wav","reference":"We need to upgrade from version two to version three before the end of the quarter","tags":["awkward"],"human":false}

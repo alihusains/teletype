@@ -1,0 +1,16 @@
+{
+  "boost": "off",
+  "corpus": null,
+  "engine": "none",
+  "entity_ref_count": 10,
+  "git_sha": "4361547",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "competing-0db"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1793039546",
+  "vocab_cases": 0
+}

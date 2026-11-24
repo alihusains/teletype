@@ -1,0 +1,5809 @@
+{
+  "git_sha": "d4b433b",
+  "timestamp": "1792229356",
+  "model": "large-v3-turbo-q5",
+  "mode": "measure",
+  "has_synthesised_audio": true,
+  "human_case_count": 0,
+  "synthesised_case_count": 200,
+  "wer": {
+    "cases": 200,
+    "total_reference_words": 3505,
+    "total_errors": 199,
+    "micro_wer": 0.056776034236804565,
+    "macro_wer": 0.07427369243461202,
+    "worst": [
+      {
+        "id": "librispeech-other-0022",
+        "reference": "asked zarathustra vehemently what doest thou here",
+        "hypothesis": "as a twist of vehemently what do we stop here",
+        "wer": 1.0,
+        "substitutions": 4,
+        "deletions": 0,
+        "insertions": 3
+      },
+      {
+        "id": "librispeech-other-0138",
+        "reference": "this frees woman",
+        "hypothesis": "These freeze women",
+        "wer": 1.0,
+        "substitutions": 3,
+        "deletions": 0,
+        "insertions": 0
+      },
+      {
+        "id": "librispeech-other-0086",
+        "reference": "he invaded babylonia",
+        "hypothesis": "\"'He invaded Babylonia.'",
+        "wer": 0.6666666666666666,
+        "substitutions": 2,
+        "deletions": 0,
+        "insertions": 0
+      },
+      {
+        "id": "librispeech-other-0012",
+        "reference": "my dear said mister hale alarmed pray don't go off on that idea",
+        "hypothesis": "\"'My dear,' said Mr. Hell, alarmed, \"'pray don't go off on that idea.'",
+        "wer": 0.46153846153846156,
+        "substitutions": 6,
+        "deletions": 0,
+        "insertions": 0
+      },
+      {
+        "id": "librispeech-other-0110",
+        "reference": "the mirabelle was nearing tahiti",
+        "hypothesis": "The mirror bell was nearing Tahiti.",
+        "wer": 0.4,
+        "substitutions": 1,
+        "deletions": 0,
+        "insertions": 1
+      }
+    ]
+  },
+  "wer_by_tag": [
+    [
+      "librispeech",
+      {
+        "cases": 200,
+        "reference_words": 3505,
+        "errors": 199,
+        "wer": 0.056776034236804565
+      }
+    ]
+  ],
+  "polish": [
+    {
+      "id": "librispeech-other-0001",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0002",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0003",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0004",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0005",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0006",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0007",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0008",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0009",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0010",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0011",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0012",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0013",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0014",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0015",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0016",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0017",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0018",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0019",
+      "score": 98,
+      "failed": [
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0020",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0021",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0022",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0023",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0024",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0025",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0026",
+      "score": 55,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0027",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0028",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0029",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0030",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0031",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0032",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0033",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0034",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "librispeech-other-0035",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0036",
+      "score": 98,
+      "failed": [
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0037",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0038",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0039",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0040",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0041",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0042",
+      "score": 98,
+      "failed": [
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0043",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0044",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0045",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0046",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0047",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0048",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0049",
+      "score": 97,
+      "failed": [
+        "sentence_cased"
+      ]
+    },
+    {
+      "id": "librispeech-other-0050",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0051",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0052",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0053",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0054",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0055",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0056",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0057",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0058",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0059",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0060",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0061",
+      "score": 98,
+      "failed": [
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0062",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0063",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0064",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0065",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0066",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "librispeech-other-0067",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0068",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0069",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0070",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0071",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0072",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0073",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0074",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0075",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0076",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0077",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0078",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0079",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0080",
+      "score": 4,
+      "failed": [
+        "no_fillers",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0081",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0082",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0083",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0084",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0085",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0086",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0087",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0088",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0089",
+      "score": 98,
+      "failed": [
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0090",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0091",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0092",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0093",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0094",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0095",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0096",
+      "score": 98,
+      "failed": [
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0097",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0098",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0099",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0100",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0101",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0102",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0103",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0104",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0105",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0106",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0107",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0108",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0109",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0110",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0111",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0112",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0113",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0114",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0115",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0116",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0117",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0118",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0119",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0120",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0121",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0122",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0123",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0124",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0125",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0126",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0127",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0128",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0129",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0130",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0131",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0132",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0133",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0134",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0135",
+      "score": 98,
+      "failed": [
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0136",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0137",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0138",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0139",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0140",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0141",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0142",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0143",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0144",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0145",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0146",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0147",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0148",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0149",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0150",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0151",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0152",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0153",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0154",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0155",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0156",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0157",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0158",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0159",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0160",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0161",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0162",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0163",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0164",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0165",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0166",
+      "score": 91,
+      "failed": [
+        "no_fillers",
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0167",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0168",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0169",
+      "score": 91,
+      "failed": [
+        "no_fillers",
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0170",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0171",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0172",
+      "score": 45,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "librispeech-other-0173",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0174",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0175",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0176",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0177",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0178",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0179",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0180",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0181",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0182",
+      "score": 96,
+      "failed": [
+        "no_fillers"
+      ]
+    },
+    {
+      "id": "librispeech-other-0183",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0184",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0185",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0186",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0187",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0188",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0189",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0190",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0191",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "librispeech-other-0192",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0193",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0194",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0195",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0196",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0197",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0198",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "librispeech-other-0199",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "librispeech-other-0200",
+      "score": 45,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss"
+      ]
+    }
+  ],
+  "polish_mean_score": 59.885,
+  "latency_asr": {
+    "count": 200,
+    "min": 644.673625,
+    "max": 818.206958,
+    "mean": 689.7731962699997,
+    "p50": 680.894167,
+    "p95": 750.2262499999999,
+    "p99": 800.716666
+  },
+  "latency_total": {
+    "count": 200,
+    "min": 644.673625,
+    "max": 818.206958,
+    "mean": 689.7731962699997,
+    "p50": 680.894167,
+    "p95": 750.2262499999999,
+    "p99": 800.716666
+  },
+  "model_load_ms": 2216.64175,
+  "cases": [
+    {
+      "id": "librispeech-other-0001",
+      "reference": "there's iron they say in all our blood and a grain or two perhaps is good but his he makes me harshly feel has got a little too much of steel anon",
+      "hypothesis": "there's iron they say in all our blood and a grain or two perhaps is good but his he makes me harshly feel has got a little too much of steel anon",
+      "polished": "there's iron they say in all our blood and a grain or two perhaps is good but his he makes me harshly feel has got a little too much of steel anon",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 718.043,
+      "total_ms": 718.043
+    },
+    {
+      "id": "librispeech-other-0002",
+      "reference": "margaret said mister hale as he returned from showing his guest downstairs i could not help watching your face with some anxiety when mister thornton made his confession of having been a shop boy",
+      "hypothesis": "margaret said mr hale as he returned from showing his guests downstairs i could not help watching your face with some anxiety when mr thornton made his confession of having been a shop-boy",
+      "polished": "margaret said mr hale as he returned from showing his guests downstairs i could not help watching your face with some anxiety when mr thornton made his confession of having been a shop-boy",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.14705882352941177,
+      "substitutions": 4,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 717.156292,
+      "total_ms": 717.156292
+    },
+    {
+      "id": "librispeech-other-0003",
+      "reference": "you don't mean that you thought me so silly",
+      "hypothesis": "you don't mean that you thought me so silly",
+      "polished": "you don't mean that you thought me so silly",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 661.0109170000001,
+      "total_ms": 661.0109170000001
+    },
+    {
+      "id": "librispeech-other-0004",
+      "reference": "i really was very much afraid of showing him how much shocked i was at some parts of what he said",
+      "hypothesis": "I really was very much afraid of showing him how much shocked I was at some parts of what he said.",
+      "polished": "I really was very much afraid of showing him how much shocked I was at some parts of what he said.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 687.293834,
+      "total_ms": 687.293834
+    },
+    {
+      "id": "librispeech-other-0005",
+      "reference": "improvident and self indulgent were his words",
+      "hypothesis": "improvident and self-indulgent were his words",
+      "polished": "improvident and self-indulgent were his words",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 661.690375,
+      "total_ms": 661.690375
+    },
+    {
+      "id": "librispeech-other-0006",
+      "reference": "personally as you call it and all",
+      "hypothesis": "personally as you call it and all",
+      "polished": "personally as you call it and all",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 660.90825,
+      "total_ms": 660.90825
+    },
+    {
+      "id": "librispeech-other-0007",
+      "reference": "but though she received caresses and fond words back again in such profusion as would have gladdened her formerly yet she felt that there was a secret withheld from her and she believed it bore serious reference to her mother's health",
+      "hypothesis": "but though she received caresses and fond words back again in such profusion as would have gladdened her formerly yet she felt that there was a secret withheld from her and she believed it bore serious reference to her mother's health",
+      "polished": "but though she received caresses and fond words back again in such profusion as would have gladdened her formerly yet she felt that there was a secret withheld from her and she believed it bore serious reference to her mother's health",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 729.651583,
+      "total_ms": 729.651583
+    },
+    {
+      "id": "librispeech-other-0008",
+      "reference": "one afternoon she met bessy higgins in the street and stopped to speak to her",
+      "hypothesis": "One afternoon she met Bessie Higgins in the street and stopped to speak to her.",
+      "polished": "One afternoon she met Bessie Higgins in the street and stopped to speak to her.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.06666666666666667,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 680.894167,
+      "total_ms": 680.894167
+    },
+    {
+      "id": "librispeech-other-0009",
+      "reference": "i'm better in not being torn to pieces by coughing o'nights but i'm weary and tired o milton and longing to get away to the land o beulah and when i think i'm farther and farther off my heart sinks and i'm no better i'm worse",
+      "hypothesis": "i'm better in not being torn to pieces by coughing o nights but i'm weary and tired o milton and longing to get away to the land of bulla and when i think i'm farther and farther off my heart sinks and i'm no better i'm worse",
+      "polished": "i'm better in not being torn to pieces by coughing o nights but i'm weary and tired o milton and longing to get away to the land of bulla and when i think i'm farther and farther off my heart sinks and i'm no better i'm worse",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.08695652173913043,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 745.751583,
+      "total_ms": 745.751583
+    },
+    {
+      "id": "librispeech-other-0010",
+      "reference": "i had forgotten what i said for the time continued margaret quietly",
+      "hypothesis": "i had forgotten what i said for the time continued margaret quietly",
+      "polished": "i had forgotten what i said for the time continued margaret quietly",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 667.906084,
+      "total_ms": 667.906084
+    },
+    {
+      "id": "librispeech-other-0011",
+      "reference": "she put her hand to it and became ghastly pale",
+      "hypothesis": "she put her hand to it and became ghastly pale",
+      "polished": "she put her hand to it and became ghastly pale",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 662.6005,
+      "total_ms": 662.6005
+    },
+    {
+      "id": "librispeech-other-0012",
+      "reference": "my dear said mister hale alarmed pray don't go off on that idea",
+      "hypothesis": "\"'My dear,' said Mr. Hell, alarmed, \"'pray don't go off on that idea.'",
+      "polished": "\"'My dear,' said Mr. Hell, alarmed, \"'pray don't go off on that idea.'",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.46153846153846156,
+      "substitutions": 6,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 685.765666,
+      "total_ms": 685.765666
+    },
+    {
+      "id": "librispeech-other-0013",
+      "reference": "i don't know positively that it is hers either but from little things i have gathered from him i fancy so",
+      "hypothesis": "i don't know positively that it is hers either but from little things i have gathered from him i fancy so",
+      "polished": "i don't know positively that it is hers either but from little things i have gathered from him i fancy so",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 676.0832919999999,
+      "total_ms": 676.0832919999999
+    },
+    {
+      "id": "librispeech-other-0014",
+      "reference": "evaporate the filtrate to a syrup and extract with successive portions of absolute alcohol",
+      "hypothesis": "Evaporate the filtrate to a syrup and extract with successive portions of absolute alcohol.",
+      "polished": "Evaporate the filtrate to a syrup and extract with successive portions of absolute alcohol.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 676.9935839999999,
+      "total_ms": 676.9935839999999
+    },
+    {
+      "id": "librispeech-other-0015",
+      "reference": "which this ain't not by no means",
+      "hypothesis": "which this end not by no means",
+      "polished": "which this end not by no means",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 654.623916,
+      "total_ms": 654.623916
+    },
+    {
+      "id": "librispeech-other-0016",
+      "reference": "if e's straight e'll do for me and if he ain't i'll do for im see",
+      "hypothesis": "If he's straight, he'll do for me, and if he ain't, I'll do for him. See?",
+      "polished": "If he's straight, he'll do for me, and if he ain't, I'll do for him. See?",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.1875,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 690.006833,
+      "total_ms": 690.006833
+    },
+    {
+      "id": "librispeech-other-0017",
+      "reference": "what's that there said dickie",
+      "hypothesis": "\"What's that there?\" said Diggie.",
+      "polished": "\"What's that there?\" said Diggie.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 661.513375,
+      "total_ms": 661.513375
+    },
+    {
+      "id": "librispeech-other-0018",
+      "reference": "then the eunuch went out to zau al makan and said to him recite what verses thou knowest for my lady is here hard by listening to thee and after i will ask thee of thy name and thy native country and thy condition",
+      "hypothesis": "then the eunuch went out to zah al makan and said to him recite what verses thou knowest for my lady is here hard by listening to thee and after i will ask thee of thy name and thy native country and thy condition",
+      "polished": "then the eunuch went out to zah al makan and said to him recite what verses thou knowest for my lady is here hard by listening to thee and after i will ask thee of thy name and thy native country and thy condition",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.022727272727272728,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 732.850459,
+      "total_ms": 732.850459
+    },
+    {
+      "id": "librispeech-other-0019",
+      "reference": "and also these",
+      "hypothesis": "And also these",
+      "polished": "And also these",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 98,
+      "polish_failed": [
+        "terminal_punctuation"
+      ],
+      "asr_ms": 646.895667,
+      "total_ms": 646.895667
+    },
+    {
+      "id": "librispeech-other-0020",
+      "reference": "twas as i feared the coming ills discerning but unto allah we are all returning",
+      "hypothesis": "It was as I feared the coming ills discerning, But unto Allah we are all returning.",
+      "polished": "It was as I feared the coming ills discerning, But unto Allah we are all returning.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.13333333333333333,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 681.570208,
+      "total_ms": 681.570208
+    },
+    {
+      "id": "librispeech-other-0021",
+      "reference": "for when zarathustra scrutinised him with his glance he was frightened as by a sudden apparition so slender swarthy hollow and worn out did this follower appear",
+      "hypothesis": "who when their distress scrutinized him with his glance he was frightened as by a sudden apparition so slender swarthy hollow and worn out did his follower appear",
+      "polished": "who when their distress scrutinized him with his glance he was frightened as by a sudden apparition so slender swarthy hollow and worn out did his follower appear",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.18518518518518517,
+      "substitutions": 4,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 705.6755,
+      "total_ms": 705.6755
+    },
+    {
+      "id": "librispeech-other-0022",
+      "reference": "asked zarathustra vehemently what doest thou here",
+      "hypothesis": "as a twist of vehemently what do we stop here",
+      "polished": "as a twist of vehemently what do we stop here",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 4,
+      "deletions": 0,
+      "insertions": 3,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 668.103333,
+      "total_ms": 668.103333
+    },
+    {
+      "id": "librispeech-other-0023",
+      "reference": "o earth thou hast become too round for me",
+      "hypothesis": "O earth, thou hast become two rounds for me.",
+      "polished": "O earth, thou hast become two rounds for me.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2222222222222222,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 655.163584,
+      "total_ms": 655.163584
+    },
+    {
+      "id": "librispeech-other-0024",
+      "reference": "for it do i ask and seek and have sought but have not found it",
+      "hypothesis": "For it do I ask and seek, and have sought, but have not found it.",
+      "polished": "For it do I ask and seek, and have sought, but have not found it.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 676.879542,
+      "total_ms": 676.879542
+    },
+    {
+      "id": "librispeech-other-0025",
+      "reference": "thus accomplished he excited the admiration of every silly coquette and the envy of every fluttering coxcomb but by all young gentlemen and ladies of understanding he was heartily despised as a mere civilized monkey",
+      "hypothesis": "that's accomplished he excited the admiration of every silly quacket and the envy of every fluttering o'combe but by all young gentlemen and ladies of understanding he was heartily despised as a mere civilized monkey",
+      "polished": "that's accomplished he excited the admiration of every silly quacket and the envy of every fluttering o'combe but by all young gentlemen and ladies of understanding he was heartily despised as a mere civilized monkey",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.08571428571428572,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 729.619834,
+      "total_ms": 729.619834
+    },
+    {
+      "id": "librispeech-other-0026",
+      "reference": "the stories regarding joseph the traditional father of ephraim and manasseh imply that these strong central tribes possibly together with the southern tribes of benjamin and judah were the chief actors in this opening scene in israel's history",
+      "hypothesis": "the stories regarding joseph their traditional father ephraim and manasseh imply that these strong central tribes possibly together with the southern tribes of benjamin and judah were the chief actors in this opening scene in israel's history",
+      "polished": "the stories regarding joseph their traditional father ephraim and manasseh imply that these strong central tribes possibly together with the southern tribes of benjamin and judah were the chief actors in this opening scene in israel's history",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.05263157894736842,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 55,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_hallucination"
+      ],
+      "asr_ms": 735.63875,
+      "total_ms": 735.63875
+    },
+    {
+      "id": "librispeech-other-0027",
+      "reference": "later he found his way to the court of one of the local kings in central palestine where he married and became in time a prosperous local prince",
+      "hypothesis": "later he found his way to the court of one of the local kings in central palestine where he married and became in the time a prosperous local prince",
+      "polished": "later he found his way to the court of one of the local kings in central palestine where he married and became in the time a prosperous local prince",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.03571428571428571,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 702.693375,
+      "total_ms": 702.693375
+    },
+    {
+      "id": "librispeech-other-0028",
+      "reference": "the title of his father in law implies that this priest ministered at some wilderness sanctuary",
+      "hypothesis": "the title of his father-in-law implies that this priest ministered at some wilderness sanctuary",
+      "polished": "the title of his father-in-law implies that this priest ministered at some wilderness sanctuary",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.1875,
+      "substitutions": 1,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 681.333084,
+      "total_ms": 681.333084
+    },
+    {
+      "id": "librispeech-other-0029",
+      "reference": "evidently the intention was to make things pleasant for the royal foe of tobacco during his visit",
+      "hypothesis": "evidently the intention was to make things present for the royal foe of tobacco during his visit",
+      "polished": "evidently the intention was to make things present for the royal foe of tobacco during his visit",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.058823529411764705,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 683.8254999999999,
+      "total_ms": 683.8254999999999
+    },
+    {
+      "id": "librispeech-other-0030",
+      "reference": "proas in that quarter were usually distrusted by ships it is true but the sea is full of them and far more are innocent than are guilty of any acts of violence",
+      "hypothesis": "perots in that quarter were usually distracted by the steps that is true but the sea is full of them and far more are innocent than are guilty of any acts of violence",
+      "polished": "perots in that quarter were usually distracted by the steps that is true but the sea is full of them and far more are innocent than are guilty of any acts of violence",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.15625,
+      "substitutions": 4,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 706.314209,
+      "total_ms": 706.314209
+    },
+    {
+      "id": "librispeech-other-0031",
+      "reference": "the captain behaved perfectly well in this critical instant commanding a dead silence and the closest attention to his orders",
+      "hypothesis": "The captain behaved perfectly well in this critical instant, commanding a dead silence in the closest intention to his orders.",
+      "polished": "The captain behaved perfectly well in this critical instant, commanding a dead silence in the closest intention to his orders.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.1,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 685.588167,
+      "total_ms": 685.588167
+    },
+    {
+      "id": "librispeech-other-0032",
+      "reference": "so then the ringmaster he made a little speech and said he hoped there wouldn't be no disturbance and if the man would promise he wouldn't make no more trouble he would let him ride if he thought he could stay on the horse",
+      "hypothesis": "so then the ringmaster he made a little speech and said he hoped there wouldn't be no disturbance and if the man would promise he wouldn't make no more trouble he would let him ride if he thought he could stay on the horse",
+      "polished": "so then the ringmaster he made a little speech and said he hoped there wouldn't be no disturbance and if the man would promise he wouldn't make no more trouble he would let him ride if he thought he could stay on the horse",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 731.45575,
+      "total_ms": 731.45575
+    },
+    {
+      "id": "librispeech-other-0033",
+      "reference": "the duke says yes",
+      "hypothesis": "The Duke says yes.",
+      "polished": "The Duke says yes.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 656.0974160000001,
+      "total_ms": 656.0974160000001
+    },
+    {
+      "id": "librispeech-other-0034",
+      "reference": "when i waked up just at daybreak he was sitting there with his head down betwixt his knees moaning and mourning to himself",
+      "hypothesis": "When I waked up just at daybreak, he was sitting there with his head down betwixt his knees, mourning and mourning to himself.",
+      "polished": "When I waked up just at daybreak, he was sitting there with his head down betwixt his knees, mourning and mourning to himself.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.043478260869565216,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 701.1230410000001,
+      "total_ms": 701.1230410000001
+    },
+    {
+      "id": "librispeech-other-0035",
+      "reference": "wher you bound for young man",
+      "hypothesis": "\"Where are you bound for, young man?\"",
+      "polished": "\"Where are you bound for, young man?\"",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.3333333333333333,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 664.320459,
+      "total_ms": 664.320459
+    },
+    {
+      "id": "librispeech-other-0036",
+      "reference": "why silas look yonder up the road ain't that somebody coming",
+      "hypothesis": "\"Why, Silas, look yonder, up the road. Ain't that somebody coming?\"",
+      "polished": "\"Why, Silas, look yonder, up the road. Ain't that somebody coming?\"",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 98,
+      "polish_failed": [
+        "terminal_punctuation"
+      ],
+      "asr_ms": 683.397792,
+      "total_ms": 683.397792
+    },
+    {
+      "id": "librispeech-other-0037",
+      "reference": "but i am hugely pleased that you have seen my lady",
+      "hypothesis": "But I am hugely pleased that you have seen my lady.",
+      "polished": "But I am hugely pleased that you have seen my lady.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 669.168334,
+      "total_ms": 669.168334
+    },
+    {
+      "id": "librispeech-other-0038",
+      "reference": "my poor lady vavasour is carried to the tower and her great belly could not excuse her because she was acquainted by somebody that there was a plot against the protector and did not discover it",
+      "hypothesis": "my poor lady vavisur is carried to the tower and her great belly could not excuse her because she was acquainted by somebody that there was a plot against the protector and did not discover it",
+      "polished": "my poor lady vavisur is carried to the tower and her great belly could not excuse her because she was acquainted by somebody that there was a plot against the protector and did not discover it",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.027777777777777776,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 716.268,
+      "total_ms": 716.268
+    },
+    {
+      "id": "librispeech-other-0039",
+      "reference": "by the next i shall be gone into kent and my other journey is laid aside which i am not displeased at because it would have broken our intercourse very much",
+      "hypothesis": "by the next i shall be gone into kent and my other journey is laid aside which i am not displeased at because it would have broken our intercourse very much",
+      "polished": "by the next i shall be gone into kent and my other journey is laid aside which i am not displeased at because it would have broken our intercourse very much",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 710.156875,
+      "total_ms": 710.156875
+    },
+    {
+      "id": "librispeech-other-0040",
+      "reference": "you are satisfied i hope ere this that i scaped drowning",
+      "hypothesis": "You are satisfied, I hope. At this that I escaped drowning?",
+      "polished": "You are satisfied, I hope. At this that I escaped drowning?",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.18181818181818182,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 668.577333,
+      "total_ms": 668.577333
+    },
+    {
+      "id": "librispeech-other-0041",
+      "reference": "in my life i never heard so ridiculous a discourse as he made us and no old woman who passes for a witch could have been more puzzled to seek what to say to reasonable people than he was",
+      "hypothesis": "in my life i never heard so ridiculous a discourse as he made us and no old woman who passes for a witch could have been more puzzled to seek what to say to reasonable people than he was",
+      "polished": "in my life i never heard so ridiculous a discourse as he made us and no old woman who passes for a witch could have been more puzzled to seek what to say to reasonable people than he was",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 715.295791,
+      "total_ms": 715.295791
+    },
+    {
+      "id": "librispeech-other-0042",
+      "reference": "just suppose it is true that he does ask me and i say yes",
+      "hypothesis": "Just suppose it is true that he does ask me and I say yes,",
+      "polished": "Just suppose it is true that he does ask me and I say yes,",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 98,
+      "polish_failed": [
+        "terminal_punctuation"
+      ],
+      "asr_ms": 686.6408339999999,
+      "total_ms": 686.6408339999999
+    },
+    {
+      "id": "librispeech-other-0043",
+      "reference": "i could do so much for all at home how i should enjoy that",
+      "hypothesis": "I could do so much for all at home, how I should enjoy that!",
+      "polished": "I could do so much for all at home, how I should enjoy that!",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 673.98575,
+      "total_ms": 673.98575
+    },
+    {
+      "id": "librispeech-other-0044",
+      "reference": "polly felt a very cordial friendship for mister sydney but not one particle of the love which is the only coin in which love can be truly paid",
+      "hypothesis": "polly felt a very courteous friendship for mr sydney but not one particle of the love which is the only coin in which love can be truly paid",
+      "polished": "polly felt a very courteous friendship for mr sydney but not one particle of the love which is the only coin in which love can be truly paid",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.07142857142857142,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 706.37375,
+      "total_ms": 706.37375
+    },
+    {
+      "id": "librispeech-other-0045",
+      "reference": "she really could n't help it it was so pleasant to see him again just when she was feeling so lonely",
+      "hypothesis": "She really could not help it. It was so pleasant to see him again, just when she was feeling so lonely.",
+      "polished": "She really could not help it. It was so pleasant to see him again, just when she was feeling so lonely.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.047619047619047616,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 686.191542,
+      "total_ms": 686.191542
+    },
+    {
+      "id": "librispeech-other-0046",
+      "reference": "it was her pleasure and her vanity to drag in these names on every pretext",
+      "hypothesis": "It was her pleasure and her vanity to drag in these names on every pretext.",
+      "polished": "It was her pleasure and her vanity to drag in these names on every pretext.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 676.428208,
+      "total_ms": 676.428208
+    },
+    {
+      "id": "librispeech-other-0047",
+      "reference": "it would be a good thing to have two men for it",
+      "hypothesis": "\"'It would be a good thing to have two men for it.'",
+      "polished": "\"'It would be a good thing to have two men for it.'",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.16666666666666666,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 672.07025,
+      "total_ms": 672.07025
+    },
+    {
+      "id": "librispeech-other-0048",
+      "reference": "merit consists in working according to one's strength a cloister is not a dock yard",
+      "hypothesis": "marriage consists in working according to one's strength a cloister is not a dockyard",
+      "polished": "marriage consists in working according to one's strength a cloister is not a dockyard",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2,
+      "substitutions": 2,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 677.5017909999999,
+      "total_ms": 677.5017909999999
+    },
+    {
+      "id": "librispeech-other-0049",
+      "reference": "and to hold your peace about everything yes reverend mother",
+      "hypothesis": "and to hold your peace about everything. Yes, Reverend Mother.",
+      "polished": "and to hold your peace about everything. Yes, Reverend Mother.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 97,
+      "polish_failed": [
+        "sentence_cased"
+      ],
+      "asr_ms": 667.539,
+      "total_ms": 667.539
+    },
+    {
+      "id": "librispeech-other-0050",
+      "reference": "but it is forbidden",
+      "hypothesis": "but it is forbidden",
+      "polished": "but it is forbidden",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 651.377709,
+      "total_ms": 651.377709
+    },
+    {
+      "id": "librispeech-other-0051",
+      "reference": "you will do it as speedily as possible",
+      "hypothesis": "You will do it as speedily as possible.",
+      "polished": "You will do it as speedily as possible.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 664.7518329999999,
+      "total_ms": 664.7518329999999
+    },
+    {
+      "id": "librispeech-other-0052",
+      "reference": "the vil stuck fast in his throat",
+      "hypothesis": "The veal stuck fast in his throat.",
+      "polished": "The veal stuck fast in his throat.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 659.223958,
+      "total_ms": 659.223958
+    },
+    {
+      "id": "librispeech-other-0053",
+      "reference": "general observations on preserves confectionary ices and dessert dishes",
+      "hypothesis": "general observations on preserves confectionery ices and dessert dishes",
+      "polished": "general observations on preserves confectionery ices and dessert dishes",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 671.777458,
+      "total_ms": 671.777458
+    },
+    {
+      "id": "librispeech-other-0054",
+      "reference": "boil them up three days successively skimming each time and they will then be finished and in a state fit to be put into pots for use",
+      "hypothesis": "boil them up three days successively skimming each time and they will then be finished and in a state fit to be put into pots for use",
+      "polished": "boil them up three days successively skimming each time and they will then be finished and in a state fit to be put into pots for use",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 693.0812910000001,
+      "total_ms": 693.0812910000001
+    },
+    {
+      "id": "librispeech-other-0055",
+      "reference": "they should be taken immediately after the repast or some hours after because the taking these substances during the process of digestion is apt to provoke indisposition",
+      "hypothesis": "they should be taken immediately after the repast or some hours after because the taking of these substances during the process of digestion is apt to provoke indisposition",
+      "polished": "they should be taken immediately after the repast or some hours after because the taking of these substances during the process of digestion is apt to provoke indisposition",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.037037037037037035,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 701.3205,
+      "total_ms": 701.3205
+    },
+    {
+      "id": "librispeech-other-0056",
+      "reference": "yes that i have said the youth",
+      "hypothesis": "\"'Yes, that I have,' said the youth.",
+      "polished": "\"'Yes, that I have,' said the youth.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 679.1310000000001,
+      "total_ms": 679.1310000000001
+    },
+    {
+      "id": "librispeech-other-0057",
+      "reference": "come hither come hither my handsome son and let me comb your hair",
+      "hypothesis": "\"'Come hither, come hither, my handsome son, and let me comb your hair.'",
+      "polished": "\"'Come hither, come hither, my handsome son, and let me comb your hair.'",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.15384615384615385,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 681.152541,
+      "total_ms": 681.152541
+    },
+    {
+      "id": "librispeech-other-0058",
+      "reference": "on the third day cinderlad wanted to set out",
+      "hypothesis": "On the third day, Cidrlade wanted to set out.",
+      "polished": "On the third day, Cidrlade wanted to set out.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 668.32875,
+      "total_ms": 668.32875
+    },
+    {
+      "id": "librispeech-other-0059",
+      "reference": "when they had gone thus for a long long way the foal again asked dost thou see anything now",
+      "hypothesis": "when they had gone thus for a long long way the full again asked dost thou see any thing now",
+      "polished": "when they had gone thus for a long long way the full again asked dost thou see any thing now",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.15789473684210525,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 681.2446669999999,
+      "total_ms": 681.2446669999999
+    },
+    {
+      "id": "librispeech-other-0060",
+      "reference": "once upon a time there was a king in the north who had won many wars but now he was old",
+      "hypothesis": "once upon a time there was a king in the north who had won many wars but now he was old",
+      "polished": "once upon a time there was a king in the north who had won many wars but now he was old",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 683.340625,
+      "total_ms": 683.340625
+    },
+    {
+      "id": "librispeech-other-0061",
+      "reference": "sigurd said i would touch none of it if by losing it i should never die",
+      "hypothesis": "Sigurd said, \"I would touch none of it if by losing it I should never die.\"",
+      "polished": "Sigurd said, \"I would touch none of it if by losing it I should never die.\"",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 98,
+      "polish_failed": [
+        "terminal_punctuation"
+      ],
+      "asr_ms": 680.112209,
+      "total_ms": 680.112209
+    },
+    {
+      "id": "librispeech-other-0062",
+      "reference": "die thou fafnir and then fafnir died",
+      "hypothesis": "die thou fafner and then fafner died",
+      "polished": "die thou fafner and then fafner died",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 666.865083,
+      "total_ms": 666.865083
+    },
+    {
+      "id": "librispeech-other-0063",
+      "reference": "for one day when brynhild and gudrun were bathing brynhild waded farthest out into the river and said she did that to show she was guirun's superior",
+      "hypothesis": "for one day when brynhild and gundrin were bathing brynhild waded farthest out into the river and said she did that to show she was gundrin's superior",
+      "polished": "for one day when brynhild and gundrin were bathing brynhild waded farthest out into the river and said she did that to show she was gundrin's superior",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.07407407407407407,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 741.8256250000001,
+      "total_ms": 741.8256250000001
+    },
+    {
+      "id": "librispeech-other-0064",
+      "reference": "put this in a double boiler and let cook until thick stirring constantly",
+      "hypothesis": "Put this in a double boiler and let cook until thick, stirring constantly.",
+      "polished": "Put this in a double boiler and let cook until thick, stirring constantly.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 733.9705,
+      "total_ms": 733.9705
+    },
+    {
+      "id": "librispeech-other-0065",
+      "reference": "didn't i say so worse luck to my line said sancho",
+      "hypothesis": "\"'Didn't I say so? Worst luck to my line,' said Sancho.",
+      "polished": "\"'Didn't I say so? Worst luck to my line,' said Sancho.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2727272727272727,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 746.50625,
+      "total_ms": 746.50625
+    },
+    {
+      "id": "librispeech-other-0066",
+      "reference": "to be brief he took the materials of which he made a compound mixing them all and boiling them a good while until it seemed to him they had come to perfection",
+      "hypothesis": "To be brief, he took the materials of which he made a compound, mixing them all and boiling them a good, until it seemed to him they had come to perfection.",
+      "polished": "To be brief, he took the materials of which he made a compound, mixing them all and boiling them a good, until it seemed to him they had come to perfection.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.03125,
+      "substitutions": 0,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 782.495208,
+      "total_ms": 782.495208
+    },
+    {
+      "id": "librispeech-other-0067",
+      "reference": "sancho panza who also regarded the amendment of his master as miraculous begged him to give him what was left in the pigskin which was no small quantity",
+      "hypothesis": "sancho panza who also regarded the amendment of his master as miraculous begged him to give him what was left in the pigskin which was no small quantity",
+      "polished": "sancho panza who also regarded the amendment of his master as miraculous begged him to give him what was left in the pigskin which was no small quantity",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 768.881167,
+      "total_ms": 768.881167
+    },
+    {
+      "id": "librispeech-other-0068",
+      "reference": "if your worship knew that returned sancho woe betide me and all my kindred why did you let me taste it",
+      "hypothesis": "If your worship knew that, returned Sacho, woe betide me and all my kindred, why did you let me taste it?",
+      "polished": "If your worship knew that, returned Sacho, woe betide me and all my kindred, why did you let me taste it?",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.047619047619047616,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 765.094417,
+      "total_ms": 765.094417
+    },
+    {
+      "id": "librispeech-other-0069",
+      "reference": "you understand father madeleine the government will notice it",
+      "hypothesis": "You understand, Father Madeleine. The government will notice it.",
+      "polished": "You understand, Father Madeleine. The government will notice it.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 697.514125,
+      "total_ms": 697.514125
+    },
+    {
+      "id": "librispeech-other-0070",
+      "reference": "asked jean valjean fauchelevent replied",
+      "hypothesis": "asked Jean Valjean. Fauchelevent replied,",
+      "polished": "asked Jean Valjean. Fauchelevent replied,",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 671.03625,
+      "total_ms": 671.03625
+    },
+    {
+      "id": "librispeech-other-0071",
+      "reference": "but you are a jolly fellow too",
+      "hypothesis": "But you're a jolly fellow too.",
+      "polished": "But you're a jolly fellow too.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 663.6091250000001,
+      "total_ms": 663.6091250000001
+    },
+    {
+      "id": "librispeech-other-0072",
+      "reference": "you are a peasant i am a parisian",
+      "hypothesis": "You are a peasant. I am a Parisian.",
+      "polished": "You are a peasant. I am a Parisian.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 672.569917,
+      "total_ms": 672.569917
+    },
+    {
+      "id": "librispeech-other-0073",
+      "reference": "fortunately the soil which was light and wet with the winter rains clogged the wheels and retarded its speed",
+      "hypothesis": "fortunately the soil which was light and wet with the winter rains clogged the wheels and retarded its speed",
+      "polished": "fortunately the soil which was light and wet with the winter rains clogged the wheels and retarded its speed",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 702.490459,
+      "total_ms": 702.490459
+    },
+    {
+      "id": "librispeech-other-0074",
+      "reference": "here a remark becomes necessary",
+      "hypothesis": "Here a remark becomes necessary.",
+      "polished": "Here a remark becomes necessary.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 662.181208,
+      "total_ms": 662.181208
+    },
+    {
+      "id": "librispeech-other-0075",
+      "reference": "they know not what proof to give",
+      "hypothesis": "they know not what proof to give",
+      "polished": "they know not what proof to give",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 661.505583,
+      "total_ms": 661.505583
+    },
+    {
+      "id": "librispeech-other-0076",
+      "reference": "the woman becomes the man's mistress and loves him",
+      "hypothesis": "the woman becomes the man's mistress and loves him",
+      "polished": "the woman becomes the man's mistress and loves him",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 738.7822080000001,
+      "total_ms": 738.7822080000001
+    },
+    {
+      "id": "librispeech-other-0077",
+      "reference": "did she love me enough to believe that the more beautiful she looked the happier i should be",
+      "hypothesis": "did she love me enough to believe that the more beautiful she looked the happier i should be",
+      "polished": "did she love me enough to believe that the more beautiful she looked the happier i should be",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 750.2262499999999,
+      "total_ms": 750.2262499999999
+    },
+    {
+      "id": "librispeech-other-0078",
+      "reference": "i listened and i gazed at marguerite with admiration",
+      "hypothesis": "i listened and i gazed at marguerite with admiration",
+      "polished": "i listened and i gazed at marguerite with admiration",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 743.2893750000001,
+      "total_ms": 743.2893750000001
+    },
+    {
+      "id": "librispeech-other-0079",
+      "reference": "now ol mistah buzzard is naturally good natured and accommodating and when peter begged so hard he just couldn't find it in his heart to refuse",
+      "hypothesis": "now all mr buzzard is naturally good-natured and accommodating and when peter begged so hard he just couldn't find it in his heart to refuse",
+      "polished": "now all mr buzzard is naturally good-natured and accommodating and when peter begged so hard he just couldn't find it in his heart to refuse",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.15384615384615385,
+      "substitutions": 3,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 791.092208,
+      "total_ms": 791.092208
+    },
+    {
+      "id": "librispeech-other-0080",
+      "reference": "will yo' alls please speak a lil louder he holler down the chimney jes like that",
+      "hypothesis": "\"Will you all please speak a little louder?\" he hollered down the chimney. \"Just like that.\"",
+      "polished": "\"Will you all please speak a little louder?\" he hollered down the chimney. \"Just like that.\"",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.3125,
+      "substitutions": 5,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 4,
+      "polish_failed": [
+        "no_fillers",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 780.563541,
+      "total_ms": 780.563541
+    },
+    {
+      "id": "librispeech-other-0081",
+      "reference": "so my friend so whip me off this glass neatly bring me hither some claret a full weeping glass till it run over",
+      "hypothesis": "so my friend so whip me off this glass neatly bring me hither some claret a full weeping-glass till it run over",
+      "polished": "so my friend so whip me off this glass neatly bring me hither some claret a full weeping-glass till it run over",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.08695652173913043,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 803.6736249999999,
+      "total_ms": 803.6736249999999
+    },
+    {
+      "id": "librispeech-other-0082",
+      "reference": "let us wind our horns by the sound of flagons and bottles and cry aloud that whoever hath lost his thirst come not hither to seek it",
+      "hypothesis": "let us wind our horns by the sound of flagons and bottles and cry aloud that whoever hath lost his thirst come not hither to seek it",
+      "polished": "let us wind our horns by the sound of flagons and bottles and cry aloud that whoever hath lost his thirst come not hither to seek it",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 818.206958,
+      "total_ms": 818.206958
+    },
+    {
+      "id": "librispeech-other-0083",
+      "reference": "there is no enchantment nor charm there every one of you hath seen it",
+      "hypothesis": "There is no enchantment nor charm there. Every one of you has seen it.",
+      "polished": "There is no enchantment nor charm there. Every one of you has seen it.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.07142857142857142,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 760.2195,
+      "total_ms": 760.2195
+    },
+    {
+      "id": "librispeech-other-0084",
+      "reference": "by the belly of sanct james what shall we poor devils drink the while",
+      "hypothesis": "by the belly of st james what shall we poor devils drink the while",
+      "polished": "by the belly of st james what shall we poor devils drink the while",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.07142857142857142,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 720.974917,
+      "total_ms": 720.974917
+    },
+    {
+      "id": "librispeech-other-0085",
+      "reference": "in the meantime friar john with his formidable baton of the cross got to the breach which the enemies had made and there stood to snatch up those that endeavoured to escape",
+      "hypothesis": "in the meantime friar john with his formidable baton of the cross got to the breach which the enemies had made and there stood to snatch up those that endeavoured to escape",
+      "polished": "in the meantime friar john with his formidable baton of the cross got to the breach which the enemies had made and there stood to snatch up those that endeavoured to escape",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 749.2255,
+      "total_ms": 749.2255
+    },
+    {
+      "id": "librispeech-other-0086",
+      "reference": "he invaded babylonia",
+      "hypothesis": "\"'He invaded Babylonia.'",
+      "polished": "\"'He invaded Babylonia.'",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.6666666666666666,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 673.566875,
+      "total_ms": 673.566875
+    },
+    {
+      "id": "librispeech-other-0087",
+      "reference": "i ask no further reward for my labours up to this time than the gracious favour of your most illustrious excellency",
+      "hypothesis": "I ask no further reward for my labours up to this time than the gracious favour of your most illustrious excellency.",
+      "polished": "I ask no further reward for my labours up to this time than the gracious favour of your most illustrious excellency.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 714.474667,
+      "total_ms": 714.474667
+    },
+    {
+      "id": "librispeech-other-0088",
+      "reference": "it was his fancy i suppose to revive certain sentimental relations which had it may be once existed between him and miss lake and he was a person of that combative temperament that magnifies an object in proportion as its pursuit is thwarted",
+      "hypothesis": "it was his fancy i suppose to revive certain sentimental relations which had it may be once existed between him and miss lake and he was a person of that combative temperament that magnifies an object in proportion as its pursuit is thwarted",
+      "polished": "it was his fancy i suppose to revive certain sentimental relations which had it may be once existed between him and miss lake and he was a person of that combative temperament that magnifies an object in proportion as its pursuit is thwarted",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 748.036375,
+      "total_ms": 748.036375
+    },
+    {
+      "id": "librispeech-other-0089",
+      "reference": "sit down beside me and i'll tell you the story",
+      "hypothesis": "\"Sit down beside me and I'll tell you the story.\"",
+      "polished": "\"Sit down beside me and I'll tell you the story.\"",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 98,
+      "polish_failed": [
+        "terminal_punctuation"
+      ],
+      "asr_ms": 678.3897089999999,
+      "total_ms": 678.3897089999999
+    },
+    {
+      "id": "librispeech-other-0090",
+      "reference": "but the king laughed him to scorn thou a sword he quoth",
+      "hypothesis": "but the king laughed him to scorn thou a sword he quoth",
+      "polished": "but the king laughed him to scorn thou a sword he quoth",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 672.9756249999999,
+      "total_ms": 672.9756249999999
+    },
+    {
+      "id": "librispeech-other-0091",
+      "reference": "as he uttered the words the scissors leaped out of his hand and began to cut through the wooden shutters as easily as through a cheese",
+      "hypothesis": "as he uttered the words the scissors leaped out of his hand and began to cut through the wooden shutters as easily as through a cheese",
+      "polished": "as he uttered the words the scissors leaped out of his hand and began to cut through the wooden shutters as easily as through a cheese",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 705.584709,
+      "total_ms": 705.584709
+    },
+    {
+      "id": "librispeech-other-0092",
+      "reference": "he felt what the earth may possibly feel at the moment when it is torn open with the iron in order that grain may be deposited within it it feels only the wound the quiver of the germ and the joy of the fruit only arrive later",
+      "hypothesis": "he felt what the earth may possibly feel at the moment when it is torn open with the iron in order that grain may be deposited within it it feels only the wound the quiver of the germ the joy of the fruit only arrived later",
+      "polished": "he felt what the earth may possibly feel at the moment when it is torn open with the iron in order that grain may be deposited within it it feels only the wound the quiver of the germ the joy of the fruit only arrived later",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0425531914893617,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 737.039875,
+      "total_ms": 737.039875
+    },
+    {
+      "id": "librispeech-other-0093",
+      "reference": "he affirmed to himself that he would not he declared to himself that he would not doubt and he began to doubt in spite of himself",
+      "hypothesis": "he affirmed to himself that he would not he declared to himself that he would not doubt and he began to doubt in spite of himself",
+      "polished": "he affirmed to himself that he would not he declared to himself that he would not doubt and he began to doubt in spite of himself",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 696.9784999999999,
+      "total_ms": 696.9784999999999
+    },
+    {
+      "id": "librispeech-other-0094",
+      "reference": "the family doctor respectfully ceased in the middle of his observations",
+      "hypothesis": "The family doctor respectfully ceased in the middle of his observations.",
+      "polished": "The family doctor respectfully ceased in the middle of his observations.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 672.17675,
+      "total_ms": 672.17675
+    },
+    {
+      "id": "librispeech-other-0095",
+      "reference": "oh no only a few details princess come this way",
+      "hypothesis": "Oh no, only a few details, Princess. Come this way.",
+      "polished": "Oh no, only a few details, Princess. Come this way.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 670.391333,
+      "total_ms": 670.391333
+    },
+    {
+      "id": "librispeech-other-0096",
+      "reference": "this is the third time you've asked me the same thing",
+      "hypothesis": "\"This is the third time you've asked me the same thing.\"",
+      "polished": "\"This is the third time you've asked me the same thing.\"",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 98,
+      "polish_failed": [
+        "terminal_punctuation"
+      ],
+      "asr_ms": 672.988584,
+      "total_ms": 672.988584
+    },
+    {
+      "id": "librispeech-other-0097",
+      "reference": "the despotism of a government always increases with the strength of the army and its external successes and the aggressiveness of a government increases with its internal despotism",
+      "hypothesis": "the despotism of a government always increases with the strength of the army and its external successes and the aggressiveness of a government increases with its internal despotism",
+      "polished": "the despotism of a government always increases with the strength of the army and its external successes and the aggressiveness of a government increases with its internal despotism",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 707.0423340000001,
+      "total_ms": 707.0423340000001
+    },
+    {
+      "id": "librispeech-other-0098",
+      "reference": "say you know sumthin",
+      "hypothesis": "Say, you know something?",
+      "polished": "Say, you know something?",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 657.486416,
+      "total_ms": 657.486416
+    },
+    {
+      "id": "librispeech-other-0099",
+      "reference": "he would have liked to get the job for jakey who needed it but somehow the task of facing mister wicker especially now that the light was going and dusk edging into the streets was not what chris had intended for ending the afternoon",
+      "hypothesis": "he would have liked to get the job for jakey who needed it but somehow the task of facing mr wicker especially now that the light was going and dusk edged into the streets was not what chris had intended for ending the afternoon",
+      "polished": "he would have liked to get the job for jakey who needed it but somehow the task of facing mr wicker especially now that the light was going and dusk edged into the streets was not what chris had intended for ending the afternoon",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.045454545454545456,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 741.1837919999999,
+      "total_ms": 741.1837919999999
+    },
+    {
+      "id": "librispeech-other-0100",
+      "reference": "but the name still showed at the prow and many a time chris safe at home in bed had sailed imaginary voyages in the mirabelle",
+      "hypothesis": "But the name still showed at the prow, and many a time, Chris, safe at home in bed, had sailed imaginary voyages in the Mirabelle.",
+      "polished": "But the name still showed at the prow, and many a time, Chris, safe at home in bed, had sailed imaginary voyages in the Mirabelle.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 703.922834,
+      "total_ms": 703.922834
+    },
+    {
+      "id": "librispeech-other-0101",
+      "reference": "how then did he live and what did he ever sell",
+      "hypothesis": "How then did he live and what did he ever sell?",
+      "polished": "How then did he live and what did he ever sell?",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 669.6169170000001,
+      "total_ms": 669.6169170000001
+    },
+    {
+      "id": "librispeech-other-0102",
+      "reference": "what he saw was a fresh cheeked lad tall for thirteen sturdy with sincerity and good humor in his face and something sensitive and appealing about his eyes",
+      "hypothesis": "what he saw was a fresh-cheeked lad tall for thirteen sturdy with sincerity and good-humour in his face and something sensitive and appealing about his eyes",
+      "polished": "what he saw was a fresh-cheeked lad tall for thirteen sturdy with sincerity and good-humour in his face and something sensitive and appealing about his eyes",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 2,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 706.979542,
+      "total_ms": 706.979542
+    },
+    {
+      "id": "librispeech-other-0103",
+      "reference": "across the water where was the freeway",
+      "hypothesis": "Across the water? Where was the freeway?",
+      "polished": "Across the water? Where was the freeway?",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 662.837417,
+      "total_ms": 662.837417
+    },
+    {
+      "id": "librispeech-other-0104",
+      "reference": "he thought not without a feeling of pride and commenced experimenting with his tail and fins with such enthusiasm and delight that some little time elapsed before mister wicker's voice boomed close by",
+      "hypothesis": "he thought not without a feeling of pride and commenced experimenting with his tail and fins with such enthusiasm and delight that some little time elapsed before mr wicker's voice boom but lost by",
+      "polished": "he thought not without a feeling of pride and commenced experimenting with his tail and fins with such enthusiasm and delight that some little time elapsed before mr wicker's voice boom but lost by",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.12121212121212122,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 721.9433750000001,
+      "total_ms": 721.9433750000001
+    },
+    {
+      "id": "librispeech-other-0105",
+      "reference": "the figure's shoes carved in some eastern style had curved up pointing toes",
+      "hypothesis": "the figure's shoes carved in some eastern style had curved up pointing toes",
+      "polished": "the figure's shoes carved in some eastern style had curved up pointing toes",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 672.626083,
+      "total_ms": 672.626083
+    },
+    {
+      "id": "librispeech-other-0106",
+      "reference": "then all at once the idea came to chris",
+      "hypothesis": "Then all at once the idea came to Chris.",
+      "polished": "Then all at once the idea came to Chris.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 661.930625,
+      "total_ms": 661.930625
+    },
+    {
+      "id": "librispeech-other-0107",
+      "reference": "certain elements were to be mixed and poured at the proper time",
+      "hypothesis": "Certain elements were to be mixed and poured at the proper time.",
+      "polished": "Certain elements were to be mixed and poured at the proper time.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 672.416,
+      "total_ms": 672.416
+    },
+    {
+      "id": "librispeech-other-0108",
+      "reference": "with infinite caution chris closed the door silently behind him and running lightly forward reached the figure of the negro boy",
+      "hypothesis": "with infinite caution chris closed the door silently behind him and running lightly forward reached the figure of the negro boy",
+      "polished": "with infinite caution chris closed the door silently behind him and running lightly forward reached the figure of the negro boy",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 686.892166,
+      "total_ms": 686.892166
+    },
+    {
+      "id": "librispeech-other-0109",
+      "reference": "they went down to their quarters first",
+      "hypothesis": "They went down to their quarters first.",
+      "polished": "They went down to their quarters first.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 657.806292,
+      "total_ms": 657.806292
+    },
+    {
+      "id": "librispeech-other-0110",
+      "reference": "the mirabelle was nearing tahiti",
+      "hypothesis": "The mirror bell was nearing Tahiti.",
+      "polished": "The mirror bell was nearing Tahiti.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.4,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 651.2925,
+      "total_ms": 651.2925
+    },
+    {
+      "id": "librispeech-other-0111",
+      "reference": "chris lost no time as soon as he could do it without being noticed in hurrying down to his cabin",
+      "hypothesis": "chris lost no time as soon as he could do it without being noticed in hurrying down to his cabin",
+      "polished": "chris lost no time as soon as he could do it without being noticed in hurrying down to his cabin",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 684.509375,
+      "total_ms": 684.509375
+    },
+    {
+      "id": "librispeech-other-0112",
+      "reference": "he knew now that his absence for as long as he had to be away would be covered up and satisfactorily accounted for",
+      "hypothesis": "He knew now that his absence, for as long as he had to be away, would be covered up and satisfactorily accounted for.",
+      "polished": "He knew now that his absence, for as long as he had to be away, would be covered up and satisfactorily accounted for.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 698.1163339999999,
+      "total_ms": 698.1163339999999
+    },
+    {
+      "id": "librispeech-other-0113",
+      "reference": "miss innes he said stopping me as i was about to go to my room up stairs how are your nerves tonight",
+      "hypothesis": "\"'Miss Eanes,' he said, stopping me as I was about to go to my room upstairs. \"'How are your nerves to-night?'",
+      "polished": "\"'Miss Eanes,' he said, stopping me as I was about to go to my room upstairs. \"'How are your nerves to-night?'",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2727272727272727,
+      "substitutions": 5,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 698.176333,
+      "total_ms": 698.176333
+    },
+    {
+      "id": "librispeech-other-0114",
+      "reference": "i mean he persisted do you feel as though you could go through with something rather unusual",
+      "hypothesis": "''I mean,'' he persisted, ''do you feel as though you could go through with something rather unusual?''",
+      "polished": "''I mean,'' he persisted, ''do you feel as though you could go through with something rather unusual?''",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.23529411764705882,
+      "substitutions": 4,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 693.73725,
+      "total_ms": 693.73725
+    },
+    {
+      "id": "librispeech-other-0115",
+      "reference": "for none could injure me as he has done oh",
+      "hypothesis": "for none could endure me as he has done",
+      "polished": "for none could endure me as he has done",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 651.102459,
+      "total_ms": 651.102459
+    },
+    {
+      "id": "librispeech-other-0116",
+      "reference": "i have done well to record them so minutely",
+      "hypothesis": "I have done well to record them so minutely.",
+      "polished": "I have done well to record them so minutely.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 663.2239159999999,
+      "total_ms": 663.2239159999999
+    },
+    {
+      "id": "librispeech-other-0117",
+      "reference": "give me no thanks it is not for your sake that i refrain",
+      "hypothesis": "Give me no thanks. It is not for your sake that I refrain.",
+      "polished": "Give me no thanks. It is not for your sake that I refrain.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 673.6952080000001,
+      "total_ms": 673.6952080000001
+    },
+    {
+      "id": "librispeech-other-0118",
+      "reference": "you use hard words missus huntingdon but i can pardon you",
+      "hypothesis": "\"'You use hard words, Mrs. Huntington, but I can pardon you.'",
+      "polished": "\"'You use hard words, Mrs. Huntington, but I can pardon you.'",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.36363636363636365,
+      "substitutions": 4,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 678.476167,
+      "total_ms": 678.476167
+    },
+    {
+      "id": "librispeech-other-0119",
+      "reference": "mister and missus hattersley have been staying at the grove a fortnight and as mister hargrave is still absent and the weather was remarkably fine i never passed a day without seeing my two friends milicent and esther either there or here",
+      "hypothesis": "mr and mrs hatterley have been seeing at the grove a fortnight and as mr hargrave is still absent and the weather was remarkably fine i never passed the day without seeing my two friends millicent and esther either there or here",
+      "polished": "mr and mrs hatterley have been seeing at the grove a fortnight and as mr hargrave is still absent and the weather was remarkably fine i never passed the day without seeing my two friends millicent and esther either there or here",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.16666666666666666,
+      "substitutions": 7,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 743.070083,
+      "total_ms": 743.070083
+    },
+    {
+      "id": "librispeech-other-0120",
+      "reference": "no unless you can tell me when to expect him home",
+      "hypothesis": "No, unless you can tell me when to expect him home.",
+      "polished": "No, unless you can tell me when to expect him home.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 666.516958,
+      "total_ms": 666.516958
+    },
+    {
+      "id": "librispeech-other-0121",
+      "reference": "you never tried me milly said he",
+      "hypothesis": "you never tried me mealy said he",
+      "polished": "you never tried me mealy said he",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 659.1974590000001,
+      "total_ms": 659.1974590000001
+    },
+    {
+      "id": "librispeech-other-0122",
+      "reference": "oh still just the same always at a loss the landowner answered with a resigned smile but with an expression of serenity and conviction that so it must be",
+      "hypothesis": "oh still just the same always at a loss the landowner answered with a resigned smile but with an expression of serenity and conviction that so it must be",
+      "polished": "oh still just the same always at a loss the landowner answered with a resigned smile but with an expression of serenity and conviction that so it must be",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 703.025709,
+      "total_ms": 703.025709
+    },
+    {
+      "id": "librispeech-other-0123",
+      "reference": "we walked about the fields and the garden no said he stepan vassilievitch everything's well looked after but your garden's neglected",
+      "hypothesis": "we walked about the fields and the garden no said he stepan mislewitch everything's well looked after but your garden's neglected",
+      "polished": "we walked about the fields and the garden no said he stepan mislewitch everything's well looked after but your garden's neglected",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.047619047619047616,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 692.925583,
+      "total_ms": 692.925583
+    },
+    {
+      "id": "librispeech-other-0124",
+      "reference": "said levin returning to a thought that had struck him",
+      "hypothesis": "said levin returning to a thought that had struck him",
+      "polished": "said levin returning to a thought that had struck him",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 661.1725,
+      "total_ms": 661.1725
+    },
+    {
+      "id": "librispeech-other-0125",
+      "reference": "when hermon entered the residence of the grammateus in the palace the guests had already assembled",
+      "hypothesis": "When Hermon entered the residence of the Grammatius in the palace, the guests had already assembled.",
+      "polished": "When Hermon entered the residence of the Grammatius in the palace, the guests had already assembled.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0625,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 683.623583,
+      "total_ms": 683.623583
+    },
+    {
+      "id": "librispeech-other-0126",
+      "reference": "did it not spare him a humiliation as great and painful as could be imagined",
+      "hypothesis": "did it not spare him a humiliation as great and painful as could be imagined",
+      "polished": "did it not spare him a humiliation as great and painful as could be imagined",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 672.416334,
+      "total_ms": 672.416334
+    },
+    {
+      "id": "librispeech-other-0127",
+      "reference": "sometimes with touching entreaty sometimes with imperious command she protested after giving him her name that this matter could be nothing but an unfortunate mistake",
+      "hypothesis": "sometimes with touching entreaty sometimes with imperious command she protested after giving him her name that this matter could be nothing but an unfortunate mistake",
+      "polished": "sometimes with touching entreaty sometimes with imperious command she protested after giving him her name that this matter could be nothing but an unfortunate mistake",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 699.463625,
+      "total_ms": 699.463625
+    },
+    {
+      "id": "librispeech-other-0128",
+      "reference": "lastly with earnest warmth she besought him before taking the prisoners away to permit her to speak to the commanding general philippus her father's guest who she was certain was in the palace",
+      "hypothesis": "lastly with earnest warmth she besought him before taking the prisoners away to permit her to speak to the commanding general philippus her father's guest who she was certain was in the palace",
+      "polished": "lastly with earnest warmth she besought him before taking the prisoners away to permit her to speak to the commanding general philippus her father's guest who she was certain was in the palace",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 714.722375,
+      "total_ms": 714.722375
+    },
+    {
+      "id": "librispeech-other-0129",
+      "reference": "i love you and have loved you always",
+      "hypothesis": "I love you and have loved you always.",
+      "polished": "I love you and have loved you always.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 661.5785,
+      "total_ms": 661.5785
+    },
+    {
+      "id": "librispeech-other-0130",
+      "reference": "did he allow tyrants to shed the blood of patriots",
+      "hypothesis": "did he allow tyrants to shed the blood of patriots",
+      "polished": "did he allow tyrants to shed the blood of patriots",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 666.91875,
+      "total_ms": 666.91875
+    },
+    {
+      "id": "librispeech-other-0131",
+      "reference": "he has tried that road and knows that it is the wrong road",
+      "hypothesis": "He has tried that road and knows that it is the wrong road.",
+      "polished": "He has tried that road and knows that it is the wrong road.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 670.27675,
+      "total_ms": 670.27675
+    },
+    {
+      "id": "librispeech-other-0132",
+      "reference": "a child charmed by the beauty of the flame grasps it with its dimpled hand",
+      "hypothesis": "a child shone by the beauty of the flame grasped it with his dimpled hand",
+      "polished": "a child shone by the beauty of the flame grasped it with his dimpled hand",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 679.62075,
+      "total_ms": 679.62075
+    },
+    {
+      "id": "librispeech-other-0133",
+      "reference": "in other words it was just as fiendish just as infamous as the catholic spirit",
+      "hypothesis": "In other words, it was just as fiendish, just as infamous as the Catholic spirit.",
+      "polished": "In other words, it was just as fiendish, just as infamous as the Catholic spirit.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 682.77775,
+      "total_ms": 682.77775
+    },
+    {
+      "id": "librispeech-other-0134",
+      "reference": "has the bible made the people of georgia kind and merciful",
+      "hypothesis": "Has the variable made the people of Georgia kind and merciful?",
+      "polished": "Has the variable made the people of Georgia kind and merciful?",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.09090909090909091,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 668.2492920000001,
+      "total_ms": 668.2492920000001
+    },
+    {
+      "id": "librispeech-other-0135",
+      "reference": "we now know that our first parents were not foreigners",
+      "hypothesis": "We now know that our first parents were not foreigners,",
+      "polished": "We now know that our first parents were not foreigners,",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 98,
+      "polish_failed": [
+        "terminal_punctuation"
+      ],
+      "asr_ms": 665.5058750000001,
+      "total_ms": 665.5058750000001
+    },
+    {
+      "id": "librispeech-other-0136",
+      "reference": "they live by fraud and violence and bequeath their vices to their children",
+      "hypothesis": "They live by fraud and violence and bequeath their vices to their children.",
+      "polished": "They live by fraud and violence and bequeath their vices to their children.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 673.137125,
+      "total_ms": 673.137125
+    },
+    {
+      "id": "librispeech-other-0137",
+      "reference": "failure seems to be the trademark of nature why",
+      "hypothesis": "Failure seems to be the trademark of nature. Why?",
+      "polished": "Failure seems to be the trademark of nature. Why?",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 664.513042,
+      "total_ms": 664.513042
+    },
+    {
+      "id": "librispeech-other-0138",
+      "reference": "this frees woman",
+      "hypothesis": "These freeze women",
+      "polished": "These freeze women",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 650.551125,
+      "total_ms": 650.551125
+    },
+    {
+      "id": "librispeech-other-0139",
+      "reference": "i can scarcely credit it",
+      "hypothesis": "I can scarcely credit it.",
+      "polished": "I can scarcely credit it.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 654.524541,
+      "total_ms": 654.524541
+    },
+    {
+      "id": "librispeech-other-0140",
+      "reference": "now then said the count returning his tablets to his pocket make yourself perfectly easy the hand of your time piece will not be more accurate in marking the time than myself",
+      "hypothesis": "now then said the count returning his tablets to his pocket make yourself perfectly easy the hand of your time-piece will not be more accurate in marking the time than myself",
+      "polished": "now then said the count returning his tablets to his pocket make yourself perfectly easy the hand of your time-piece will not be more accurate in marking the time than myself",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0625,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 705.927166,
+      "total_ms": 705.927166
+    },
+    {
+      "id": "librispeech-other-0141",
+      "reference": "i fear i shall not have that honor",
+      "hypothesis": "I fear I shall not have that honour.",
+      "polished": "I fear I shall not have that honour.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.125,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 662.867,
+      "total_ms": 662.867
+    },
+    {
+      "id": "librispeech-other-0142",
+      "reference": "i returned home at daybreak and strove to sleep but my head ached and i got up to have a ride for an hour",
+      "hypothesis": "i returned home at daybreak and strove to sleep but my head ached and i got up to have a ride for an hour",
+      "polished": "i returned home at daybreak and strove to sleep but my head ached and i got up to have a ride for an hour",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 694.720292,
+      "total_ms": 694.720292
+    },
+    {
+      "id": "librispeech-other-0143",
+      "reference": "that has an unflattering sound for me said the young man",
+      "hypothesis": "\"That has an unflattering sound for me,\" said the young man.",
+      "polished": "\"That has an unflattering sound for me,\" said the young man.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 671.1745420000001,
+      "total_ms": 671.1745420000001
+    },
+    {
+      "id": "librispeech-other-0144",
+      "reference": "ransom was pleased with the vision of that remedy it must be repeated that he was very provincial",
+      "hypothesis": "Ransom was pleased with the vision of that remedy. It must be repeated that he was very provincial.",
+      "polished": "Ransom was pleased with the vision of that remedy. It must be repeated that he was very provincial.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 684.469291,
+      "total_ms": 684.469291
+    },
+    {
+      "id": "librispeech-other-0145",
+      "reference": "he was sorry for her but he saw in a flash that no one could help her that was what made her tragic",
+      "hypothesis": "he was sorry for her but he saw in a flash that no one could help her that was what made her tragic",
+      "polished": "he was sorry for her but he saw in a flash that no one could help her that was what made her tragic",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 684.7938340000001,
+      "total_ms": 684.7938340000001
+    },
+    {
+      "id": "librispeech-other-0146",
+      "reference": "she had erected it into a sort of rule of conduct that whenever she saw a risk she was to take it and she had frequent humiliations at finding herself safe after all",
+      "hypothesis": "she had erected it into a sort of rule of conduct that whenever she saw a risk she was to take it and she had frequent humiliations at finding herself saved after all",
+      "polished": "she had erected it into a sort of rule of conduct that whenever she saw a risk she was to take it and she had frequent humiliations at finding herself saved after all",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.030303030303030304,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 709.4266660000001,
+      "total_ms": 709.4266660000001
+    },
+    {
+      "id": "librispeech-other-0147",
+      "reference": "he was too simple too mississippian for that she was almost disappointed",
+      "hypothesis": "he was too simple too mississippian for that she was almost disappointed",
+      "polished": "he was too simple too mississippian for that she was almost disappointed",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 687.255625,
+      "total_ms": 687.255625
+    },
+    {
+      "id": "librispeech-other-0148",
+      "reference": "perhaps she could speak for them more than for some others",
+      "hypothesis": "perhaps she could speak for them more than for some others",
+      "polished": "perhaps she could speak for them more than for some others",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 664.1040419999999,
+      "total_ms": 664.1040419999999
+    },
+    {
+      "id": "librispeech-other-0149",
+      "reference": "this might seem one of the most accessible of pleasures but in point of fact she had not found it so",
+      "hypothesis": "this might seem one of the most accessible of pleasures but in point of fact she had not found it so",
+      "polished": "this might seem one of the most accessible of pleasures but in point of fact she had not found it so",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 683.664833,
+      "total_ms": 683.664833
+    },
+    {
+      "id": "librispeech-other-0150",
+      "reference": "anyhow he and phut didn't get along very well it seems",
+      "hypothesis": "anyhow he and phutt didn't get along very well it seems",
+      "polished": "anyhow he and phutt didn't get along very well it seems",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.09090909090909091,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 667.4328750000001,
+      "total_ms": 667.4328750000001
+    },
+    {
+      "id": "librispeech-other-0151",
+      "reference": "simply because this watch",
+      "hypothesis": "simply because this watch",
+      "polished": "simply because this watch",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 651.8206250000001,
+      "total_ms": 651.8206250000001
+    },
+    {
+      "id": "librispeech-other-0152",
+      "reference": "some one out here to see you",
+      "hypothesis": "Someone out here to see you.",
+      "polished": "Someone out here to see you.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 657.107833,
+      "total_ms": 657.107833
+    },
+    {
+      "id": "librispeech-other-0153",
+      "reference": "it was one of what at first might be called refined cruelty on her husband's part degenerating gradually into that of the baser sort",
+      "hypothesis": "It was one of what at first might be called refined cruelty on her husband's part, degenerating gradually into that of a baser sort.",
+      "polished": "It was one of what at first might be called refined cruelty on her husband's part, degenerating gradually into that of a baser sort.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.041666666666666664,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 699.194042,
+      "total_ms": 699.194042
+    },
+    {
+      "id": "librispeech-other-0154",
+      "reference": "and it was this man rich it was said handsome certainly that cynthia ratchford had married",
+      "hypothesis": "and it was this man rich it was said handsome certainly that cynthia ratchford had married",
+      "polished": "and it was this man rich it was said handsome certainly that cynthia ratchford had married",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 678.112959,
+      "total_ms": 678.112959
+    },
+    {
+      "id": "librispeech-other-0155",
+      "reference": "and in a way it was true",
+      "hypothesis": "And in a way it was true.",
+      "polished": "And in a way it was true.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 675.165291,
+      "total_ms": 675.165291
+    },
+    {
+      "id": "librispeech-other-0156",
+      "reference": "that was hers went on the jeweler",
+      "hypothesis": "That was hers, went on the jeweler.",
+      "polished": "That was hers, went on the jeweler.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 660.0029589999999,
+      "total_ms": 660.0029589999999
+    },
+    {
+      "id": "librispeech-other-0157",
+      "reference": "asked a worker last sunday you did it when the yunkers",
+      "hypothesis": "asked a worker. Last Sunday you did it when the young girls",
+      "polished": "asked a worker. Last Sunday you did it when the young girls",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.18181818181818182,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 670.7625,
+      "total_ms": 670.7625
+    },
+    {
+      "id": "librispeech-other-0158",
+      "reference": "on the twenty seventh occurred the debate on the land question which revealed the differences between the agrarian programme of the bolsheviki and the left socialist revolutionaries",
+      "hypothesis": "on the twenty-seventh occurred the debate on the land question which revealed the differences between the agrarian program of the bolsheviki and the left socialist revolutionaries",
+      "polished": "on the twenty-seventh occurred the debate on the land question which revealed the differences between the agrarian program of the bolsheviki and the left socialist revolutionaries",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 2,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 711.082791,
+      "total_ms": 711.082791
+    },
+    {
+      "id": "librispeech-other-0159",
+      "reference": "land after land shalt thou seek and find but no other life on thy wish shall wait fret not thy soul in thy thoughts o night all woes shall end or sooner or late",
+      "hypothesis": "land after land shalt thou see confined but no other life on thy wish shall wait fret not thy soul in thy thoughts a night all woes shall end or sooner or late",
+      "polished": "land after land shalt thou see confined but no other life on thy wish shall wait fret not thy soul in thy thoughts a night all woes shall end or sooner or late",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.11764705882352941,
+      "substitutions": 3,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 719.674625,
+      "total_ms": 719.674625
+    },
+    {
+      "id": "librispeech-other-0160",
+      "reference": "the seventh voyage of sindbad the seaman",
+      "hypothesis": "The seventh voyage of Sinbad the Seaman.",
+      "polished": "The seventh voyage of Sinbad the Seaman.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 663.5505,
+      "total_ms": 663.5505
+    },
+    {
+      "id": "librispeech-other-0161",
+      "reference": "know o company that after my return from my sixth voyage which brought me abundant profit i resumed my former life in all possible joyance and enjoyment and mirth and making merry day and night and i tarried some time in this solace and satisfaction till my soul began once more to long to sail the seas and see foreign countries and company with merchants and hear new things",
+      "hypothesis": "Know, O company, that after my return from my sixth voyage, which brought me abundant profit, I resumed my former life in all possible joyance and enjoyment and mirth, and making merry day and night; and I tarried some time in this solace and satisfaction, till my soul began once more to long to sail the seas and see foreign countries, and company with merchants and hear new things.",
+      "polished": "Know, O company, that after my return from my sixth voyage, which brought me abundant profit, I resumed my former life in all possible joyance and enjoyment and mirth, and making merry day and night; and I tarried some time in this solace and satisfaction, till my soul began once more to long to sail the seas and see foreign countries, and company with merchants and hear new things.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 800.716666,
+      "total_ms": 800.716666
+    },
+    {
+      "id": "librispeech-other-0162",
+      "reference": "is platterbaff out yet",
+      "hypothesis": "Is platterbuff out yet?",
+      "polished": "Is platterbuff out yet?",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 675.089875,
+      "total_ms": 675.089875
+    },
+    {
+      "id": "librispeech-other-0163",
+      "reference": "a telegram was brought in",
+      "hypothesis": "A telegram was brought in.",
+      "polished": "A telegram was brought in.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 656.117792,
+      "total_ms": 656.117792
+    },
+    {
+      "id": "librispeech-other-0164",
+      "reference": "the warders have a private band of their own said the governor but of course i couldn't allow the men themselves",
+      "hypothesis": "the warders have a private band of their own said the governor but of course i couldn't allow the men themselves",
+      "polished": "the warders have a private band of their own said the governor but of course i couldn't allow the men themselves",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 685.553,
+      "total_ms": 685.553
+    },
+    {
+      "id": "librispeech-other-0165",
+      "reference": "oh we haven't shown you the silver wedding presents said missus peter suddenly as though struck by a brilliant idea for entertaining the guest here they all are",
+      "hypothesis": "oh we haven't shown you the silver wedding presents said mrs peter suddenly as though struck by a brilliant idea for entertaining the guest here they all are",
+      "polished": "oh we haven't shown you the silver wedding presents said mrs peter suddenly as though struck by a brilliant idea for entertaining the guest here they all are",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.03571428571428571,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 704.683167,
+      "total_ms": 704.683167
+    },
+    {
+      "id": "librispeech-other-0166",
+      "reference": "it all comes of dressing up in this stupid way like a rough fisher lad",
+      "hypothesis": "it all comes of dressing up in this stupid way like a rough fisher lad",
+      "polished": "it all comes of dressing up in this stupid way like a rough fisher lad",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 91,
+      "polish_failed": [
+        "no_fillers",
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 669.9995829999999,
+      "total_ms": 669.9995829999999
+    },
+    {
+      "id": "librispeech-other-0167",
+      "reference": "oh those bars he mentally exclaimed and he was advancing toward them when just as he drew near there was a rustling noise under the window a couple of hands seized the bars there was a scratching of boot toes against stone work and ram's face appeared to gaze into the room by intention but into the astonished countenance of the young midshipman instead",
+      "hypothesis": "oh those bars he mentally exclaimed and he was advancing towards them when just as he drew near there was a rustling noise under the window a couple of hands seized the bars there was a scratching of boot-toes against stonework and ram's face appeared to gaze into the room by intention but into the astonished countenance of the young midshipman instead",
+      "polished": "oh those bars he mentally exclaimed and he was advancing towards them when just as he drew near there was a rustling noise under the window a couple of hands seized the bars there was a scratching of boot-toes against stonework and ram's face appeared to gaze into the room by intention but into the astonished countenance of the young midshipman instead",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.078125,
+      "substitutions": 3,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 782.676833,
+      "total_ms": 782.676833
+    },
+    {
+      "id": "librispeech-other-0168",
+      "reference": "not you only a sham",
+      "hypothesis": "not you only a sham",
+      "polished": "not you only a sham",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 649.8465839999999,
+      "total_ms": 649.8465839999999
+    },
+    {
+      "id": "librispeech-other-0169",
+      "reference": "not you look like a wild beast in a cage like a monkey you insolent",
+      "hypothesis": "not you look like a wild beast in a cage like a monkey you insolent",
+      "polished": "not you look like a wild beast in a cage like a monkey you insolent",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 91,
+      "polish_failed": [
+        "no_fillers",
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 690.6170000000001,
+      "total_ms": 690.6170000000001
+    },
+    {
+      "id": "librispeech-other-0170",
+      "reference": "you laughed and fleered at me when i was on the cutter's deck",
+      "hypothesis": "you laughed and fleered at me when i was on the cutter's deck",
+      "polished": "you laughed and fleered at me when i was on the cutter's deck",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 670.7481250000001,
+      "total_ms": 670.7481250000001
+    },
+    {
+      "id": "librispeech-other-0171",
+      "reference": "ram showed his white teeth as he burst out with a long low fit of laughter",
+      "hypothesis": "ram showed his white teeth as he burst out with a long low fit of laughter",
+      "polished": "ram showed his white teeth as he burst out with a long low fit of laughter",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 672.248458,
+      "total_ms": 672.248458
+    },
+    {
+      "id": "librispeech-other-0172",
+      "reference": "awkward bit o country sir six miles row before you can find a place to land",
+      "hypothesis": "awkward bit of country sir six miles row before you can find a place to land",
+      "polished": "awkward bit of country sir six miles row before you can find a place to land",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0625,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 45,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss"
+      ],
+      "asr_ms": 662.9035,
+      "total_ms": 662.9035
+    },
+    {
+      "id": "librispeech-other-0173",
+      "reference": "no wait another half hour",
+      "hypothesis": "No, wait another and a half hour.",
+      "polished": "No, wait another and a half hour.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.4,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 657.3705829999999,
+      "total_ms": 657.3705829999999
+    },
+    {
+      "id": "librispeech-other-0174",
+      "reference": "yes sir of course",
+      "hypothesis": "Yes, sir, of course.",
+      "polished": "Yes, sir, of course.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 654.786792,
+      "total_ms": 654.786792
+    },
+    {
+      "id": "librispeech-other-0175",
+      "reference": "yes sir said the man humbly shall i go at once sir",
+      "hypothesis": "yes sir said the man humbly shall i go at once sir",
+      "polished": "yes sir said the man humbly shall i go at once sir",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 669.316833,
+      "total_ms": 669.316833
+    },
+    {
+      "id": "librispeech-other-0176",
+      "reference": "gurr glanced round to see if the men were looking and then said rather huskily but kindly",
+      "hypothesis": "gur glanced round to see if the men were looking and then said rather huskily but kindly",
+      "polished": "gur glanced round to see if the men were looking and then said rather huskily but kindly",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.058823529411764705,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 678.35175,
+      "total_ms": 678.35175
+    },
+    {
+      "id": "librispeech-other-0177",
+      "reference": "i have always felt that the exposure to which she was subjected on this cruel journey too hard even for a man to take was the direct cause of her death",
+      "hypothesis": "i have always felt that the exposure to which she was subjected on this cruel journey too hard even for a man to take was the direct cause of her death",
+      "polished": "i have always felt that the exposure to which she was subjected on this cruel journey too hard even for a man to take was the direct cause of her death",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 697.9780410000001,
+      "total_ms": 697.9780410000001
+    },
+    {
+      "id": "librispeech-other-0178",
+      "reference": "i went through independence and from there to ace webb's",
+      "hypothesis": "I went through independence, and from there to Ace Webb's.",
+      "polished": "I went through independence, and from there to Ace Webb's.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 665.116209,
+      "total_ms": 665.116209
+    },
+    {
+      "id": "librispeech-other-0179",
+      "reference": "we crossed on the bridge stayed in the city all night and the next morning we rode up through the city",
+      "hypothesis": "We crossed on the bridge, stayed in the city all night, and the next morning we rode up through the city.",
+      "polished": "We crossed on the bridge, stayed in the city all night, and the next morning we rode up through the city.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 687.680291,
+      "total_ms": 687.680291
+    },
+    {
+      "id": "librispeech-other-0180",
+      "reference": "almost at this instant i heard a pistol shot in the bank",
+      "hypothesis": "Almost at this instant I heard a pistol shot in the bank.",
+      "polished": "Almost at this instant I heard a pistol shot in the bank.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 668.631625,
+      "total_ms": 668.631625
+    },
+    {
+      "id": "librispeech-other-0181",
+      "reference": "they were safe from protection racketeers there none bothered to come so far out",
+      "hypothesis": "They were safe from protection racketeers there. None bothered to come so far out.",
+      "polished": "They were safe from protection racketeers there. None bothered to come so far out.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 674.7151660000001,
+      "total_ms": 674.7151660000001
+    },
+    {
+      "id": "librispeech-other-0182",
+      "reference": "your job is to protect the citizens here and that means everyone not breaking the laws whether you feel like it or not no graft",
+      "hypothesis": "Your job is to protect the citizens here, and that means everyone not breaking the laws. Whether you feel like it or not, no graft.",
+      "polished": "Your job is to protect the citizens here, and that means everyone not breaking the laws. Whether you feel like it or not, no graft.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 96,
+      "polish_failed": [
+        "no_fillers"
+      ],
+      "asr_ms": 695.9426669999999,
+      "total_ms": 695.9426669999999
+    },
+    {
+      "id": "librispeech-other-0183",
+      "reference": "trouble began brewing shortly after though",
+      "hypothesis": "Trouble began brewing shortly after, though.",
+      "polished": "Trouble began brewing shortly after, though.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 661.215375,
+      "total_ms": 661.215375
+    },
+    {
+      "id": "librispeech-other-0184",
+      "reference": "murdoch blinked he dropped his eyes slowly",
+      "hypothesis": "Murdoch blinked. He dropped his eyes slowly.",
+      "polished": "Murdoch blinked. He dropped his eyes slowly.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 663.589208,
+      "total_ms": 663.589208
+    },
+    {
+      "id": "librispeech-other-0185",
+      "reference": "leslie left the room but she had scarcely gone a dozen paces down the corridor before she met annie returning",
+      "hypothesis": "lezley left the room but she had scarcely gone a dozen places down the corridor before she met annie returning",
+      "polished": "lezley left the room but she had scarcely gone a dozen places down the corridor before she met annie returning",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.1,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 685.320792,
+      "total_ms": 685.320792
+    },
+    {
+      "id": "librispeech-other-0186",
+      "reference": "annie did not mean to confide in anyone that night and the kindest thing was to leave her alone",
+      "hypothesis": "Annie did not mean to confine on anyone that night, and the kindest thing was to leave her alone.",
+      "polished": "Annie did not mean to confine on anyone that night, and the kindest thing was to leave her alone.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.10526315789473684,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 685.729625,
+      "total_ms": 685.729625
+    },
+    {
+      "id": "librispeech-other-0187",
+      "reference": "it burned as if with fever",
+      "hypothesis": "it burned as if with fever",
+      "polished": "it burned as if with fever",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 644.673625,
+      "total_ms": 644.673625
+    },
+    {
+      "id": "librispeech-other-0188",
+      "reference": "you don't know what a trial it is for me to have you here",
+      "hypothesis": "You don't know what a trial it is for me to have you here.",
+      "polished": "You don't know what a trial it is for me to have you here.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 671.870833,
+      "total_ms": 671.870833
+    },
+    {
+      "id": "librispeech-other-0189",
+      "reference": "miss lauderdale was standing with the other tutors and principals of the different halls on a raised platform",
+      "hypothesis": "miss lauderdale was standing with the other tutors and principals of the different halls on a raised platform",
+      "polished": "miss lauderdale was standing with the other tutors and principals of the different halls on a raised platform",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 684.5974590000001,
+      "total_ms": 684.5974590000001
+    },
+    {
+      "id": "librispeech-other-0190",
+      "reference": "god answers to each of you you are",
+      "hypothesis": "God answers to each of you. You are.",
+      "polished": "God answers to each of you. You are.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 660.6385409999999,
+      "total_ms": 660.6385409999999
+    },
+    {
+      "id": "librispeech-other-0191",
+      "reference": "hence a resort to cider and beer",
+      "hypothesis": "Hence the resort to cider and beer.",
+      "polished": "Hence the resort to cider and beer.",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 655.805,
+      "total_ms": 655.805
+    },
+    {
+      "id": "librispeech-other-0192",
+      "reference": "and again i beseech you therefore brethren by the mercies of god that ye present your bodies a living sacrifice holy acceptable unto god which is your reasonable service",
+      "hypothesis": "and again i beseech you therefore brethren by the mercies of god that ye present your bodies a living sacrifice wholly acceptable unto god which is your reasonable service",
+      "polished": "and again i beseech you therefore brethren by the mercies of god that ye present your bodies a living sacrifice wholly acceptable unto god which is your reasonable service",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.034482758620689655,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 704.714125,
+      "total_ms": 704.714125
+    },
+    {
+      "id": "librispeech-other-0193",
+      "reference": "they are gambling yonder and i'm afraid that young fellow is being badly fleeced by that middle aged man opposite",
+      "hypothesis": "they are gambling yonder and i'm afraid that young fellow is being badly fleeced by the middle-aged man opposite",
+      "polished": "they are gambling yonder and i'm afraid that young fellow is being badly fleeced by the middle-aged man opposite",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.15,
+      "substitutions": 2,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 689.8172500000001,
+      "total_ms": 689.8172500000001
+    },
+    {
+      "id": "librispeech-other-0194",
+      "reference": "ye are all the children of god by faith in christ jesus",
+      "hypothesis": "ye are all the children of god by faith in christ jesus",
+      "polished": "ye are all the children of god by faith in christ jesus",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 671.073,
+      "total_ms": 671.073
+    },
+    {
+      "id": "librispeech-other-0195",
+      "reference": "and having thus islamised she asked him do men in the faith of al islam give marriage portions to women or do women dower men",
+      "hypothesis": "and having thus islamized she asked him do men in the faith of al islam give marriage portions to women or do women dower men",
+      "polished": "and having thus islamized she asked him do men in the faith of al islam give marriage portions to women or do women dower men",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.04,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 702.1776669999999,
+      "total_ms": 702.1776669999999
+    },
+    {
+      "id": "librispeech-other-0196",
+      "reference": "presently hasan shuman came out of a closet and said to him hast thou gotten the gear o ali",
+      "hypothesis": "presently hassan shuman came out of a closet and said to him hast thou gotten the gear o ali",
+      "polished": "presently hassan shuman came out of a closet and said to him hast thou gotten the gear o ali",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.05263157894736842,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 687.305375,
+      "total_ms": 687.305375
+    },
+    {
+      "id": "librispeech-other-0197",
+      "reference": "i remember all the rubenses at the louvre for i saw them three years ago when i was staying in paris with grandpapa",
+      "hypothesis": "i remember all the rubens's at the louvre for i saw them three years ago when i was staying in paris with grandpapa",
+      "polished": "i remember all the rubens's at the louvre for i saw them three years ago when i was staying in paris with grandpapa",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.043478260869565216,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 700.3735829999999,
+      "total_ms": 700.3735829999999
+    },
+    {
+      "id": "librispeech-other-0198",
+      "reference": "they are fast rising at least said ulrica and a signal shall soon wave to warn the besiegers to press hard upon those who would extinguish them",
+      "hypothesis": "they are fast rising at least said ureka and a signal shall soon wave to warn the besiegers to press hard upon those who would extinguish them",
+      "polished": "they are fast rising at least said ureka and a signal shall soon wave to warn the besiegers to press hard upon those who would extinguish them",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.037037037037037035,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 706.792,
+      "total_ms": 706.792
+    },
+    {
+      "id": "librispeech-other-0199",
+      "reference": "when the outlaws had divided the spoils which they had taken from the castle of torquilstone cedric prepared to take his departure",
+      "hypothesis": "when the outlaws had divided the spoils which they had taken from the castle of torquilstone cedric prepared to take his departure",
+      "polished": "when the outlaws had divided the spoils which they had taken from the castle of torquilstone cedric prepared to take his departure",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 697.81525,
+      "total_ms": 697.81525
+    },
+    {
+      "id": "librispeech-other-0200",
+      "reference": "the preceptors of whom there were four present occupied seats behind their superiors and behind them stood the esquires of the order robed in white",
+      "hypothesis": "the preceptors of whom there were four present occupied seats behind the superiors and behind them stood the esquires of the order robed in white",
+      "polished": "the preceptors of whom there were four present occupied seats behind the superiors and behind them stood the esquires of the order robed in white",
+      "tags": [
+        "librispeech"
+      ],
+      "human": false,
+      "wer": 0.04,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 45,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss"
+      ],
+      "asr_ms": 716.04775,
+      "total_ms": 716.04775
+    }
+  ],
+  "wer_verbatim_micro": 0.03980801806888763,
+  "wer_verbatim_macro": 0.05303598424380157,
+  "wer_clean_micro": null,
+  "wer_clean_human_micro": null,
+  "vocab_recall": null,
+  "vocab_false_alarm": null,
+  "entity_accuracy": 0.6666666666666666,
+  "semantic_ok_rate": null,
+  "latency_release_to_paste": null,
+  "boost": "off",
+  "case_errors": []
+}

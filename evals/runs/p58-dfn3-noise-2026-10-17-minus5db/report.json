@@ -1,0 +1,2917 @@
+{
+  "git_sha": "98f116a",
+  "timestamp": "1792209402",
+  "model": "parakeet-ultra",
+  "mode": "measure",
+  "has_synthesised_audio": true,
+  "human_case_count": 0,
+  "synthesised_case_count": 100,
+  "wer": {
+    "cases": 100,
+    "total_reference_words": 1644,
+    "total_errors": 228,
+    "micro_wer": 0.1386861313868613,
+    "macro_wer": 0.15970288918720757,
+    "worst": [
+      {
+        "id": "noise--5db-0066",
+        "reference": "he has tried that road and knows that it is the wrong road",
+        "hypothesis": "Yes, pride for those.",
+        "wer": 1.0,
+        "substitutions": 4,
+        "deletions": 9,
+        "insertions": 0
+      },
+      {
+        "id": "noise--5db-0025",
+        "reference": "the vil stuck fast in his throat",
+        "hypothesis": "You feel stuck, stuff, start.",
+        "wer": 0.8571428571428571,
+        "substitutions": 4,
+        "deletions": 2,
+        "insertions": 0
+      },
+      {
+        "id": "noise--5db-0033",
+        "reference": "but you are a jolly fellow too",
+        "hypothesis": "You shot fetch.",
+        "wer": 0.8571428571428571,
+        "substitutions": 2,
+        "deletions": 4,
+        "insertions": 0
+      },
+      {
+        "id": "noise--5db-0042",
+        "reference": "sit down beside me and i'll tell you the story",
+        "hypothesis": "Sit down the side. I'm not pleased.",
+        "wer": 0.8,
+        "substitutions": 5,
+        "deletions": 3,
+        "insertions": 0
+      },
+      {
+        "id": "noise--5db-0087",
+        "reference": "not you only a sham",
+        "hypothesis": "Mm-hmm. Give me a shame.",
+        "wer": 0.8,
+        "substitutions": 4,
+        "deletions": 0,
+        "insertions": 0
+      }
+    ]
+  },
+  "wer_by_tag": [
+    [
+      "noise",
+      {
+        "cases": 100,
+        "reference_words": 1644,
+        "errors": 228,
+        "wer": 0.1386861313868613
+      }
+    ],
+    [
+      "snr--5db",
+      {
+        "cases": 100,
+        "reference_words": 1644,
+        "errors": 228,
+        "wer": 0.1386861313868613
+      }
+    ]
+  ],
+  "polish": [
+    {
+      "id": "noise--5db-0001",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0002",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0003",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0004",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0005",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0006",
+      "score": 7,
+      "failed": [
+        "sentence_cased",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0007",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0008",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0009",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0010",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0011",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0012",
+      "score": 60,
+      "failed": [
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0013",
+      "score": 60,
+      "failed": [
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0014",
+      "score": 97,
+      "failed": [
+        "sentence_cased"
+      ]
+    },
+    {
+      "id": "noise--5db-0015",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0016",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0017",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0018",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0019",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0020",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0021",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0022",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0023",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0024",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0025",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0026",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0027",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "noise--5db-0028",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0029",
+      "score": 7,
+      "failed": [
+        "sentence_cased",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0030",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0031",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0032",
+      "score": 97,
+      "failed": [
+        "sentence_cased"
+      ]
+    },
+    {
+      "id": "noise--5db-0033",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0034",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0035",
+      "score": 98,
+      "failed": [
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "noise--5db-0036",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0037",
+      "score": 6,
+      "failed": [
+        "no_fillers",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0038",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0039",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0040",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0041",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0042",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0043",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0044",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0045",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0046",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0047",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0048",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0049",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0050",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0051",
+      "score": 7,
+      "failed": [
+        "sentence_cased",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0052",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "noise--5db-0053",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0054",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0055",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0056",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0057",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0058",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0059",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0060",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0061",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0062",
+      "score": 97,
+      "failed": [
+        "sentence_cased"
+      ]
+    },
+    {
+      "id": "noise--5db-0063",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0064",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0065",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0066",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0067",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0068",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0069",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0070",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0071",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0072",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0073",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0074",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0075",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0076",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0077",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0078",
+      "score": 98,
+      "failed": [
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "noise--5db-0079",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0080",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0081",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0082",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0083",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "noise--5db-0084",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0085",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0086",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0087",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0088",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0089",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0090",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0091",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0092",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0093",
+      "score": 96,
+      "failed": [
+        "no_fillers"
+      ]
+    },
+    {
+      "id": "noise--5db-0094",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0095",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0096",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0097",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "noise--5db-0098",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0099",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "noise--5db-0100",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    }
+  ],
+  "polish_mean_score": 46.03,
+  "latency_asr": {
+    "count": 100,
+    "min": 74.77175,
+    "max": 739.2875,
+    "mean": 230.22584916000002,
+    "p50": 144.778083,
+    "p95": 644.611375,
+    "p99": 706.597041
+  },
+  "latency_total": {
+    "count": 100,
+    "min": 74.77175,
+    "max": 739.2875,
+    "mean": 230.22584916000002,
+    "p50": 144.778083,
+    "p95": 644.611375,
+    "p99": 706.597041
+  },
+  "model_load_ms": 6281.679959,
+  "cases": [
+    {
+      "id": "noise--5db-0001",
+      "reference": "there's iron they say in all our blood and a grain or two perhaps is good but his he makes me harshly feel has got a little too much of steel anon",
+      "hypothesis": "There's iron, they say, In all our blood, and a grain or two, perhaps, is good But his, he makes me harshly feel, Has got a little too much steel. Anon.",
+      "polished": "There's iron, they say, In all our blood, and a grain or two, perhaps, is good But his, he makes me harshly feel, Has got a little too much steel. Anon.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.03125,
+      "substitutions": 0,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 614.5395420000001,
+      "total_ms": 614.5395420000001
+    },
+    {
+      "id": "noise--5db-0002",
+      "reference": "margaret said mister hale as he returned from showing his guest downstairs i could not help watching your face with some anxiety when mister thornton made his confession of having been a shop boy",
+      "hypothesis": "Margaret, said mister Hale, as he returned from showing his guests downstairs, I could not help watching your face with some anxiety when mister Thornton made his confession of having been a shop boy.",
+      "polished": "Margaret, said mister Hale, as he returned from showing his guests downstairs, I could not help watching your face with some anxiety when mister Thornton made his confession of having been a shop boy.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.029411764705882353,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 555.671083,
+      "total_ms": 555.671083
+    },
+    {
+      "id": "noise--5db-0003",
+      "reference": "you don't mean that you thought me so silly",
+      "hypothesis": "You don't mean that you get me so silly.",
+      "polished": "You don't mean that you get me so silly.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 470.53633299999996,
+      "total_ms": 470.53633299999996
+    },
+    {
+      "id": "noise--5db-0004",
+      "reference": "i really was very much afraid of showing him how much shocked i was at some parts of what he said",
+      "hypothesis": "I really was very much afraid of showing him how much shocked I was at some parts of what he said.",
+      "polished": "I really was very much afraid of showing him how much shocked I was at some parts of what he said.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 538.8133750000001,
+      "total_ms": 538.8133750000001
+    },
+    {
+      "id": "noise--5db-0005",
+      "reference": "i don't know positively that it is hers either but from little things i have gathered from him i fancy so",
+      "hypothesis": "I don't know positively that it is hers either, but from little things I have gathered from him, I fancy so.",
+      "polished": "I don't know positively that it is hers either, but from little things I have gathered from him, I fancy so.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 227.668125,
+      "total_ms": 227.668125
+    },
+    {
+      "id": "noise--5db-0006",
+      "reference": "which this ain't not by no means",
+      "hypothesis": "which this end, much by no means.",
+      "polished": "which this end, much by no means.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 7,
+      "polish_failed": [
+        "sentence_cased",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 394.301542,
+      "total_ms": 394.301542
+    },
+    {
+      "id": "noise--5db-0007",
+      "reference": "if e's straight e'll do for me and if he ain't i'll do for im see",
+      "hypothesis": "If he's straight, you do for me. And if he ain't, I'll do for him. See?",
+      "polished": "If he's straight, you do for me. And if he ain't, I'll do for him. See?",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.1875,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 498.08025,
+      "total_ms": 498.08025
+    },
+    {
+      "id": "noise--5db-0008",
+      "reference": "and also these",
+      "hypothesis": "And also these.",
+      "polished": "And also these.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 535.531666,
+      "total_ms": 535.531666
+    },
+    {
+      "id": "noise--5db-0009",
+      "reference": "twas as i feared the coming ills discerning but unto allah we are all returning",
+      "hypothesis": "But as I hear the coming eels discerning, but unto Allah we are all returning.",
+      "polished": "But as I hear the coming eels discerning, but unto Allah we are all returning.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.2,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 200.44179200000002,
+      "total_ms": 200.44179200000002
+    },
+    {
+      "id": "noise--5db-0010",
+      "reference": "asked zarathustra vehemently what doest thou here",
+      "hypothesis": "I there twist away movie. What doest thou here?",
+      "polished": "I there twist away movie. What doest thou here?",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.7142857142857143,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 604.724375,
+      "total_ms": 604.724375
+    },
+    {
+      "id": "noise--5db-0011",
+      "reference": "o earth thou hast become too round for me",
+      "hypothesis": "O art, thou hast become too round for me.",
+      "polished": "O art, thou hast become too round for me.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 347.44404099999997,
+      "total_ms": 347.44404099999997
+    },
+    {
+      "id": "noise--5db-0012",
+      "reference": "for it do i ask and seek and have sought but have not found it",
+      "hypothesis": "For it too I ask and seek, and have sought, but have not found it.",
+      "polished": "For it too I ask and seek, and have sought, but have not found it.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.06666666666666667,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 60,
+      "polish_failed": [
+        "no_hallucination"
+      ],
+      "asr_ms": 628.0577499999999,
+      "total_ms": 628.0577499999999
+    },
+    {
+      "id": "noise--5db-0013",
+      "reference": "the stories regarding joseph the traditional father of ephraim and manasseh imply that these strong central tribes possibly together with the southern tribes of benjamin and judah were the chief actors in this opening scene in israel's history",
+      "hypothesis": "The stories regarding Joseph, their traditional father Ephraim and Manasseh imply that these strong central tribes, possibly together with the southern tribes of Benjamin and Judah, were the chief actors in this opening scene in Israel's history.",
+      "polished": "The stories regarding Joseph, their traditional father Ephraim and Manasseh imply that these strong central tribes, possibly together with the southern tribes of Benjamin and Judah, were the chief actors in this opening scene in Israel's history.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.05263157894736842,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 60,
+      "polish_failed": [
+        "no_hallucination"
+      ],
+      "asr_ms": 739.2875,
+      "total_ms": 739.2875
+    },
+    {
+      "id": "noise--5db-0014",
+      "reference": "the title of his father in law implies that this priest ministered at some wilderness sanctuary",
+      "hypothesis": "the title of his father in law implies that this priest ministered at some wilderness sanctuary.",
+      "polished": "the title of his father in law implies that this priest ministered at some wilderness sanctuary.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 97,
+      "polish_failed": [
+        "sentence_cased"
+      ],
+      "asr_ms": 644.611375,
+      "total_ms": 644.611375
+    },
+    {
+      "id": "noise--5db-0015",
+      "reference": "evidently the intention was to make things pleasant for the royal foe of tobacco during his visit",
+      "hypothesis": "Evidently the intention was to make things present for the royal folk at Backup during his visit.",
+      "polished": "Evidently the intention was to make things present for the royal folk at Backup during his visit.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.23529411764705882,
+      "substitutions": 4,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 389.572625,
+      "total_ms": 389.572625
+    },
+    {
+      "id": "noise--5db-0016",
+      "reference": "proas in that quarter were usually distrusted by ships it is true but the sea is full of them and far more are innocent than are guilty of any acts of violence",
+      "hypothesis": "Curats in that quarter were usually distrusted by the subset is true, but the CS four of them far more are innocent than are guilty of any acts of violence.",
+      "polished": "Curats in that quarter were usually distrusted by the subset is true, but the CS four of them far more are innocent than are guilty of any acts of violence.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.21875,
+      "substitutions": 5,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 241.595375,
+      "total_ms": 241.595375
+    },
+    {
+      "id": "noise--5db-0017",
+      "reference": "the captain behaved perfectly well in this critical instant commanding a dead silence and the closest attention to his orders",
+      "hypothesis": "The captain behaved perfectly well in his critical instance, commanding a dead silence and closed its intention to his orders.",
+      "polished": "The captain behaved perfectly well in his critical instance, commanding a dead silence and closed its intention to his orders.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 5,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 251.143333,
+      "total_ms": 251.143333
+    },
+    {
+      "id": "noise--5db-0018",
+      "reference": "when i waked up just at daybreak he was sitting there with his head down betwixt his knees moaning and mourning to himself",
+      "hypothesis": "When I waked up just at daybreak, he was sitting there with his head down betwixt his knees, moaning and mourning to himself.",
+      "polished": "When I waked up just at daybreak, he was sitting there with his head down betwixt his knees, moaning and mourning to himself.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 299.536583,
+      "total_ms": 299.536583
+    },
+    {
+      "id": "noise--5db-0019",
+      "reference": "wher you bound for young man",
+      "hypothesis": "Where are you bound for, young man?",
+      "polished": "Where are you bound for, young man?",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.3333333333333333,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 507.3415,
+      "total_ms": 507.3415
+    },
+    {
+      "id": "noise--5db-0020",
+      "reference": "but i am hugely pleased that you have seen my lady",
+      "hypothesis": "But I am hugely pleased that you have seen my lady.",
+      "polished": "But I am hugely pleased that you have seen my lady.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 676.6192920000001,
+      "total_ms": 676.6192920000001
+    },
+    {
+      "id": "noise--5db-0021",
+      "reference": "by the next i shall be gone into kent and my other journey is laid aside which i am not displeased at because it would have broken our intercourse very much",
+      "hypothesis": "By the next I shall be gone into Kent, and my other journey is laid aside, which I am not displeased at, because it would have broken our intercourse very much.",
+      "polished": "By the next I shall be gone into Kent, and my other journey is laid aside, which I am not displeased at, because it would have broken our intercourse very much.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 694.718791,
+      "total_ms": 694.718791
+    },
+    {
+      "id": "noise--5db-0022",
+      "reference": "in my life i never heard so ridiculous a discourse as he made us and no old woman who passes for a witch could have been more puzzled to seek what to say to reasonable people than he was",
+      "hypothesis": "In my life I never heard so ridiculous a discourse as he made us, and no old woman who participated a witch could have been more puzzled to seek what to say to reasonable people than he was.",
+      "polished": "In my life I never heard so ridiculous a discourse as he made us, and no old woman who participated a witch could have been more puzzled to seek what to say to reasonable people than he was.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.05128205128205128,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 406.13100000000003,
+      "total_ms": 406.13100000000003
+    },
+    {
+      "id": "noise--5db-0023",
+      "reference": "she really could n't help it it was so pleasant to see him again just when she was feeling so lonely",
+      "hypothesis": "She really could not help it. It was so pleasant to see him again, just when she was feeling so lonely.",
+      "polished": "She really could not help it. It was so pleasant to see him again, just when she was feeling so lonely.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.047619047619047616,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 646.076334,
+      "total_ms": 646.076334
+    },
+    {
+      "id": "noise--5db-0024",
+      "reference": "merit consists in working according to one's strength a cloister is not a dock yard",
+      "hypothesis": "Marit consists in working according to one's strength. A cloister is not a dockyard.",
+      "polished": "Marit consists in working according to one's strength. A cloister is not a dockyard.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.2,
+      "substitutions": 2,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 706.597041,
+      "total_ms": 706.597041
+    },
+    {
+      "id": "noise--5db-0025",
+      "reference": "the vil stuck fast in his throat",
+      "hypothesis": "You feel stuck, stuff, start.",
+      "polished": "You feel stuck, stuff, start.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.8571428571428571,
+      "substitutions": 4,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 289.29391599999997,
+      "total_ms": 289.29391599999997
+    },
+    {
+      "id": "noise--5db-0026",
+      "reference": "general observations on preserves confectionary ices and dessert dishes",
+      "hypothesis": "General observations on preserves, confectionery, ices, and dessert dishes.",
+      "polished": "General observations on preserves, confectionery, ices, and dessert dishes.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 127.690042,
+      "total_ms": 127.690042
+    },
+    {
+      "id": "noise--5db-0027",
+      "reference": "yes that i have said the youth",
+      "hypothesis": "Yes, that I have said.",
+      "polished": "Yes, that I have said.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 0,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 87.44045799999999,
+      "total_ms": 87.44045799999999
+    },
+    {
+      "id": "noise--5db-0028",
+      "reference": "sigurd said i would touch none of it if by losing it i should never die",
+      "hypothesis": "Sigurd said, I will touch none of it if by losing it I should never die.",
+      "polished": "Sigurd said, I will touch none of it if by losing it I should never die.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0625,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 120.026708,
+      "total_ms": 120.026708
+    },
+    {
+      "id": "noise--5db-0029",
+      "reference": "die thou fafnir and then fafnir died",
+      "hypothesis": "die about Father. And then Baffner died.",
+      "polished": "die about Father. And then Baffner died.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.42857142857142855,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 7,
+      "polish_failed": [
+        "sentence_cased",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 103.531167,
+      "total_ms": 103.531167
+    },
+    {
+      "id": "noise--5db-0030",
+      "reference": "if your worship knew that returned sancho woe betide me and all my kindred why did you let me taste it",
+      "hypothesis": "If your worship knew that, returned Sancho, well betide me in all my kitchen. Why did you let me taste it?",
+      "polished": "If your worship knew that, returned Sancho, well betide me in all my kitchen. Why did you let me taste it?",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 134.246,
+      "total_ms": 134.246
+    },
+    {
+      "id": "noise--5db-0031",
+      "reference": "you understand father madeleine the government will notice it",
+      "hypothesis": "You understand, Father Madeline. The government will notice it.",
+      "polished": "You understand, Father Madeline. The government will notice it.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 116.13383400000001,
+      "total_ms": 116.13383400000001
+    },
+    {
+      "id": "noise--5db-0032",
+      "reference": "asked jean valjean fauchelevent replied",
+      "hypothesis": "asked Jean Valjean. Fauchelevent replied.",
+      "polished": "asked Jean Valjean. Fauchelevent replied.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 97,
+      "polish_failed": [
+        "sentence_cased"
+      ],
+      "asr_ms": 109.59475,
+      "total_ms": 109.59475
+    },
+    {
+      "id": "noise--5db-0033",
+      "reference": "but you are a jolly fellow too",
+      "hypothesis": "You shot fetch.",
+      "polished": "You shot fetch.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.8571428571428571,
+      "substitutions": 2,
+      "deletions": 4,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 109.638042,
+      "total_ms": 109.638042
+    },
+    {
+      "id": "noise--5db-0034",
+      "reference": "here a remark becomes necessary",
+      "hypothesis": "Here a remark becomes necessary.",
+      "polished": "Here a remark becomes necessary.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 94.088375,
+      "total_ms": 94.088375
+    },
+    {
+      "id": "noise--5db-0035",
+      "reference": "they know not what proof to give",
+      "hypothesis": "They know not what proof to give,",
+      "polished": "They know not what proof to give,",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 98,
+      "polish_failed": [
+        "terminal_punctuation"
+      ],
+      "asr_ms": 91.062583,
+      "total_ms": 91.062583
+    },
+    {
+      "id": "noise--5db-0036",
+      "reference": "the woman becomes the man's mistress and loves him",
+      "hypothesis": "The woman becomes the man's mistress and loves him.",
+      "polished": "The woman becomes the man's mistress and loves him.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 98.92725,
+      "total_ms": 98.92725
+    },
+    {
+      "id": "noise--5db-0037",
+      "reference": "will yo' alls please speak a lil louder he holler down the chimney jes like that",
+      "hypothesis": "Will y'all please speak a little louder? he hollered down the chimney, just like that.",
+      "polished": "Will y'all please speak a little louder? he hollered down the chimney, just like that.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.3125,
+      "substitutions": 4,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 6,
+      "polish_failed": [
+        "no_fillers",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 133.689166,
+      "total_ms": 133.689166
+    },
+    {
+      "id": "noise--5db-0038",
+      "reference": "so my friend so whip me off this glass neatly bring me hither some claret a full weeping glass till it run over",
+      "hypothesis": "So my friend, so whip me off this glass meeting. Bring me hither some clarity. A full weeping glass till it run over.",
+      "polished": "So my friend, so whip me off this glass meeting. Bring me hither some clarity. A full weeping glass till it run over.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.08695652173913043,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 209.568834,
+      "total_ms": 209.568834
+    },
+    {
+      "id": "noise--5db-0039",
+      "reference": "let us wind our horns by the sound of flagons and bottles and cry aloud that whoever hath lost his thirst come not hither to seek it",
+      "hypothesis": "Let us find our homes by the sound of the flagging bottoms. And whoever hath lost our thirst, but now heaved you seek it.",
+      "polished": "Let us find our homes by the sound of the flagging bottoms. And whoever hath lost our thirst, but now heaved you seek it.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.48148148148148145,
+      "substitutions": 10,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 198.48250000000002,
+      "total_ms": 198.48250000000002
+    },
+    {
+      "id": "noise--5db-0040",
+      "reference": "in the meantime friar john with his formidable baton of the cross got to the breach which the enemies had made and there stood to snatch up those that endeavoured to escape",
+      "hypothesis": "In the meantime Friar John, with his formidable baton of the cross, got to the breach which the enemies had made, and there stood to snatch up those that endeavored to escape.",
+      "polished": "In the meantime Friar John, with his formidable baton of the cross, got to the breach which the enemies had made, and there stood to snatch up those that endeavored to escape.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.03125,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 232.7485,
+      "total_ms": 232.7485
+    },
+    {
+      "id": "noise--5db-0041",
+      "reference": "he invaded babylonia",
+      "hypothesis": "He invaded Babylonia.",
+      "polished": "He invaded Babylonia.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 99.38366699999999,
+      "total_ms": 99.38366699999999
+    },
+    {
+      "id": "noise--5db-0042",
+      "reference": "sit down beside me and i'll tell you the story",
+      "hypothesis": "Sit down the side. I'm not pleased.",
+      "polished": "Sit down the side. I'm not pleased.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.8,
+      "substitutions": 5,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 105.672083,
+      "total_ms": 105.672083
+    },
+    {
+      "id": "noise--5db-0043",
+      "reference": "as he uttered the words the scissors leaped out of his hand and began to cut through the wooden shutters as easily as through a cheese",
+      "hypothesis": "As he uttered the words the scissors leaped out of his hand and began to cut through the wooden shutters as easily as through a cheese.",
+      "polished": "As he uttered the words the scissors leaped out of his hand and began to cut through the wooden shutters as easily as through a cheese.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 183.967084,
+      "total_ms": 183.967084
+    },
+    {
+      "id": "noise--5db-0044",
+      "reference": "he felt what the earth may possibly feel at the moment when it is torn open with the iron in order that grain may be deposited within it it feels only the wound the quiver of the germ and the joy of the fruit only arrive later",
+      "hypothesis": "You felt what the worst may possibly feel at the moment when it was torn open with the eye, in order that grain may be deposited within it. It feels only the wound, the frigor, the germ, the joy that can only arrive later.",
+      "polished": "You felt what the worst may possibly feel at the moment when it was torn open with the eye, in order that grain may be deposited within it. It feels only the wound, the frigor, the germ, the joy that can only arrive later.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.2127659574468085,
+      "substitutions": 7,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 356.24,
+      "total_ms": 356.24
+    },
+    {
+      "id": "noise--5db-0045",
+      "reference": "he affirmed to himself that he would not he declared to himself that he would not doubt and he began to doubt in spite of himself",
+      "hypothesis": "He affirmed to himself that he would not He declared to himself that he would not doubt. And he began to doubt, in spite of himself.",
+      "polished": "He affirmed to himself that he would not He declared to himself that he would not doubt. And he began to doubt, in spite of himself.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 205.28025,
+      "total_ms": 205.28025
+    },
+    {
+      "id": "noise--5db-0046",
+      "reference": "the family doctor respectfully ceased in the middle of his observations",
+      "hypothesis": "The family doctor respectfully ceased in the middle of his observations.",
+      "polished": "The family doctor respectfully ceased in the middle of his observations.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 121.319958,
+      "total_ms": 121.319958
+    },
+    {
+      "id": "noise--5db-0047",
+      "reference": "oh no only a few details princess come this way",
+      "hypothesis": "Oh no, only if you guys understand.",
+      "polished": "Oh no, only if you guys understand.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.7,
+      "substitutions": 4,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 115.72487500000001,
+      "total_ms": 115.72487500000001
+    },
+    {
+      "id": "noise--5db-0048",
+      "reference": "this is the third time you've asked me the same thing",
+      "hypothesis": "This is the third time you've asked me the same thing.",
+      "polished": "This is the third time you've asked me the same thing.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 83.7775,
+      "total_ms": 83.7775
+    },
+    {
+      "id": "noise--5db-0049",
+      "reference": "say you know sumthin",
+      "hypothesis": "Say, you know something?",
+      "polished": "Say, you know something?",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 198.72883299999998,
+      "total_ms": 198.72883299999998
+    },
+    {
+      "id": "noise--5db-0050",
+      "reference": "how then did he live and what did he ever sell",
+      "hypothesis": "How then did he live? And what did he ever sell?",
+      "polished": "How then did he live? And what did he ever sell?",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 109.28391699999999,
+      "total_ms": 109.28391699999999
+    },
+    {
+      "id": "noise--5db-0051",
+      "reference": "he thought not without a feeling of pride and commenced experimenting with his tail and fins with such enthusiasm and delight that some little time elapsed before mister wicker's voice boomed close by",
+      "hypothesis": "he thought, not without a feeling of pride. He commenced experimenting with his tail and fins with such enthusiasm and delight stumble time elapsed before mister Wicker's voice boom but sign.",
+      "polished": "he thought, not without a feeling of pride. He commenced experimenting with his tail and fins with such enthusiasm and delight stumble time elapsed before mister Wicker's voice boom but sign.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.21212121212121213,
+      "substitutions": 5,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 7,
+      "polish_failed": [
+        "sentence_cased",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 204.54887499999998,
+      "total_ms": 204.54887499999998
+    },
+    {
+      "id": "noise--5db-0052",
+      "reference": "the figure's shoes carved in some eastern style had curved up pointing toes",
+      "hypothesis": "The figure's shoes, carved in some Eastern style, a curved but pointing toes.",
+      "polished": "The figure's shoes, carved in some Eastern style, a curved but pointing toes.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.15384615384615385,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 114.850708,
+      "total_ms": 114.850708
+    },
+    {
+      "id": "noise--5db-0053",
+      "reference": "certain elements were to be mixed and poured at the proper time",
+      "hypothesis": "Certain elements were to be mixed and poured at the proper time.",
+      "polished": "Certain elements were to be mixed and poured at the proper time.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 122.49208300000001,
+      "total_ms": 122.49208300000001
+    },
+    {
+      "id": "noise--5db-0054",
+      "reference": "they went down to their quarters first",
+      "hypothesis": "They went down to their quarters first.",
+      "polished": "They went down to their quarters first.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 314.99675,
+      "total_ms": 314.99675
+    },
+    {
+      "id": "noise--5db-0055",
+      "reference": "chris lost no time as soon as he could do it without being noticed in hurrying down to his cabin",
+      "hypothesis": "Chris lost no time as soon as he could do it without being noticed and hurrying down to his cabin.",
+      "polished": "Chris lost no time as soon as he could do it without being noticed and hurrying down to his cabin.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.05,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 153.714667,
+      "total_ms": 153.714667
+    },
+    {
+      "id": "noise--5db-0056",
+      "reference": "he knew now that his absence for as long as he had to be away would be covered up and satisfactorily accounted for",
+      "hypothesis": "He knew now that his absence, for as long as he had had to be away, would be covered up and satisfactorily accounted for.",
+      "polished": "He knew now that his absence, for as long as he had had to be away, would be covered up and satisfactorily accounted for.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.043478260869565216,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 140.606458,
+      "total_ms": 140.606458
+    },
+    {
+      "id": "noise--5db-0057",
+      "reference": "i mean he persisted do you feel as though you could go through with something rather unusual",
+      "hypothesis": "I mean, he persisted, do you feel as though you could go through with something rather amusing?",
+      "polished": "I mean, he persisted, do you feel as though you could go through with something rather amusing?",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.058823529411764705,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 152.33233299999998,
+      "total_ms": 152.33233299999998
+    },
+    {
+      "id": "noise--5db-0058",
+      "reference": "for none could injure me as he has done oh",
+      "hypothesis": "for none could endure me as he has done. Oh,",
+      "polished": "for none could endure me as he has done. Oh,",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.1,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 106.468625,
+      "total_ms": 106.468625
+    },
+    {
+      "id": "noise--5db-0059",
+      "reference": "mister and missus hattersley have been staying at the grove a fortnight and as mister hargrave is still absent and the weather was remarkably fine i never passed a day without seeing my two friends milicent and esther either there or here",
+      "hypothesis": "Mr. and Mrs. Huttersley have been staying at the grow a fortnight. And as Mrs. Hargrave is still absent and the weather was remarkably fine, I never passed a day without seeing my two friends, Millicent and Esther, either there or here.",
+      "polished": "Mr. and Mrs. Huttersley have been staying at the grow a fortnight. And as Mrs. Hargrave is still absent and the weather was remarkably fine, I never passed a day without seeing my two friends, Millicent and Esther, either there or here.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 6,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 248.161417,
+      "total_ms": 248.161417
+    },
+    {
+      "id": "noise--5db-0060",
+      "reference": "you never tried me milly said he",
+      "hypothesis": "You never tried me, Melee, said he.",
+      "polished": "You never tried me, Melee, said he.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 110.592625,
+      "total_ms": 110.592625
+    },
+    {
+      "id": "noise--5db-0061",
+      "reference": "oh still just the same always at a loss the landowner answered with a resigned smile but with an expression of serenity and conviction that so it must be",
+      "hypothesis": "Oh, still just the same. Always it was, the landlord answered with a resigned smile, but with an expression of serenity and conviction that so ignored.",
+      "polished": "Oh, still just the same. Always it was, the landlord answered with a resigned smile, but with an expression of serenity and conviction that so ignored.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.2413793103448276,
+      "substitutions": 4,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 194.214791,
+      "total_ms": 194.214791
+    },
+    {
+      "id": "noise--5db-0062",
+      "reference": "said levin returning to a thought that had struck him",
+      "hypothesis": "said Levin, returning to a thought that had struck him.",
+      "polished": "said Levin, returning to a thought that had struck him.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 97,
+      "polish_failed": [
+        "sentence_cased"
+      ],
+      "asr_ms": 107.503917,
+      "total_ms": 107.503917
+    },
+    {
+      "id": "noise--5db-0063",
+      "reference": "did it not spare him a humiliation as great and painful as could be imagined",
+      "hypothesis": "Did it not spare him a humiliation as great and painful as could be imagined?",
+      "polished": "Did it not spare him a humiliation as great and painful as could be imagined?",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 109.790625,
+      "total_ms": 109.790625
+    },
+    {
+      "id": "noise--5db-0064",
+      "reference": "sometimes with touching entreaty sometimes with imperious command she protested after giving him her name that this matter could be nothing but an unfortunate mistake",
+      "hypothesis": "Sometimes with touching entreaties, sometimes with imperious command, she protested, after giving him her name, that this matter could be nothing but an unfortunate mistake.",
+      "polished": "Sometimes with touching entreaties, sometimes with imperious command, she protested, after giving him her name, that this matter could be nothing but an unfortunate mistake.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.04,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 181.897625,
+      "total_ms": 181.897625
+    },
+    {
+      "id": "noise--5db-0065",
+      "reference": "i love you and have loved you always",
+      "hypothesis": "I love you, I've loved you always.",
+      "polished": "I love you, I've loved you always.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 93.873708,
+      "total_ms": 93.873708
+    },
+    {
+      "id": "noise--5db-0066",
+      "reference": "he has tried that road and knows that it is the wrong road",
+      "hypothesis": "Yes, pride for those.",
+      "polished": "Yes, pride for those.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 4,
+      "deletions": 9,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 110.65650000000001,
+      "total_ms": 110.65650000000001
+    },
+    {
+      "id": "noise--5db-0067",
+      "reference": "in other words it was just as fiendish just as infamous as the catholic spirit",
+      "hypothesis": "In other words, it was just as Finnish, just as infamous, as the Catholic spirit.",
+      "polished": "In other words, it was just as Finnish, just as infamous, as the Catholic spirit.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.06666666666666667,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 188.901,
+      "total_ms": 188.901
+    },
+    {
+      "id": "noise--5db-0068",
+      "reference": "we now know that our first parents were not foreigners",
+      "hypothesis": "We now know that our family were not colonists.",
+      "polished": "We now know that our family were not colonists.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.3,
+      "substitutions": 2,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 106.987042,
+      "total_ms": 106.987042
+    },
+    {
+      "id": "noise--5db-0069",
+      "reference": "they live by fraud and violence and bequeath their vices to their children",
+      "hypothesis": "They live by fraud and violence and bequeath their vices to their children.",
+      "polished": "They live by fraud and violence and bequeath their vices to their children.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 144.778083,
+      "total_ms": 144.778083
+    },
+    {
+      "id": "noise--5db-0070",
+      "reference": "failure seems to be the trademark of nature why",
+      "hypothesis": "Failure seems to be the trade of the question.",
+      "polished": "Failure seems to be the trade of the question.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.3333333333333333,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 107.72037499999999,
+      "total_ms": 107.72037499999999
+    },
+    {
+      "id": "noise--5db-0071",
+      "reference": "now then said the count returning his tablets to his pocket make yourself perfectly easy the hand of your time piece will not be more accurate in marking the time than myself",
+      "hypothesis": "Now then, said the Count, returning his tablets to his pocket, make yourself perfectly easy. The hand of your time piece will not be more accurate in marking the time than myself.",
+      "polished": "Now then, said the Count, returning his tablets to his pocket, make yourself perfectly easy. The hand of your time piece will not be more accurate in marking the time than myself.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 229.294166,
+      "total_ms": 229.294166
+    },
+    {
+      "id": "noise--5db-0072",
+      "reference": "i returned home at daybreak and strove to sleep but my head ached and i got up to have a ride for an hour",
+      "hypothesis": "I returned home at daybreak, and strove to sleep, but my head ached, and I got up to have a ride for an hour.",
+      "polished": "I returned home at daybreak, and strove to sleep, but my head ached, and I got up to have a ride for an hour.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 199.60920900000002,
+      "total_ms": 199.60920900000002
+    },
+    {
+      "id": "noise--5db-0073",
+      "reference": "ransom was pleased with the vision of that remedy it must be repeated that he was very provincial",
+      "hypothesis": "Hanson was pleased with the vision of that remedy. It must be repeated that he was very provincial.",
+      "polished": "Hanson was pleased with the vision of that remedy. It must be repeated that he was very provincial.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.05555555555555555,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 150.820333,
+      "total_ms": 150.820333
+    },
+    {
+      "id": "noise--5db-0074",
+      "reference": "he was sorry for her but he saw in a flash that no one could help her that was what made her tragic",
+      "hypothesis": "He was sorry for her, but he saw in a flash that no room could help her. That boy was not making a project.",
+      "polished": "He was sorry for her, but he saw in a flash that no room could help her. That boy was not making a project.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.2608695652173913,
+      "substitutions": 5,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 182.09020900000002,
+      "total_ms": 182.09020900000002
+    },
+    {
+      "id": "noise--5db-0075",
+      "reference": "she had erected it into a sort of rule of conduct that whenever she saw a risk she was to take it and she had frequent humiliations at finding herself safe after all",
+      "hypothesis": "She had erected it into a sort of rule of conduct that whenever she saw this, she was to take it. And she had frequent knowledge at finding herself safe.",
+      "polished": "She had erected it into a sort of rule of conduct that whenever she saw this, she was to take it. And she had frequent knowledge at finding herself safe.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.15151515151515152,
+      "substitutions": 2,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 199.298375,
+      "total_ms": 199.298375
+    },
+    {
+      "id": "noise--5db-0076",
+      "reference": "perhaps she could speak for them more than for some others",
+      "hypothesis": "Perhaps you could speak for them more than for some others.",
+      "polished": "Perhaps you could speak for them more than for some others.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.09090909090909091,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 134.693834,
+      "total_ms": 134.693834
+    },
+    {
+      "id": "noise--5db-0077",
+      "reference": "anyhow he and phut didn't get along very well it seems",
+      "hypothesis": "Anyhow, he and Futt didn't get along very well, it seems.",
+      "polished": "Anyhow, he and Futt didn't get along very well, it seems.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.09090909090909091,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 115.118791,
+      "total_ms": 115.118791
+    },
+    {
+      "id": "noise--5db-0078",
+      "reference": "simply because this watch",
+      "hypothesis": "Simply because this watch",
+      "polished": "Simply because this watch",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 98,
+      "polish_failed": [
+        "terminal_punctuation"
+      ],
+      "asr_ms": 88.373292,
+      "total_ms": 88.373292
+    },
+    {
+      "id": "noise--5db-0079",
+      "reference": "some one out here to see you",
+      "hypothesis": "Someone out here to see you.",
+      "polished": "Someone out here to see you.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 74.77175,
+      "total_ms": 74.77175
+    },
+    {
+      "id": "noise--5db-0080",
+      "reference": "and in a way it was true",
+      "hypothesis": "And in a way it was true.",
+      "polished": "And in a way it was true.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 134.483083,
+      "total_ms": 134.483083
+    },
+    {
+      "id": "noise--5db-0081",
+      "reference": "that was hers went on the jeweler",
+      "hypothesis": "That was hers, went on the jorge.",
+      "polished": "That was hers, went on the jorge.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 112.882083,
+      "total_ms": 112.882083
+    },
+    {
+      "id": "noise--5db-0082",
+      "reference": "asked a worker last sunday you did it when the yunkers",
+      "hypothesis": "Master Worker, last Sunday you did it, were the young girls.",
+      "polished": "Master Worker, last Sunday you did it, were the young girls.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.45454545454545453,
+      "substitutions": 3,
+      "deletions": 1,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 110.78675,
+      "total_ms": 110.78675
+    },
+    {
+      "id": "noise--5db-0083",
+      "reference": "land after land shalt thou seek and find but no other life on thy wish shall wait fret not thy soul in thy thoughts o night all woes shall end or sooner or late",
+      "hypothesis": "Land after land shalt thou seek and find, But no other life and thy wish shall wait. Fret not thy soul and thy thoughts a night All woes shall end or sooner or late.",
+      "polished": "Land after land shalt thou seek and find, But no other life and thy wish shall wait. Fret not thy soul and thy thoughts a night All woes shall end or sooner or late.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.08823529411764706,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 235.093667,
+      "total_ms": 235.093667
+    },
+    {
+      "id": "noise--5db-0084",
+      "reference": "the seventh voyage of sindbad the seaman",
+      "hypothesis": "The seventh voyage of Sinbad the Seaman.",
+      "polished": "The seventh voyage of Sinbad the Seaman.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 106.775708,
+      "total_ms": 106.775708
+    },
+    {
+      "id": "noise--5db-0085",
+      "reference": "know o company that after my return from my sixth voyage which brought me abundant profit i resumed my former life in all possible joyance and enjoyment and mirth and making merry day and night and i tarried some time in this solace and satisfaction till my soul began once more to long to sail the seas and see foreign countries and company with merchants and hear new things",
+      "hypothesis": "Know, O company, that after my return from my sixth voyage, which brought me a bunch of profit, I resumed my former life and all possible joyance and enjoyment and mirth, and making merry day and night. And I tarried some time in this solace and satisfaction, for my soul began once more to long to sail the seas and see fine countries, in company with merchants and heroin and criminals.",
+      "polished": "Know, O company, that after my return from my sixth voyage, which brought me a bunch of profit, I resumed my former life and all possible joyance and enjoyment and mirth, and making merry day and night. And I tarried some time in this solace and satisfaction, for my soul began once more to long to sail the seas and see fine countries, in company with merchants and heroin and criminals.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.14492753623188406,
+      "substitutions": 8,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 415.343625,
+      "total_ms": 415.343625
+    },
+    {
+      "id": "noise--5db-0086",
+      "reference": "a telegram was brought in",
+      "hypothesis": "A telegram was brought in.",
+      "polished": "A telegram was brought in.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 83.634584,
+      "total_ms": 83.634584
+    },
+    {
+      "id": "noise--5db-0087",
+      "reference": "not you only a sham",
+      "hypothesis": "Mm-hmm. Give me a shame.",
+      "polished": "Mm-hmm. Give me a shame.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.8,
+      "substitutions": 4,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 100.55562499999999,
+      "total_ms": 100.55562499999999
+    },
+    {
+      "id": "noise--5db-0088",
+      "reference": "you laughed and fleered at me when i was on the cutter's deck",
+      "hypothesis": "You laughed and feared at me when I was on the cutter's deck.",
+      "polished": "You laughed and feared at me when I was on the cutter's deck.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.07692307692307693,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 115.24137499999999,
+      "total_ms": 115.24137499999999
+    },
+    {
+      "id": "noise--5db-0089",
+      "reference": "no wait another half hour",
+      "hypothesis": "No, wait another half hour.",
+      "polished": "No, wait another half hour.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 90.225,
+      "total_ms": 90.225
+    },
+    {
+      "id": "noise--5db-0090",
+      "reference": "yes sir of course",
+      "hypothesis": "Yes, sir, of course.",
+      "polished": "Yes, sir, of course.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 107.49537500000001,
+      "total_ms": 107.49537500000001
+    },
+    {
+      "id": "noise--5db-0091",
+      "reference": "gurr glanced round to see if the men were looking and then said rather huskily but kindly",
+      "hypothesis": "Bird glanced around to see if the men were looking and then said that it has to be the kind of",
+      "polished": "Bird glanced around to see if the men were looking and then said that it has to be the kind of",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.5882352941176471,
+      "substitutions": 6,
+      "deletions": 0,
+      "insertions": 4,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 124.421959,
+      "total_ms": 124.421959
+    },
+    {
+      "id": "noise--5db-0092",
+      "reference": "almost at this instant i heard a pistol shot in the bank",
+      "hypothesis": "Almost at this instant I heard a pistol shot in the bank.",
+      "polished": "Almost at this instant I heard a pistol shot in the bank.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 95.72045899999999,
+      "total_ms": 95.72045899999999
+    },
+    {
+      "id": "noise--5db-0093",
+      "reference": "your job is to protect the citizens here and that means everyone not breaking the laws whether you feel like it or not no graft",
+      "hypothesis": "Your job is to protect the citizens here, and that means everyone not breaking the laws, whether you feel like it or not. No graft.",
+      "polished": "Your job is to protect the citizens here, and that means everyone not breaking the laws, whether you feel like it or not. No graft.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 96,
+      "polish_failed": [
+        "no_fillers"
+      ],
+      "asr_ms": 211.867875,
+      "total_ms": 211.867875
+    },
+    {
+      "id": "noise--5db-0094",
+      "reference": "murdoch blinked he dropped his eyes slowly",
+      "hypothesis": "Murdoch blinked. He dropped his eyes slowly.",
+      "polished": "Murdoch blinked. He dropped his eyes slowly.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 119.41020900000001,
+      "total_ms": 119.41020900000001
+    },
+    {
+      "id": "noise--5db-0095",
+      "reference": "leslie left the room but she had scarcely gone a dozen paces down the corridor before she met annie returning",
+      "hypothesis": "Leslie left the room, but she had scarcely gone a dozen paces down the corridor before she met Annie returning.",
+      "polished": "Leslie left the room, but she had scarcely gone a dozen paces down the corridor before she met Annie returning.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 141.434667,
+      "total_ms": 141.434667
+    },
+    {
+      "id": "noise--5db-0096",
+      "reference": "it burned as if with fever",
+      "hypothesis": "It burned as if with fever.",
+      "polished": "It burned as if with fever.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 104.95170800000001,
+      "total_ms": 104.95170800000001
+    },
+    {
+      "id": "noise--5db-0097",
+      "reference": "god answers to each of you you are",
+      "hypothesis": "God answers to each of you. You are.",
+      "polished": "God answers to each of you. You are.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 103.598292,
+      "total_ms": 103.598292
+    },
+    {
+      "id": "noise--5db-0098",
+      "reference": "presently hasan shuman came out of a closet and said to him hast thou gotten the gear o ali",
+      "hypothesis": "Presently Hassan Shuman came out of the closet and said to him, Hast thou gods in the gear, O Ali?",
+      "polished": "Presently Hassan Shuman came out of the closet and said to him, Hast thou gods in the gear, O Ali?",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.21052631578947367,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 139.356333,
+      "total_ms": 139.356333
+    },
+    {
+      "id": "noise--5db-0099",
+      "reference": "i remember all the rubenses at the louvre for i saw them three years ago when i was staying in paris with grandpapa",
+      "hypothesis": "I remember all the Ruben's days of the law, for I saw them two years ago when I was staying in carriage with Grand Power.",
+      "polished": "I remember all the Ruben's days of the law, for I saw them two years ago when I was staying in carriage with Grand Power.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.34782608695652173,
+      "substitutions": 6,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 164.32208300000002,
+      "total_ms": 164.32208300000002
+    },
+    {
+      "id": "noise--5db-0100",
+      "reference": "when the outlaws had divided the spoils which they had taken from the castle of torquilstone cedric prepared to take his departure",
+      "hypothesis": "When the outlaws had divided the spoils which they had taken from the castle of Torquestone, Cedric prepared to take his departure.",
+      "polished": "When the outlaws had divided the spoils which they had taken from the castle of Torquestone, Cedric prepared to take his departure.",
+      "tags": [
+        "noise",
+        "snr--5db"
+      ],
+      "human": false,
+      "wer": 0.045454545454545456,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 161.245375,
+      "total_ms": 161.245375
+    }
+  ],
+  "wer_verbatim_micro": 0.13691194209891436,
+  "wer_verbatim_macro": 0.15754873847690024,
+  "wer_clean_micro": null,
+  "wer_clean_human_micro": null,
+  "vocab_recall": null,
+  "vocab_false_alarm": null,
+  "entity_accuracy": null,
+  "semantic_ok_rate": null,
+  "latency_release_to_paste": null,
+  "case_errors": []
+}

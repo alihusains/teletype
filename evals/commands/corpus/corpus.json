@@ -1,0 +1,1480 @@
+{
+  "schema": "teletype-command-corpus-v1",
+  "clips": [
+    {
+      "path": "commands/corpus/open_app_000.wav",
+      "text": "open Safari",
+      "category": "open_app",
+      "voice": "Alex",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Safari"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_001.wav",
+      "text": "open Google Chrome",
+      "category": "open_app",
+      "voice": "Fred",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Google Chrome"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_002.wav",
+      "text": "open Visual Studio Code",
+      "category": "open_app",
+      "voice": "Samantha",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Visual Studio Code"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_003.wav",
+      "text": "open iMessage",
+      "category": "open_app",
+      "voice": "Karen",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "iMessage"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_004.wav",
+      "text": "open Terminal",
+      "category": "open_app",
+      "voice": "Moira",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Terminal"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_005.wav",
+      "text": "open iTerm",
+      "category": "open_app",
+      "voice": "Alex",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "iTerm"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_006.wav",
+      "text": "open Mail",
+      "category": "open_app",
+      "voice": "Fred",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Mail"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_007.wav",
+      "text": "open Notes",
+      "category": "open_app",
+      "voice": "Samantha",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Notes"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_008.wav",
+      "text": "open Finder",
+      "category": "open_app",
+      "voice": "Karen",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Finder"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_009.wav",
+      "text": "open Slack",
+      "category": "open_app",
+      "voice": "Moira",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Slack"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_010.wav",
+      "text": "open Discord",
+      "category": "open_app",
+      "voice": "Alex",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Discord"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_011.wav",
+      "text": "open Calculator",
+      "category": "open_app",
+      "voice": "Fred",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Calculator"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_012.wav",
+      "text": "open Calendar",
+      "category": "open_app",
+      "voice": "Samantha",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Calendar"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_013.wav",
+      "text": "open Photos",
+      "category": "open_app",
+      "voice": "Karen",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Photos"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_014.wav",
+      "text": "open Maps",
+      "category": "open_app",
+      "voice": "Moira",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Maps"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_015.wav",
+      "text": "open Music",
+      "category": "open_app",
+      "voice": "Alex",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Music"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_016.wav",
+      "text": "open Settings",
+      "category": "open_app",
+      "voice": "Fred",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Settings"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_017.wav",
+      "text": "open App Store",
+      "category": "open_app",
+      "voice": "Samantha",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "App Store"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_018.wav",
+      "text": "open Keynote",
+      "category": "open_app",
+      "voice": "Karen",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Keynote"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_019.wav",
+      "text": "open Reminders",
+      "category": "open_app",
+      "voice": "Moira",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Reminders"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_020.wav",
+      "text": "open FaceTime",
+      "category": "open_app",
+      "voice": "Alex",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "FaceTime"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_021.wav",
+      "text": "open Contacts",
+      "category": "open_app",
+      "voice": "Fred",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Contacts"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_022.wav",
+      "text": "open Activity Monitor",
+      "category": "open_app",
+      "voice": "Samantha",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Activity Monitor"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_023.wav",
+      "text": "open System Settings",
+      "category": "open_app",
+      "voice": "Karen",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "System Settings"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_024.wav",
+      "text": "open Screen Time",
+      "category": "open_app",
+      "voice": "Moira",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Screen Time"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_025.wav",
+      "text": "open Voice Memos",
+      "category": "open_app",
+      "voice": "Alex",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Voice Memos"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_026.wav",
+      "text": "open QuickTime Player",
+      "category": "open_app",
+      "voice": "Fred",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "QuickTime Player"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_027.wav",
+      "text": "open Stocks",
+      "category": "open_app",
+      "voice": "Samantha",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Stocks"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_028.wav",
+      "text": "open Home",
+      "category": "open_app",
+      "voice": "Karen",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Home"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/open_app_029.wav",
+      "text": "open Shortcuts",
+      "category": "open_app",
+      "voice": "Moira",
+      "expected": {
+        "type": "open_app",
+        "tool": "open_app",
+        "args": {
+          "app": "Shortcuts"
+        }
+      }
+    },
+    {
+      "path": "commands/corpus/edit_verb_000.wav",
+      "text": "make this sentence shorter",
+      "category": "edit_verb",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_001.wav",
+      "text": "make this paragraph longer",
+      "category": "edit_verb",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_002.wav",
+      "text": "bold this word",
+      "category": "edit_verb",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_003.wav",
+      "text": "italicize this word",
+      "category": "edit_verb",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_004.wav",
+      "text": "underline the selected text",
+      "category": "edit_verb",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_005.wav",
+      "text": "fix the grammar",
+      "category": "edit_verb",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_006.wav",
+      "text": "fix the spelling",
+      "category": "edit_verb",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_007.wav",
+      "text": "replace your company with IC Markets",
+      "category": "edit_verb",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_008.wav",
+      "text": "replace the date with October 17",
+      "category": "edit_verb",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_009.wav",
+      "text": "turn this into bullet points",
+      "category": "edit_verb",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_010.wav",
+      "text": "turn this into a table",
+      "category": "edit_verb",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_011.wav",
+      "text": "number the list",
+      "category": "edit_verb",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_012.wav",
+      "text": "capitalize the first letter of each sentence",
+      "category": "edit_verb",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_013.wav",
+      "text": "make this all lowercase",
+      "category": "edit_verb",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_014.wav",
+      "text": "make this all uppercase",
+      "category": "edit_verb",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_015.wav",
+      "text": "delete the last sentence",
+      "category": "edit_verb",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_016.wav",
+      "text": "delete the selected text",
+      "category": "edit_verb",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_017.wav",
+      "text": "insert a new paragraph",
+      "category": "edit_verb",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_018.wav",
+      "text": "move this paragraph up",
+      "category": "edit_verb",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_019.wav",
+      "text": "align this text to the center",
+      "category": "edit_verb",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_020.wav",
+      "text": "remove the typos",
+      "category": "edit_verb",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_021.wav",
+      "text": "rewrite this in short sentences",
+      "category": "edit_verb",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_022.wav",
+      "text": "make this more formal",
+      "category": "edit_verb",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_023.wav",
+      "text": "make this more casual",
+      "category": "edit_verb",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_024.wav",
+      "text": "add a comma after the first word",
+      "category": "edit_verb",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_025.wav",
+      "text": "fix the punctuation",
+      "category": "edit_verb",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_026.wav",
+      "text": "summarize this paragraph",
+      "category": "edit_verb",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_027.wav",
+      "text": "expand this into a full sentence",
+      "category": "edit_verb",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_028.wav",
+      "text": "highlight this word",
+      "category": "edit_verb",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/edit_verb_029.wav",
+      "text": "strikethrough this word",
+      "category": "edit_verb",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_000.wav",
+      "text": "focus the browser",
+      "category": "focus_control",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_001.wav",
+      "text": "focus email",
+      "category": "focus_control",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_002.wav",
+      "text": "bring up the terminal",
+      "category": "focus_control",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_003.wav",
+      "text": "bring up the calendar",
+      "category": "focus_control",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_004.wav",
+      "text": "bring up the calculator",
+      "category": "focus_control",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_005.wav",
+      "text": "bring up the notes app",
+      "category": "focus_control",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_006.wav",
+      "text": "switch to the browser",
+      "category": "focus_control",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_007.wav",
+      "text": "switch to email",
+      "category": "focus_control",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_008.wav",
+      "text": "switch to the terminal",
+      "category": "focus_control",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_009.wav",
+      "text": "switch to the music app",
+      "category": "focus_control",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_010.wav",
+      "text": "focus the code editor",
+      "category": "focus_control",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_011.wav",
+      "text": "focus the messenger",
+      "category": "focus_control",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_012.wav",
+      "text": "bring up the settings",
+      "category": "focus_control",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_013.wav",
+      "text": "bring up the file manager",
+      "category": "focus_control",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_014.wav",
+      "text": "bring up the photo app",
+      "category": "focus_control",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_015.wav",
+      "text": "bring up the map app",
+      "category": "focus_control",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_016.wav",
+      "text": "switch to the messages app",
+      "category": "focus_control",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_017.wav",
+      "text": "switch to the video call app",
+      "category": "focus_control",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_018.wav",
+      "text": "focus the spreadsheet",
+      "category": "focus_control",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_019.wav",
+      "text": "focus the presentation",
+      "category": "focus_control",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/focus_control_020.wav",
+      "text": "focus the web browser",
+      "category": "focus_control",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_000.wav",
+      "text": "click Save",
+      "category": "pointer",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_001.wav",
+      "text": "click the submit button",
+      "category": "pointer",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_002.wav",
+      "text": "click the close button",
+      "category": "pointer",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_003.wav",
+      "text": "click the search icon",
+      "category": "pointer",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_004.wav",
+      "text": "double click the file",
+      "category": "pointer",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_005.wav",
+      "text": "double click the folder",
+      "category": "pointer",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_006.wav",
+      "text": "right click the icon",
+      "category": "pointer",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_007.wav",
+      "text": "type hello",
+      "category": "pointer",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_008.wav",
+      "text": "type good morning team",
+      "category": "pointer",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_009.wav",
+      "text": "press enter",
+      "category": "pointer",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_010.wav",
+      "text": "press the escape key",
+      "category": "pointer",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_011.wav",
+      "text": "press the tab key",
+      "category": "pointer",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_012.wav",
+      "text": "scroll down the page",
+      "category": "pointer",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_013.wav",
+      "text": "scroll up the page",
+      "category": "pointer",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_014.wav",
+      "text": "scroll to the top",
+      "category": "pointer",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_015.wav",
+      "text": "click the back button",
+      "category": "pointer",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_016.wav",
+      "text": "click the play button",
+      "category": "pointer",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_017.wav",
+      "text": "double click the desktop icon",
+      "category": "pointer",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_018.wav",
+      "text": "right click the file name",
+      "category": "pointer",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_019.wav",
+      "text": "type the word hello",
+      "category": "pointer",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_020.wav",
+      "text": "press the return key",
+      "category": "pointer",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_021.wav",
+      "text": "press the space bar",
+      "category": "pointer",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/pointer_022.wav",
+      "text": "scroll to the bottom",
+      "category": "pointer",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_000.wav",
+      "text": "the price is 42 dollars 50 cents",
+      "category": "itn_sensitive",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_001.wav",
+      "text": "the meeting is at 2:30 PM",
+      "category": "itn_sensitive",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_002.wav",
+      "text": "the value of pi is 3.14",
+      "category": "itn_sensitive",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_003.wav",
+      "text": "call me at 555 123 4567",
+      "category": "itn_sensitive",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_004.wav",
+      "text": "the flight leaves at 6:45 AM",
+      "category": "itn_sensitive",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_005.wav",
+      "text": "the temperature is 21.5 degrees",
+      "category": "itn_sensitive",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_006.wav",
+      "text": "set the timer for 45 seconds",
+      "category": "itn_sensitive",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_007.wav",
+      "text": "the bill was 1,250 euros",
+      "category": "itn_sensitive",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_008.wav",
+      "text": "room number 402",
+      "category": "itn_sensitive",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_009.wav",
+      "text": "the ratio is 2.5 to 1",
+      "category": "itn_sensitive",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_010.wav",
+      "text": "it costs 99 cents",
+      "category": "itn_sensitive",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_011.wav",
+      "text": "the version is 3.10",
+      "category": "itn_sensitive",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_012.wav",
+      "text": "the date is March 14, 2026",
+      "category": "itn_sensitive",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_013.wav",
+      "text": "the number is 0.001",
+      "category": "itn_sensitive",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_014.wav",
+      "text": "the score was 3 to 2",
+      "category": "itn_sensitive",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_015.wav",
+      "text": "the meeting is at 2:30 PM on Friday",
+      "category": "itn_sensitive",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_016.wav",
+      "text": "the price is 12 dollars 75 cents",
+      "category": "itn_sensitive",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_017.wav",
+      "text": "the flight number is BA 123",
+      "category": "itn_sensitive",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_018.wav",
+      "text": "the order total is 89 dollars 99 cents",
+      "category": "itn_sensitive",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_019.wav",
+      "text": "the phone number is 555 987 6543",
+      "category": "itn_sensitive",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_020.wav",
+      "text": "the meeting is at 11:15 AM",
+      "category": "itn_sensitive",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_021.wav",
+      "text": "the value of e is 2.718",
+      "category": "itn_sensitive",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_022.wav",
+      "text": "the invoice is 3,450 dollars",
+      "category": "itn_sensitive",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_023.wav",
+      "text": "the room is number 1204",
+      "category": "itn_sensitive",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_024.wav",
+      "text": "the ratio is 3.75 to 2",
+      "category": "itn_sensitive",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_025.wav",
+      "text": "it costs 15 cents",
+      "category": "itn_sensitive",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_026.wav",
+      "text": "the version is 1.4.2",
+      "category": "itn_sensitive",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_027.wav",
+      "text": "the date is January 2, 2027",
+      "category": "itn_sensitive",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_028.wav",
+      "text": "the number is 0.25",
+      "category": "itn_sensitive",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_029.wav",
+      "text": "the score was 5 to 4",
+      "category": "itn_sensitive",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/itn_sensitive_030.wav",
+      "text": "the deadline is 5:00 PM",
+      "category": "itn_sensitive",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_000.wav",
+      "text": "the board meeting moved to the third floor",
+      "category": "negative",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_001.wav",
+      "text": "I need to finish the report before the end of the day",
+      "category": "negative",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_002.wav",
+      "text": "the weather was quite nice this morning",
+      "category": "negative",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_003.wav",
+      "text": "she said the project would take a few more weeks",
+      "category": "negative",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_004.wav",
+      "text": "we should probably review the numbers again",
+      "category": "negative",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_005.wav",
+      "text": "the coffee in the break room is running low",
+      "category": "negative",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_006.wav",
+      "text": "he mentioned that the client wanted changes",
+      "category": "negative",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_007.wav",
+      "text": "the train was delayed by about twenty minutes",
+      "category": "negative",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_008.wav",
+      "text": "I am looking forward to the weekend",
+      "category": "negative",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_009.wav",
+      "text": "the presentation went better than expected",
+      "category": "negative",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_010.wav",
+      "text": "she asked me to bring the documents to the office",
+      "category": "negative",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_011.wav",
+      "text": "the restaurant was almost full when we arrived",
+      "category": "negative",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_012.wav",
+      "text": "I have been meaning to call my mother for a while",
+      "category": "negative",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_013.wav",
+      "text": "the meeting started a little later than planned",
+      "category": "negative",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_014.wav",
+      "text": "we need to decide on a name for the new product",
+      "category": "negative",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_015.wav",
+      "text": "the road to the airport was completely blocked",
+      "category": "negative",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_016.wav",
+      "text": "he promised to send the files by tomorrow morning",
+      "category": "negative",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_017.wav",
+      "text": "the library closes at nine in the evening",
+      "category": "negative",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_018.wav",
+      "text": "I forgot my umbrella and ended up getting soaked",
+      "category": "negative",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_019.wav",
+      "text": "the team celebrated after the deadline was met",
+      "category": "negative",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_020.wav",
+      "text": "she recommended a book about machine learning",
+      "category": "negative",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_021.wav",
+      "text": "the parking garage was full so we walked a few blocks",
+      "category": "negative",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_022.wav",
+      "text": "I think the new hire is doing a great job",
+      "category": "negative",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_023.wav",
+      "text": "the flight landed exactly on time this once",
+      "category": "negative",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_024.wav",
+      "text": "we should order lunch before the next meeting",
+      "category": "negative",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_025.wav",
+      "text": "the concert tickets sold out within an hour",
+      "category": "negative",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_026.wav",
+      "text": "he drove to the city to pick up the package",
+      "category": "negative",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_027.wav",
+      "text": "the garden looked beautiful after the rain",
+      "category": "negative",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_028.wav",
+      "text": "I would prefer a window seat if possible",
+      "category": "negative",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_029.wav",
+      "text": "the deadline was moved up by one week",
+      "category": "negative",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_030.wav",
+      "text": "she took a long walk to clear her head",
+      "category": "negative",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_031.wav",
+      "text": "the new policy takes effect at the start of next month",
+      "category": "negative",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_032.wav",
+      "text": "I ran into an old colleague at the grocery store",
+      "category": "negative",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_033.wav",
+      "text": "the movie turned out to be a bit longer than expected",
+      "category": "negative",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_034.wav",
+      "text": "we will need more chairs for the gathering on Saturday",
+      "category": "negative",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_035.wav",
+      "text": "the kitchen smelled like toast this morning",
+      "category": "negative",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_036.wav",
+      "text": "she watered the plants before leaving for work",
+      "category": "negative",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_037.wav",
+      "text": "the bus arrived a few minutes early today",
+      "category": "negative",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_038.wav",
+      "text": "I left my keys on the counter again",
+      "category": "negative",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_039.wav",
+      "text": "the store was closed for the holiday",
+      "category": "negative",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_040.wav",
+      "text": "he cooked dinner for the whole family",
+      "category": "negative",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_041.wav",
+      "text": "the office was quiet after everyone left",
+      "category": "negative",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_042.wav",
+      "text": "I bought apples and bread at the market",
+      "category": "negative",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_043.wav",
+      "text": "the dog waited by the door for the mail",
+      "category": "negative",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_044.wav",
+      "text": "we watched the game on the big screen",
+      "category": "negative",
+      "voice": "Moira",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_045.wav",
+      "text": "the soup was too hot to eat right away",
+      "category": "negative",
+      "voice": "Alex",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_046.wav",
+      "text": "she folded the letters into small squares",
+      "category": "negative",
+      "voice": "Fred",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_047.wav",
+      "text": "the road was covered in fallen leaves",
+      "category": "negative",
+      "voice": "Samantha",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_048.wav",
+      "text": "I saved a copy of the file to the desktop",
+      "category": "negative",
+      "voice": "Karen",
+      "expected": null
+    },
+    {
+      "path": "commands/corpus/negative_049.wav",
+      "text": "the train station was crowded at rush hour",
+      "category": "negative",
+      "voice": "Moira",
+      "expected": null
+    }
+  ]
+}

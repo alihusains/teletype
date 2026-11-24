@@ -1,0 +1,14 @@
+{
+  "speaker": "a1",
+  "mic": "macbook",
+  "noise": "quiet",
+  "app_context": "code",
+  "vocab": [
+    "deepEqualStrict",
+    "strictEqual",
+    "POST /v2/users/lookup",
+    "422",
+    "api key",
+    "staging-dev-ic-ai"
+  ]
+}

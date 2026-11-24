@@ -1,0 +1,1 @@
+Quick one. Can you look at the pull request when you have a second, because the router keeps falling back to the slow model and our p95 is spiking again. I did not touch the fallback thresholds, so it is probably the stale index. Oh, and check Priya's one-liner, she flagged the off-by-one, which is probably why all sorts of people are DMing me about it.

@@ -1,0 +1,1 @@
+Here is Thursday's list, in order. First, rotate the API tokens for the chat gateway. Then push the two point two workflow model to Bedrock and confirm the Nova micro embedding. And finally, post the status summary to Confluence before the six o'clock cutoff.

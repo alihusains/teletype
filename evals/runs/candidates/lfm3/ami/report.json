@@ -1,0 +1,2759 @@
+{
+  "git_sha": "fd63811",
+  "timestamp": "1793203293",
+  "model": "lfm3",
+  "mode": "replay",
+  "has_synthesised_audio": true,
+  "human_case_count": 0,
+  "synthesised_case_count": 100,
+  "wer": {
+    "cases": 100,
+    "total_reference_words": 761,
+    "total_errors": 140,
+    "micro_wer": 0.18396846254927726,
+    "macro_wer": 0.2540693282941364,
+    "worst": [
+      {
+        "id": "ami-0058",
+        "reference": "only",
+        "hypothesis": "Oh my god.",
+        "wer": 3.0,
+        "substitutions": 1,
+        "deletions": 0,
+        "insertions": 2
+      },
+      {
+        "id": "ami-0007",
+        "reference": "um",
+        "hypothesis": "Uhm.",
+        "wer": 1.0,
+        "substitutions": 1,
+        "deletions": 0,
+        "insertions": 0
+      },
+      {
+        "id": "ami-0009",
+        "reference": "mm-hmm",
+        "hypothesis": "mm",
+        "wer": 1.0,
+        "substitutions": 1,
+        "deletions": 0,
+        "insertions": 0
+      },
+      {
+        "id": "ami-0011",
+        "reference": "mm-hmm",
+        "hypothesis": "mhm",
+        "wer": 1.0,
+        "substitutions": 1,
+        "deletions": 0,
+        "insertions": 0
+      },
+      {
+        "id": "ami-0040",
+        "reference": "mm-hmm",
+        "hypothesis": "mhm",
+        "wer": 1.0,
+        "substitutions": 1,
+        "deletions": 0,
+        "insertions": 0
+      }
+    ]
+  },
+  "wer_by_tag": [
+    [
+      "ami",
+      {
+        "cases": 100,
+        "reference_words": 761,
+        "errors": 140,
+        "wer": 0.18396846254927726
+      }
+    ]
+  ],
+  "polish": [
+    {
+      "id": "ami-0001",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0002",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0003",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0004",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0005",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0006",
+      "score": 95,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ]
+    },
+    {
+      "id": "ami-0007",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0008",
+      "score": 6,
+      "failed": [
+        "no_fillers",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0009",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0010",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0011",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0012",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0013",
+      "score": 97,
+      "failed": [
+        "sentence_cased"
+      ]
+    },
+    {
+      "id": "ami-0014",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0015",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0016",
+      "score": 96,
+      "failed": [
+        "no_fillers"
+      ]
+    },
+    {
+      "id": "ami-0017",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0018",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0019",
+      "score": 97,
+      "failed": [
+        "sentence_cased"
+      ]
+    },
+    {
+      "id": "ami-0020",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0021",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0022",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0023",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0024",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0025",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0026",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0027",
+      "score": 47,
+      "failed": [
+        "sentence_cased",
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0028",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0029",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0030",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0031",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0032",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0033",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0034",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0035",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0036",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0037",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0038",
+      "score": 60,
+      "failed": [
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0039",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0040",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0041",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0042",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0043",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0044",
+      "score": 5,
+      "failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0045",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0046",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0047",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0048",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0049",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0050",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0051",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0052",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0053",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0054",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0055",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0056",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0057",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0058",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0059",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0060",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0061",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0062",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0063",
+      "score": 96,
+      "failed": [
+        "no_fillers"
+      ]
+    },
+    {
+      "id": "ami-0064",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0065",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0066",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0067",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0068",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0069",
+      "score": 60,
+      "failed": [
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0070",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0071",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0072",
+      "score": 9,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination",
+        "no_markdown_fences"
+      ]
+    },
+    {
+      "id": "ami-0073",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0074",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0075",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0076",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0077",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0078",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0079",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0080",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0081",
+      "score": 6,
+      "failed": [
+        "no_fillers",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0082",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0083",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0084",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0085",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0086",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0087",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0088",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0089",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0090",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0091",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0092",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0093",
+      "score": 7,
+      "failed": [
+        "sentence_cased",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0094",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0095",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0096",
+      "score": 6,
+      "failed": [
+        "no_fillers",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0097",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "ami-0098",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "ami-0099",
+      "score": 50,
+      "failed": [
+        "no_content_loss"
+      ]
+    },
+    {
+      "id": "ami-0100",
+      "score": 100,
+      "failed": []
+    }
+  ],
+  "polish_mean_score": 56.2,
+  "latency_asr": {
+    "count": 100,
+    "min": 78.94591597141698,
+    "max": 634.3628750182688,
+    "mean": 209.626162906643,
+    "p50": 166.9780000229366,
+    "p95": 453.9661669987254,
+    "p99": 581.2327499734238
+  },
+  "latency_total": {
+    "count": 100,
+    "min": 78.94591597141698,
+    "max": 634.3628750182688,
+    "mean": 209.626162906643,
+    "p50": 166.9780000229366,
+    "p95": 453.9661669987254,
+    "p99": 581.2327499734238
+  },
+  "model_load_ms": null,
+  "cases": [
+    {
+      "id": "ami-0001",
+      "reference": "that fruit and vegetables are going to be the theme for clothes shoes and furniture",
+      "hypothesis": "That fruit and vegetables are going to be the theme for clothes, shoes and furniture.",
+      "polished": "That fruit and vegetables are going to be the theme for clothes, shoes and furniture.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 293.67841698694974,
+      "total_ms": 293.67841698694974
+    },
+    {
+      "id": "ami-0002",
+      "reference": "okay",
+      "hypothesis": "Okay.",
+      "polished": "Okay.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 424.6471669757738,
+      "total_ms": 424.6471669757738
+    },
+    {
+      "id": "ami-0003",
+      "reference": "okay",
+      "hypothesis": "Okay.",
+      "polished": "Okay.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 89.05579097336158,
+      "total_ms": 89.05579097336158
+    },
+    {
+      "id": "ami-0004",
+      "reference": "no",
+      "hypothesis": "No.",
+      "polished": "No.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 115.88987498544157,
+      "total_ms": 115.88987498544157
+    },
+    {
+      "id": "ami-0005",
+      "reference": "if you have a a question about w what the p the code means or where to find the code that you wanna",
+      "hypothesis": "If you have a question about what the code means or where to find the code that you want it,",
+      "polished": "If you have a question about what the code means or where to find the code that you want it,",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.2608695652173913,
+      "substitutions": 1,
+      "deletions": 4,
+      "insertions": 1,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 335.2373749949038,
+      "total_ms": 335.2373749949038
+    },
+    {
+      "id": "ami-0006",
+      "reference": "mm",
+      "hypothesis": "mm",
+      "polished": "mm",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 95,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation"
+      ],
+      "asr_ms": 78.94591597141698,
+      "total_ms": 78.94591597141698
+    },
+    {
+      "id": "ami-0007",
+      "reference": "um",
+      "hypothesis": "Uhm.",
+      "polished": "Uhm.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 315.98441704409197,
+      "total_ms": 315.98441704409197
+    },
+    {
+      "id": "ami-0008",
+      "reference": "but that will mean that you can only do things on actually no uh 'cause you need to do things on word level",
+      "hypothesis": "That will mean that you can only do things on, actually no, because you can do things on word level.",
+      "polished": "That will mean that you can only do things on, actually no, because you can do things on word level.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.21739130434782608,
+      "substitutions": 2,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 6,
+      "polish_failed": [
+        "no_fillers",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 318.9141250331886,
+      "total_ms": 318.9141250331886
+    },
+    {
+      "id": "ami-0009",
+      "reference": "mm-hmm",
+      "hypothesis": "mm",
+      "polished": "mm",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 90.41733399499208,
+      "total_ms": 90.41733399499208
+    },
+    {
+      "id": "ami-0010",
+      "reference": "do we have to have done the evaluation by then",
+      "hypothesis": "Do we have to have done the evaluation by then?",
+      "polished": "Do we have to have done the evaluation by then?",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 218.17829104838893,
+      "total_ms": 218.17829104838893
+    },
+    {
+      "id": "ami-0011",
+      "reference": "mm-hmm",
+      "hypothesis": "mhm",
+      "polished": "mhm",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 86.76099998410791,
+      "total_ms": 86.76099998410791
+    },
+    {
+      "id": "ami-0012",
+      "reference": "yeah",
+      "hypothesis": "Yeah.",
+      "polished": "Yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 86.86845900956541,
+      "total_ms": 86.86845900956541
+    },
+    {
+      "id": "ami-0013",
+      "reference": "feedback",
+      "hypothesis": "feedback.",
+      "polished": "feedback.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 97,
+      "polish_failed": [
+        "sentence_cased"
+      ],
+      "asr_ms": 87.95533300144598,
+      "total_ms": 87.95533300144598
+    },
+    {
+      "id": "ami-0014",
+      "reference": "yeah",
+      "hypothesis": "Yeah.",
+      "polished": "Yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 87.91900001233444,
+      "total_ms": 87.91900001233444
+    },
+    {
+      "id": "ami-0015",
+      "reference": "yeah",
+      "hypothesis": "Yeah.",
+      "polished": "Yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 85.19295800942928,
+      "total_ms": 85.19295800942928
+    },
+    {
+      "id": "ami-0016",
+      "reference": "um",
+      "hypothesis": "Um.",
+      "polished": "Um.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 96,
+      "polish_failed": [
+        "no_fillers"
+      ],
+      "asr_ms": 91.86229202896357,
+      "total_ms": 91.86229202896357
+    },
+    {
+      "id": "ami-0017",
+      "reference": "right yeah",
+      "hypothesis": "Right, yeaah.",
+      "polished": "Right, yeaah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.5,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 140.05141600500792,
+      "total_ms": 140.05141600500792
+    },
+    {
+      "id": "ami-0018",
+      "reference": "so",
+      "hypothesis": "So.",
+      "polished": "So.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 91.81104099843652,
+      "total_ms": 91.81104099843652
+    },
+    {
+      "id": "ami-0019",
+      "reference": "oops",
+      "hypothesis": "oops.",
+      "polished": "oops.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 97,
+      "polish_failed": [
+        "sentence_cased"
+      ],
+      "asr_ms": 98.92762498930097,
+      "total_ms": 98.92762498930097
+    },
+    {
+      "id": "ami-0020",
+      "reference": "just yeah",
+      "hypothesis": "Yeah.",
+      "polished": "Yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.5,
+      "substitutions": 0,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 96.8655829783529,
+      "total_ms": 96.8655829783529
+    },
+    {
+      "id": "ami-0021",
+      "reference": "specifically a date",
+      "hypothesis": "Specifically, a date.",
+      "polished": "Specifically, a date.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 134.3574170023203,
+      "total_ms": 134.3574170023203
+    },
+    {
+      "id": "ami-0022",
+      "reference": "and when we've been throwing up our ideas we're automatically talking about business people young people trendy people",
+      "hypothesis": "And when we've been throwing up our ideas, we're automatically talking about business people, young people, trendy people.",
+      "polished": "And when we've been throwing up our ideas, we're automatically talking about business people, young people, trendy people.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 399.244041997008,
+      "total_ms": 399.244041997008
+    },
+    {
+      "id": "ami-0023",
+      "reference": "um i don't know",
+      "hypothesis": "Uhm, I don't know.",
+      "polished": "Uhm, I don't know.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 165.0202909950167,
+      "total_ms": 165.0202909950167
+    },
+    {
+      "id": "ami-0024",
+      "reference": "um this is certainly something to take into account",
+      "hypothesis": "This is certainly something to take into account.",
+      "polished": "This is certainly something to take into account.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.1111111111111111,
+      "substitutions": 0,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 249.19320904882625,
+      "total_ms": 249.19320904882625
+    },
+    {
+      "id": "ami-0025",
+      "reference": "three different types of design that we're gonna be concerned with okay",
+      "hypothesis": "Through different types of design that we're going to be concerned with.",
+      "polished": "Through different types of design that we're going to be concerned with.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.3333333333333333,
+      "substitutions": 2,
+      "deletions": 1,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 309.14070800645277,
+      "total_ms": 309.14070800645277
+    },
+    {
+      "id": "ami-0026",
+      "reference": "i guess it's double curved",
+      "hypothesis": "I guess it's double curved.",
+      "polished": "I guess it's double curved.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 228.88754203449935,
+      "total_ms": 228.88754203449935
+    },
+    {
+      "id": "ami-0027",
+      "reference": "fifty percent of the people indicated they only loo used about ten percent of the buttons on a remote control",
+      "hypothesis": "50% of the people indicated they only used about 10% of the buttons on a remote control.",
+      "polished": "50% of the people indicated they only used about 10% of the buttons on a remote control.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 2,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 47,
+      "polish_failed": [
+        "sentence_cased",
+        "no_content_loss"
+      ],
+      "asr_ms": 453.9661669987254,
+      "total_ms": 453.9661669987254
+    },
+    {
+      "id": "ami-0028",
+      "reference": "yeah",
+      "hypothesis": "Yeah.",
+      "polished": "Yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 108.17724996013568,
+      "total_ms": 108.17724996013568
+    },
+    {
+      "id": "ami-0029",
+      "reference": "and maybe",
+      "hypothesis": "And maybe...",
+      "polished": "And maybe...",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 147.47558400267735,
+      "total_ms": 147.47558400267735
+    },
+    {
+      "id": "ami-0030",
+      "reference": "i know different parts of the world too if we're if we're marketing internationally",
+      "hypothesis": "I know, different parts of the world too, if we're marketing internationally.",
+      "polished": "I know, different parts of the world too, if we're marketing internationally.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 0,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 309.6150830388069,
+      "total_ms": 309.6150830388069
+    },
+    {
+      "id": "ami-0031",
+      "reference": "or maybe if i set it here on the this brand thing",
+      "hypothesis": "Maybe I started here on this brand thing.",
+      "polished": "Maybe I started here on this brand thing.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.4166666666666667,
+      "substitutions": 1,
+      "deletions": 4,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 270.4707080265507,
+      "total_ms": 270.4707080265507
+    },
+    {
+      "id": "ami-0032",
+      "reference": "um i'm just gonna draw its uh head but mm",
+      "hypothesis": "I'm just gonna draw its head, but.",
+      "polished": "I'm just gonna draw its head, but.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.3,
+      "substitutions": 0,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 245.107333001215,
+      "total_ms": 245.107333001215
+    },
+    {
+      "id": "ami-0033",
+      "reference": "and i would've liked to go for the",
+      "hypothesis": "And I would have liked to go for the...",
+      "polished": "And I would have liked to go for the...",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 190.13954099500552,
+      "total_ms": 190.13954099500552
+    },
+    {
+      "id": "ami-0034",
+      "reference": "okay",
+      "hypothesis": "Okay.",
+      "polished": "Okay.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 98.30283402698116,
+      "total_ms": 98.30283402698116
+    },
+    {
+      "id": "ami-0035",
+      "reference": "but",
+      "hypothesis": "But.",
+      "polished": "But.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 99.54283403931186,
+      "total_ms": 99.54283403931186
+    },
+    {
+      "id": "ami-0036",
+      "reference": "but yeah but i'll work on it",
+      "hypothesis": "But yea, but I'll work on it.",
+      "polished": "But yea, but I'll work on it.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 238.0319169606082,
+      "total_ms": 238.0319169606082
+    },
+    {
+      "id": "ami-0037",
+      "reference": "oh right i see",
+      "hypothesis": "Alright, I see.",
+      "polished": "Alright, I see.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.5,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 136.38358301250264,
+      "total_ms": 136.38358301250264
+    },
+    {
+      "id": "ami-0038",
+      "reference": "i guess that's not",
+      "hypothesis": "I guess that's not true.",
+      "polished": "I guess that's not true.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 60,
+      "polish_failed": [
+        "no_hallucination"
+      ],
+      "asr_ms": 155.47516697552055,
+      "total_ms": 155.47516697552055
+    },
+    {
+      "id": "ami-0039",
+      "reference": "um uh i'm still not caught up",
+      "hypothesis": "I'm still not caught up.",
+      "polished": "I'm still not caught up.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 0,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 249.17929200455544,
+      "total_ms": 249.17929200455544
+    },
+    {
+      "id": "ami-0040",
+      "reference": "mm-hmm",
+      "hypothesis": "mhm",
+      "polished": "mhm",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 130.7327090180479,
+      "total_ms": 130.7327090180479
+    },
+    {
+      "id": "ami-0041",
+      "reference": "thank you",
+      "hypothesis": "Thank you.",
+      "polished": "Thank you.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 109.7126249806024,
+      "total_ms": 109.7126249806024
+    },
+    {
+      "id": "ami-0042",
+      "reference": "'kay",
+      "hypothesis": "Okay.",
+      "polished": "Okay.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 98.91866595717148,
+      "total_ms": 98.91866595717148
+    },
+    {
+      "id": "ami-0043",
+      "reference": "that's today's",
+      "hypothesis": "That's today.",
+      "polished": "That's today.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.5,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 124.03133301995696,
+      "total_ms": 124.03133301995696
+    },
+    {
+      "id": "ami-0044",
+      "reference": "mm-hmm",
+      "hypothesis": "mhm",
+      "polished": "mhm",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 5,
+      "polish_failed": [
+        "sentence_cased",
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 99.20570900430904,
+      "total_ms": 99.20570900430904
+    },
+    {
+      "id": "ami-0045",
+      "reference": "n no no it shouldn't be no",
+      "hypothesis": "No, that shouldn't be, no.",
+      "polished": "No, that shouldn't be, no.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.42857142857142855,
+      "substitutions": 1,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 216.4178749662824,
+      "total_ms": 216.4178749662824
+    },
+    {
+      "id": "ami-0046",
+      "reference": "but you could do key word search could be topic search can they can be the same thing",
+      "hypothesis": "But you can, the keywords could be topics, can they? Could be the same thing.",
+      "polished": "But you can, the keywords could be topics, can they? Could be the same thing.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.4444444444444444,
+      "substitutions": 5,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 307.44716594927013,
+      "total_ms": 307.44716594927013
+    },
+    {
+      "id": "ami-0047",
+      "reference": "so is there any discussion possible about the new product requirement",
+      "hypothesis": "So is there any discussion possible about the new project requirements?",
+      "polished": "So is there any discussion possible about the new project requirements?",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.18181818181818182,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 250.49791700439528,
+      "total_ms": 250.49791700439528
+    },
+    {
+      "id": "ami-0048",
+      "reference": "do we need another meeting this week",
+      "hypothesis": "Do we need another meeting this week?",
+      "polished": "Do we need another meeting this week?",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 182.8767919796519,
+      "total_ms": 182.8767919796519
+    },
+    {
+      "id": "ami-0049",
+      "reference": "two okay",
+      "hypothesis": "Two, okay.",
+      "polished": "Two, okay.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 122.0110830035992,
+      "total_ms": 122.0110830035992
+    },
+    {
+      "id": "ami-0050",
+      "reference": "suppose if it is thirty eight degrees outside forty degrees outside",
+      "hypothesis": "Suppose if it is 38 degrees outside, 40 degrees outside.",
+      "polished": "Suppose if it is 38 degrees outside, 40 degrees outside.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.2727272727272727,
+      "substitutions": 2,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 267.5242089899257,
+      "total_ms": 267.5242089899257
+    },
+    {
+      "id": "ami-0051",
+      "reference": "so those are things maybe we wanna look at as far as saleability of the item",
+      "hypothesis": "So those are things maybe we want to look at as far as saleability of the item.",
+      "polished": "So those are things maybe we want to look at as far as saleability of the item.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.125,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 316.53191696386784,
+      "total_ms": 316.53191696386784
+    },
+    {
+      "id": "ami-0052",
+      "reference": "yeah",
+      "hypothesis": "Yeah.",
+      "polished": "Yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 105.85587500827388,
+      "total_ms": 105.85587500827388
+    },
+    {
+      "id": "ami-0053",
+      "reference": "yeah yeah yeah",
+      "hypothesis": "Yeah, yeah, yeah.",
+      "polished": "Yeah, yeah, yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 166.9780000229366,
+      "total_ms": 166.9780000229366
+    },
+    {
+      "id": "ami-0054",
+      "reference": "super",
+      "hypothesis": "Super.",
+      "polished": "Super.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 104.41812500357628,
+      "total_ms": 104.41812500357628
+    },
+    {
+      "id": "ami-0055",
+      "reference": "and sarah you coordinated the work very well",
+      "hypothesis": "And Sarah, you coordinated the work very well.",
+      "polished": "And Sarah, you coordinated the work very well.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 200.4570410354063,
+      "total_ms": 200.4570410354063
+    },
+    {
+      "id": "ami-0056",
+      "reference": "how do we wanna order them in the first place",
+      "hypothesis": "How do we want to order them in the first place?",
+      "polished": "How do we want to order them in the first place?",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.2,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 217.29708299972117,
+      "total_ms": 217.29708299972117
+    },
+    {
+      "id": "ami-0057",
+      "reference": "since we're not doing the audio thing",
+      "hypothesis": "Since we're not doing the audio thing.",
+      "polished": "Since we're not doing the audio thing.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 188.09612496988848,
+      "total_ms": 188.09612496988848
+    },
+    {
+      "id": "ami-0058",
+      "reference": "only",
+      "hypothesis": "Oh my god.",
+      "polished": "Oh my god.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 3.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 114.00112498085946,
+      "total_ms": 114.00112498085946
+    },
+    {
+      "id": "ami-0059",
+      "reference": "array of switches which i'll speak about in the next bit so that",
+      "hypothesis": "A array of switches, which I'll speak about in the next bit. So that...",
+      "polished": "A array of switches, which I'll speak about in the next bit. So that...",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.07692307692307693,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 297.35408298438415,
+      "total_ms": 297.35408298438415
+    },
+    {
+      "id": "ami-0060",
+      "reference": "you have the option of pop popping open a window which gives you a list of all the meetings containing that topic",
+      "hypothesis": "You have the option of popping open a window which gives you a list of all the meetings containing that topic.",
+      "polished": "You have the option of popping open a window which gives you a list of all the meetings containing that topic.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.045454545454545456,
+      "substitutions": 0,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 446.1994579760358,
+      "total_ms": 446.1994579760358
+    },
+    {
+      "id": "ami-0061",
+      "reference": "and that'll that would l would last for um well i do i d i'm not entirely sure how long it would last but i've never seen one run out",
+      "hypothesis": "And that would, would last for, uhm, well I don't, I'm not entirely sure how long it would last, but I've never seen one run out.",
+      "polished": "And that would, would last for, uhm, well I don't, I'm not entirely sure how long it would last, but I've never seen one run out.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.2,
+      "substitutions": 2,
+      "deletions": 4,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 581.2327499734238,
+      "total_ms": 581.2327499734238
+    },
+    {
+      "id": "ami-0062",
+      "reference": "yeah",
+      "hypothesis": "Yeah.",
+      "polished": "Yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 95.21933301584797,
+      "total_ms": 95.21933301584797
+    },
+    {
+      "id": "ami-0063",
+      "reference": "um",
+      "hypothesis": "Um.",
+      "polished": "Um.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 96,
+      "polish_failed": [
+        "no_fillers"
+      ],
+      "asr_ms": 124.36245899880304,
+      "total_ms": 124.36245899880304
+    },
+    {
+      "id": "ami-0064",
+      "reference": "yeah well",
+      "hypothesis": "Yeah, well.",
+      "polished": "Yeah, well.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 120.43899996206164,
+      "total_ms": 120.43899996206164
+    },
+    {
+      "id": "ami-0065",
+      "reference": "i'll just raise another point while it occurs to me it kind of applies to both our designers here so i'm not sure how it would fit in",
+      "hypothesis": "I just raised another point, well it occurs to me it kind of applies to both our designers here, because I'm not sure how it would fit in.",
+      "polished": "I just raised another point, well it occurs to me it kind of applies to both our designers here, because I'm not sure how it would fit in.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 4,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 459.2222920036874,
+      "total_ms": 459.2222920036874
+    },
+    {
+      "id": "ami-0066",
+      "reference": "it go welcome to the meeting browser",
+      "hypothesis": "Welcome to the meeting, brother.",
+      "polished": "Welcome to the meeting, brother.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.42857142857142855,
+      "substitutions": 1,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 243.95341600757092,
+      "total_ms": 243.95341600757092
+    },
+    {
+      "id": "ami-0067",
+      "reference": "which is less than ten p.",
+      "hypothesis": "Which is less than 10p.",
+      "polished": "Which is less than 10p.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.3333333333333333,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 153.84891699068248,
+      "total_ms": 153.84891699068248
+    },
+    {
+      "id": "ami-0068",
+      "reference": "it's it's better to go for printing because uh you can build these kind of k circuit boards on a on a bulk and it's just printing",
+      "hypothesis": "It's, it's better to go for printing because you can build these kind of circuit boards on a, on a bulk and it's just printing.",
+      "polished": "It's, it's better to go for printing because you can build these kind of circuit boards on a, on a bulk and it's just printing.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.07407407407407407,
+      "substitutions": 0,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 509.0261249570176,
+      "total_ms": 509.0261249570176
+    },
+    {
+      "id": "ami-0069",
+      "reference": "gonna use a different line width",
+      "hypothesis": "I'm gonna use a different line width.",
+      "polished": "I'm gonna use a different line width.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.16666666666666666,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 60,
+      "polish_failed": [
+        "no_hallucination"
+      ],
+      "asr_ms": 180.41816697223112,
+      "total_ms": 180.41816697223112
+    },
+    {
+      "id": "ami-0070",
+      "reference": "yes",
+      "hypothesis": "Yes?",
+      "polished": "Yes?",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 100.41329194791616,
+      "total_ms": 100.41329194791616
+    },
+    {
+      "id": "ami-0071",
+      "reference": "so um this button is for a d. v. d. or so um for every um device you've got a uh a f a b a part uh display of a part buttons",
+      "hypothesis": "So uhm, this button is for DVD or, so uhm, for every device you got a part display of a part buttons.",
+      "polished": "So uhm, this button is for DVD or, so uhm, for every device you got a part display of a part buttons.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.45454545454545453,
+      "substitutions": 4,
+      "deletions": 11,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 634.3628750182688,
+      "total_ms": 634.3628750182688
+    },
+    {
+      "id": "ami-0072",
+      "reference": "here is a simple tool bar",
+      "hypothesis": "Here is a simple toolbar.",
+      "polished": "Here is a simple toolbar.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.3333333333333333,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 9,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination",
+        "no_markdown_fences"
+      ],
+      "asr_ms": 169.75000000093132,
+      "total_ms": 169.75000000093132
+    },
+    {
+      "id": "ami-0073",
+      "reference": "um",
+      "hypothesis": "Uhm.",
+      "polished": "Uhm.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 114.17716596042736,
+      "total_ms": 114.17716596042736
+    },
+    {
+      "id": "ami-0074",
+      "reference": "no",
+      "hypothesis": "No.",
+      "polished": "No.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 94.585457991343,
+      "total_ms": 94.585457991343
+    },
+    {
+      "id": "ami-0075",
+      "reference": "i wanna do it superficially",
+      "hypothesis": "I don't want to do it superficially.",
+      "polished": "I don't want to do it superficially.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.6,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 175.23208301281556,
+      "total_ms": 175.23208301281556
+    },
+    {
+      "id": "ami-0076",
+      "reference": "you've got just look at the the what they wrote about it",
+      "hypothesis": "So you've got, just look at the, the, what they wrote about it.",
+      "polished": "So you've got, just look at the, the, what they wrote about it.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.08333333333333333,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 309.8221250111237,
+      "total_ms": 309.8221250111237
+    },
+    {
+      "id": "ami-0077",
+      "reference": "yeah yeah",
+      "hypothesis": "Yeah, yeah.",
+      "polished": "Yeah, yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 171.61287501221523,
+      "total_ms": 171.61287501221523
+    },
+    {
+      "id": "ami-0078",
+      "reference": "yep",
+      "hypothesis": "Yeah.",
+      "polished": "Yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 127.73654196644202,
+      "total_ms": 127.73654196644202
+    },
+    {
+      "id": "ami-0079",
+      "reference": "okay but we have to l",
+      "hypothesis": "Okay, we have to look.",
+      "polished": "Okay, we have to look.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.3333333333333333,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 151.29808301571757,
+      "total_ms": 151.29808301571757
+    },
+    {
+      "id": "ami-0080",
+      "reference": "and in my research this year i found out that fruit and vegetable shapes are really popular",
+      "hypothesis": "And in my research this year, I found out that fruit and vegetable shapes are really popular.",
+      "polished": "And in my research this year, I found out that fruit and vegetable shapes are really popular.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 322.3427089978941,
+      "total_ms": 322.3427089978941
+    },
+    {
+      "id": "ami-0081",
+      "reference": "the metal is like uh in a remote controller you have a chip integrated circuit which is like a brain of the remote controller",
+      "hypothesis": "The method is like, uh, in a remote controller you have a chip integrated circuit, which is like a brain of the remote controller.",
+      "polished": "The method is like, uh, in a remote controller you have a chip integrated circuit, which is like a brain of the remote controller.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.041666666666666664,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 6,
+      "polish_failed": [
+        "no_fillers",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 436.4088749862276,
+      "total_ms": 436.4088749862276
+    },
+    {
+      "id": "ami-0082",
+      "reference": "and they want um as few buttons as possible and they don't care for the mode thing",
+      "hypothesis": "And they want, uhm, as few buttons as possible, and they don't care for the mode thing.",
+      "polished": "And they want, uhm, as few buttons as possible, and they don't care for the mode thing.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.058823529411764705,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 385.9790830174461,
+      "total_ms": 385.9790830174461
+    },
+    {
+      "id": "ami-0083",
+      "reference": "i think we should make a remote for the future",
+      "hypothesis": "I think we should make a remote for the future.",
+      "polished": "I think we should make a remote for the future.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 244.0203749574721,
+      "total_ms": 244.0203749574721
+    },
+    {
+      "id": "ami-0084",
+      "reference": "i'll just leave it there",
+      "hypothesis": "I'll just leave it there.",
+      "polished": "I'll just leave it there.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 170.4671669867821,
+      "total_ms": 170.4671669867821
+    },
+    {
+      "id": "ami-0085",
+      "reference": "i don't think so",
+      "hypothesis": "I don't think so.",
+      "polished": "I don't think so.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 142.76091702049598,
+      "total_ms": 142.76091702049598
+    },
+    {
+      "id": "ami-0086",
+      "reference": "yeah that would help a lot for that s for single terms it would be very useful",
+      "hypothesis": "Yeah, that would help a lot for that, for single terms it would be very useful.",
+      "polished": "Yeah, that would help a lot for that, for single terms it would be very useful.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.058823529411764705,
+      "substitutions": 0,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 321.64462498622015,
+      "total_ms": 321.64462498622015
+    },
+    {
+      "id": "ami-0087",
+      "reference": "i mean you can uh you know the option is to do a search in the way that you d if you do a global search",
+      "hypothesis": "I mean you can, you know the option is to do a search in the way that, if you do a global search.",
+      "polished": "I mean you can, you know the option is to do a search in the way that, if you do a global search.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.11538461538461539,
+      "substitutions": 0,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 424.9019999988377,
+      "total_ms": 424.9019999988377
+    },
+    {
+      "id": "ami-0088",
+      "reference": "yeah",
+      "hypothesis": "Yeah.",
+      "polished": "Yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 125.33208396052942,
+      "total_ms": 125.33208396052942
+    },
+    {
+      "id": "ami-0089",
+      "reference": "puts people off reading them so they just do the obvious yes",
+      "hypothesis": "It's people of reading them, so they just do the obvious, yes.",
+      "polished": "It's people of reading them, so they just do the obvious, yes.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.16666666666666666,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 253.71774996165183,
+      "total_ms": 253.71774996165183
+    },
+    {
+      "id": "ami-0090",
+      "reference": "um well that could",
+      "hypothesis": "Uhm, well that could...",
+      "polished": "Uhm, well that could...",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 156.87204198911786,
+      "total_ms": 156.87204198911786
+    },
+    {
+      "id": "ami-0091",
+      "reference": "so it can rest",
+      "hypothesis": "Okay.",
+      "polished": "Okay.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 3,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 102.7777919662185,
+      "total_ms": 102.7777919662185
+    },
+    {
+      "id": "ami-0092",
+      "reference": "um i heard our industrial designer talk about uh flat single and double curved",
+      "hypothesis": "I heard our industrial designer talk about flat, single and double curved.",
+      "polished": "I heard our industrial designer talk about flat, single and double curved.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 0,
+      "deletions": 2,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 294.3793750018813,
+      "total_ms": 294.3793750018813
+    },
+    {
+      "id": "ami-0093",
+      "reference": "hmm",
+      "hypothesis": "mmm.",
+      "polished": "mmm.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 7,
+      "polish_failed": [
+        "sentence_cased",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 154.25024996511638,
+      "total_ms": 154.25024996511638
+    },
+    {
+      "id": "ami-0094",
+      "reference": "we could probably",
+      "hypothesis": "We could probably.",
+      "polished": "We could probably.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 115.70545798167586,
+      "total_ms": 115.70545798167586
+    },
+    {
+      "id": "ami-0095",
+      "reference": "and if you have less buttons you can do a lot more with",
+      "hypothesis": "If you have less buttons, you can do a lot more with...",
+      "polished": "If you have less buttons, you can do a lot more with...",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.07692307692307693,
+      "substitutions": 0,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 255.05254202289507,
+      "total_ms": 255.05254202289507
+    },
+    {
+      "id": "ami-0096",
+      "reference": "so it looks well it looks like it's gonna be fifty percent profit you've still got all of the overheads to come out of that",
+      "hypothesis": "So it looks, well it looks like it's going to be 50% profit. You've still got all of the overheads to come out of that.",
+      "polished": "So it looks, well it looks like it's going to be 50% profit. You've still got all of the overheads to come out of that.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.16,
+      "substitutions": 4,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 6,
+      "polish_failed": [
+        "no_fillers",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 475.4940830171108,
+      "total_ms": 475.4940830171108
+    },
+    {
+      "id": "ami-0097",
+      "reference": "uh",
+      "hypothesis": "Oh.",
+      "polished": "Oh.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 1.0,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 96.19504096917808,
+      "total_ms": 96.19504096917808
+    },
+    {
+      "id": "ami-0098",
+      "reference": "the material for older people",
+      "hypothesis": "The material for older people.",
+      "polished": "The material for older people.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 198.4885000274517,
+      "total_ms": 198.4885000274517
+    },
+    {
+      "id": "ami-0099",
+      "reference": "yeah b nice to have",
+      "hypothesis": "Yeah, nice to have.",
+      "polished": "Yeah, nice to have.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.2,
+      "substitutions": 0,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 50,
+      "polish_failed": [
+        "no_content_loss"
+      ],
+      "asr_ms": 158.94241601927206,
+      "total_ms": 158.94241601927206
+    },
+    {
+      "id": "ami-0100",
+      "reference": "yeah",
+      "hypothesis": "Yeah.",
+      "polished": "Yeah.",
+      "tags": [
+        "ami"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 120.7314160419628,
+      "total_ms": 120.7314160419628
+    }
+  ],
+  "wer_verbatim_micro": 0.11258278145695365,
+  "wer_verbatim_macro": 0.12363650183267655,
+  "wer_clean_micro": null,
+  "wer_clean_human_micro": null,
+  "vocab_recall": null,
+  "vocab_false_alarm": null,
+  "entity_accuracy": 0.8333333333333334,
+  "semantic_ok_rate": null,
+  "latency_release_to_paste": null,
+  "boost": null,
+  "case_errors": []
+}

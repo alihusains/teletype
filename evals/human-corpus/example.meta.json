@@ -1,0 +1,10 @@
+{
+  "speaker": "js",
+  "mic": "macbook",
+  "noise": "quiet",
+  "app_context": "email",
+  "vocab": [
+    "Acme Corp",
+    "ACME"
+  ]
+}

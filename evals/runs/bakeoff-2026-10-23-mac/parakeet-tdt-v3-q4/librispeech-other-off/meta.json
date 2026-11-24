@@ -1,0 +1,16 @@
+{
+  "boost": "off",
+  "corpus": null,
+  "engine": "parakeet-tdt-v3-q4",
+  "entity_ref_count": 3,
+  "git_sha": "cbc6b1d",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "librispeech-other"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1792751956",
+  "vocab_cases": 0
+}

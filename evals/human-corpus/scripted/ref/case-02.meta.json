@@ -1,0 +1,9 @@
+{
+  "speaker": "a1",
+  "mic": "macbook",
+  "noise": "quiet",
+  "app_context": "email",
+  "vocab": [
+    "siobhan dot lane at acme dot com"
+  ]
+}

@@ -1,0 +1,302 @@
+[
+  {
+    "id": "00",
+    "command": "open terminal",
+    "duration_s": 1.5,
+    "rate": "75"
+  },
+  {
+    "id": "01",
+    "command": "open Safari",
+    "duration_s": 1.54,
+    "rate": "75"
+  },
+  {
+    "id": "02",
+    "command": "open Notes",
+    "duration_s": 1.4,
+    "rate": "75"
+  },
+  {
+    "id": "03",
+    "command": "open Mail",
+    "duration_s": 1.26,
+    "rate": "75"
+  },
+  {
+    "id": "04",
+    "command": "open Finder",
+    "duration_s": 1.5,
+    "rate": "75"
+  },
+  {
+    "id": "05",
+    "command": "open code",
+    "duration_s": 1.32,
+    "rate": "75"
+  },
+  {
+    "id": "06",
+    "command": "search the web for rust async traits",
+    "duration_s": 2.34,
+    "rate": "180"
+  },
+  {
+    "id": "07",
+    "command": "search for the best pizza near me",
+    "duration_s": 2.13,
+    "rate": "180"
+  },
+  {
+    "id": "08",
+    "command": "look up the weather in Berlin",
+    "duration_s": 1.68,
+    "rate": "180"
+  },
+  {
+    "id": "09",
+    "command": "google the capital of France",
+    "duration_s": 1.9,
+    "rate": "180"
+  },
+  {
+    "id": "10",
+    "command": "make this shorter",
+    "duration_s": 1.51,
+    "rate": "75"
+  },
+  {
+    "id": "11",
+    "command": "make this longer",
+    "duration_s": 1.54,
+    "rate": "75"
+  },
+  {
+    "id": "12",
+    "command": "make this formal",
+    "duration_s": 1.54,
+    "rate": "75"
+  },
+  {
+    "id": "13",
+    "command": "make this casual",
+    "duration_s": 1.57,
+    "rate": "105"
+  },
+  {
+    "id": "14",
+    "command": "fix the grammar of this",
+    "duration_s": 1.61,
+    "rate": "180"
+  },
+  {
+    "id": "15",
+    "command": "translate this to German",
+    "duration_s": 1.68,
+    "rate": "180"
+  },
+  {
+    "id": "16",
+    "command": "summarize this",
+    "duration_s": 1.59,
+    "rate": "75"
+  },
+  {
+    "id": "17",
+    "command": "turn this into a bullet list",
+    "duration_s": 1.78,
+    "rate": "180"
+  },
+  {
+    "id": "18",
+    "command": "insert the thanks snippet",
+    "duration_s": 1.56,
+    "rate": "180"
+  },
+  {
+    "id": "19",
+    "command": "insert my signature",
+    "duration_s": 1.53,
+    "rate": "180"
+  },
+  {
+    "id": "20",
+    "command": "switch to heading style",
+    "duration_s": 1.7,
+    "rate": "180"
+  },
+  {
+    "id": "21",
+    "command": "switch to code style",
+    "duration_s": 1.66,
+    "rate": "180"
+  },
+  {
+    "id": "22",
+    "command": "email Sara saying I will be late",
+    "duration_s": 2.18,
+    "rate": "180"
+  },
+  {
+    "id": "23",
+    "command": "email Bob that the report is done",
+    "duration_s": 2.16,
+    "rate": "180"
+  },
+  {
+    "id": "24",
+    "command": "undo the last dictation",
+    "duration_s": 1.71,
+    "rate": "180"
+  },
+  {
+    "id": "25",
+    "command": "delete the last sentence",
+    "duration_s": 1.66,
+    "rate": "180"
+  },
+  {
+    "id": "26",
+    "command": "new paragraph",
+    "duration_s": 1.56,
+    "rate": "75"
+  },
+  {
+    "id": "27",
+    "command": "new line",
+    "duration_s": 1.15,
+    "rate": "75"
+  },
+  {
+    "id": "28",
+    "command": "select all",
+    "duration_s": 1.41,
+    "rate": "75"
+  },
+  {
+    "id": "29",
+    "command": "pause the music",
+    "duration_s": 1.48,
+    "rate": "75"
+  },
+  {
+    "id": "30",
+    "command": "play the music",
+    "duration_s": 1.43,
+    "rate": "75"
+  },
+  {
+    "id": "31",
+    "command": "next track",
+    "duration_s": 1.37,
+    "rate": "75"
+  },
+  {
+    "id": "32",
+    "command": "previous track",
+    "duration_s": 1.58,
+    "rate": "75"
+  },
+  {
+    "id": "33",
+    "command": "turn the volume up",
+    "duration_s": 1.52,
+    "rate": "105"
+  },
+  {
+    "id": "34",
+    "command": "turn the volume down",
+    "duration_s": 1.57,
+    "rate": "150"
+  },
+  {
+    "id": "35",
+    "command": "mute",
+    "duration_s": 0.93,
+    "rate": "75"
+  },
+  {
+    "id": "36",
+    "command": "paste the last thing",
+    "duration_s": 1.5,
+    "rate": "150"
+  },
+  {
+    "id": "37",
+    "command": "do nothing",
+    "duration_s": 1.17,
+    "rate": "75"
+  },
+  {
+    "id": "38",
+    "command": "open the calendar",
+    "duration_s": 1.56,
+    "rate": "105"
+  },
+  {
+    "id": "39",
+    "command": "open the camera",
+    "duration_s": 1.5,
+    "rate": "75"
+  },
+  {
+    "id": "40",
+    "command": "open the calculator",
+    "duration_s": 1.56,
+    "rate": "180"
+  },
+  {
+    "id": "41",
+    "command": "search the web for python generators",
+    "duration_s": 2.47,
+    "rate": "180"
+  },
+  {
+    "id": "42",
+    "command": "search for how to bake sourdough",
+    "duration_s": 2.05,
+    "rate": "180"
+  },
+  {
+    "id": "43",
+    "command": "make it uppercase",
+    "duration_s": 1.51,
+    "rate": "150"
+  },
+  {
+    "id": "44",
+    "command": "make it lowercase",
+    "duration_s": 1.58,
+    "rate": "150"
+  },
+  {
+    "id": "45",
+    "command": "email Sam that we moved the meeting to Tuesday",
+    "duration_s": 2.76,
+    "rate": "180"
+  },
+  {
+    "id": "46",
+    "command": "new paragraph please",
+    "duration_s": 1.61,
+    "rate": "180"
+  },
+  {
+    "id": "47",
+    "command": "select all the text",
+    "duration_s": 1.63,
+    "rate": "180"
+  },
+  {
+    "id": "48",
+    "command": "open the terminal again",
+    "duration_s": 1.63,
+    "rate": "180"
+  },
+  {
+    "id": "49",
+    "command": "open notes for me",
+    "duration_s": 1.6,
+    "rate": "105"
+  }
+]

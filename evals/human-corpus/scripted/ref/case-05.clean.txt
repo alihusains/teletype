@@ -1,0 +1,1 @@
+Siobhan is blocked on the SCA mailbox again. Ask Carol to approve the TWG run in Jira, then re-run the registry comparator in the SwiftCon sandbox, not production. Dele should get the Confluence SAR page before the security review, and if Rovo search is stale, hit the refresh endpoint by hand.

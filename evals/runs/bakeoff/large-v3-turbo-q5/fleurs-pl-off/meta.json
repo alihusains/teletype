@@ -1,0 +1,16 @@
+{
+  "boost": "off",
+  "corpus": null,
+  "engine": "large-v3-turbo-q5",
+  "entity_ref_count": 11,
+  "git_sha": "fd63811",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "fleurs-pl"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1793203550",
+  "vocab_cases": 0
+}

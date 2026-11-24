@@ -1,0 +1,14 @@
+{
+  "model": "lfm3",
+  "model_dir": ".tmp/asrbench/models/lfm3-audio-2b",
+  "sets": [
+    "fleurs-en"
+  ],
+  "cases": 50,
+  "errors": [],
+  "audio_seconds": 481.14,
+  "model_seconds": 21.99,
+  "rtf": 0.0457,
+  "wall_seconds": 22.08,
+  "threads": 4
+}

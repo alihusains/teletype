@@ -1,0 +1,16 @@
+{
+  "boost": "off",
+  "corpus": null,
+  "engine": "sherpa-parakeet-v3-int8",
+  "entity_ref_count": 6,
+  "git_sha": "1b15b10",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "ami"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1792269517",
+  "vocab_cases": 0
+}

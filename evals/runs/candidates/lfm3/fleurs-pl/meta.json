@@ -1,0 +1,16 @@
+{
+  "boost": "off",
+  "corpus": null,
+  "engine": "none",
+  "entity_ref_count": 11,
+  "git_sha": "fd63811",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "fleurs-pl"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1793203470",
+  "vocab_cases": 0
+}

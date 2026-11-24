@@ -1,0 +1,1489 @@
+{
+  "git_sha": "fd63811",
+  "timestamp": "1793203470",
+  "model": "lfm3",
+  "mode": "replay",
+  "has_synthesised_audio": true,
+  "human_case_count": 0,
+  "synthesised_case_count": 50,
+  "wer": {
+    "cases": 50,
+    "total_reference_words": 961,
+    "total_errors": 106,
+    "micro_wer": 0.11030176899063475,
+    "macro_wer": 0.12956643074036184,
+    "worst": [
+      {
+        "id": "fleurs-pl-0044",
+        "reference": "lakkha singh przedstawił też chhappan bhog bhadżan akompaniował mu wokalista raju khandelwal",
+        "hypothesis": "Lak Kasingh, przedstawił też Chapan Bokbajan, akompaniewał mu wokalistę Raju Kandelwal.",
+        "wer": 0.6666666666666666,
+        "substitutions": 7,
+        "deletions": 1,
+        "insertions": 0
+      },
+      {
+        "id": "fleurs-pl-0031",
+        "reference": "także zapaśnicy złożyli hołd lunie",
+        "hypothesis": "Także za paśnice złożyli hold lunie.",
+        "wer": 0.6,
+        "substitutions": 2,
+        "deletions": 0,
+        "insertions": 1
+      },
+      {
+        "id": "fleurs-pl-0021",
+        "reference": "paryżan uważa się za egocentrycznych grubiańskich i zadufanych",
+        "hypothesis": "Paryżan uważa się za egocentrycznych, grubińskich, renufowanych.",
+        "wer": 0.375,
+        "substitutions": 2,
+        "deletions": 1,
+        "insertions": 0
+      },
+      {
+        "id": "fleurs-pl-0039",
+        "reference": "sundarbany wpisano na listę światowego dziedzictwa unesco część lasu położona na terytorium indii jest nazywana parkiem narodowym sundarban",
+        "hypothesis": "Sundarbany wpisana na listę światowego dziedzictwa UNESCO. Ręśla supołoczna na terytorium Indii jest nazwana Parkiem Narodowym Sundarbany.",
+        "wer": 0.3333333333333333,
+        "substitutions": 5,
+        "deletions": 1,
+        "insertions": 0
+      },
+      {
+        "id": "fleurs-pl-0024",
+        "reference": "kongres rozpoczął finansowanie inicjatywy dotyczącej obsceniczności w roku fiskalnym 2005 określając że fbi ma przeznaczyć 10 agentów ds pornografii z udziałem dorosłych",
+        "hypothesis": "Konkretny plan sposobu finansowania inicjatywy dotyczącej obstoletności w roku fiskalnym 2005, określając, że FBI ma przeznaczyć 10 agentów do spraw pornografii z udziałem dorosłych.",
+        "wer": 0.3181818181818182,
+        "substitutions": 5,
+        "deletions": 0,
+        "insertions": 2
+      }
+    ]
+  },
+  "wer_by_tag": [
+    [
+      "fleurs-pl",
+      {
+        "cases": 50,
+        "reference_words": 961,
+        "errors": 106,
+        "wer": 0.11030176899063475
+      }
+    ]
+  ],
+  "polish": [
+    {
+      "id": "fleurs-pl-0001",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0002",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0003",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0004",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0005",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0006",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0007",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0008",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0009",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0010",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0011",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0012",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0013",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0014",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0015",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0016",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0017",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0018",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0019",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0020",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0021",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0022",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0023",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0024",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0025",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0026",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0027",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0028",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0029",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0030",
+      "score": 8,
+      "failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0031",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0032",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0033",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination",
+        "bullets_when_listing"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0034",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0035",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0036",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0037",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0038",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0039",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0040",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0041",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0042",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0043",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0044",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0045",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0046",
+      "score": 60,
+      "failed": [
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0047",
+      "score": 100,
+      "failed": []
+    },
+    {
+      "id": "fleurs-pl-0048",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0049",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    },
+    {
+      "id": "fleurs-pl-0050",
+      "score": 10,
+      "failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ]
+    }
+  ],
+  "polish_mean_score": 32.56,
+  "latency_asr": {
+    "count": 50,
+    "min": 254.77016699733213,
+    "max": 1161.668082990218,
+    "mean": 602.0159400231205,
+    "p50": 577.3931249859743,
+    "p95": 1046.254500048235,
+    "p99": 1161.668082990218
+  },
+  "latency_total": {
+    "count": 50,
+    "min": 254.77016699733213,
+    "max": 1161.668082990218,
+    "mean": 602.0159400231205,
+    "p50": 577.3931249859743,
+    "p95": 1046.254500048235,
+    "p99": 1161.668082990218
+  },
+  "model_load_ms": null,
+  "cases": [
+    {
+      "id": "fleurs-pl-0001",
+      "reference": "populacja watykanu liczy ok 800 osób jest to najmniejsze niepodległe państwo na świecie a także kraj o najmniejszej liczbie ludności",
+      "hypothesis": "Populacja Watykanu liczy około 800 osób, jest to najmniejsze niepodległe państwo na świecie, a także kraj o najmniejszej liczbie ludności.",
+      "polished": "Populacja Watykanu liczy około 800 osób, jest to najmniejsze niepodległe państwo na świecie, a także kraj o najmniejszej liczbie ludności.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.05,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 490.3285000473261,
+      "total_ms": 490.3285000473261
+    },
+    {
+      "id": "fleurs-pl-0002",
+      "reference": "nextgen jest systemem który wg faa umożliwiłby samolotom loty na krótszych trasach miliony galonów paliwa oszczędności i zredukowanie emisji dwutlenku węgla",
+      "hypothesis": "Najsłabszy systemem, który według FAA umożliwiłby samolotom kloty na krótszych trasach, miliony galonów paliwa oszczędności i zredukowane emisje dwutlenku węgla.",
+      "polished": "Najsłabszy systemem, który według FAA umożliwiłby samolotom kloty na krótszych trasach, miliony galonów paliwa oszczędności i zredukowane emisje dwutlenku węgla.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.2857142857142857,
+      "substitutions": 5,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 704.400708025787,
+      "total_ms": 704.400708025787
+    },
+    {
+      "id": "fleurs-pl-0003",
+      "reference": "naukowcy liczą że poznają proces powstawania planet a szczególnie jak ten proces wyglądał w przypadku ziemi ponieważ dawno temu komety się z nią zderzyły",
+      "hypothesis": "Naukowcy liczą, że poznają proces powstawania planet, a szczególnie jak ten proces wyglądał w przypadku Ziemi, ponieważ dawno temu komety się z nią zderzyły.",
+      "polished": "Naukowcy liczą, że poznają proces powstawania planet, a szczególnie jak ten proces wyglądał w przypadku Ziemi, ponieważ dawno temu komety się z nią zderzyły.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 594.1639170050621,
+      "total_ms": 594.1639170050621
+    },
+    {
+      "id": "fleurs-pl-0004",
+      "reference": "masowe posiadanie samochodów prowadzi także do zwiększenia liczby wypadków drogowych a co za tym idzie do wynalezienia w medycynie nowych sposobów naprawiania uszkodzonych ciał",
+      "hypothesis": "Masowe posiadanie samochodów prowadzi także do zwiększenia liczby wypadków drogowych, a co za tym idzie do wynalezienia w medycynie nowych sposobów naprawiania uszkodzonych ciał.",
+      "polished": "Masowe posiadanie samochodów prowadzi także do zwiększenia liczby wypadków drogowych, a co za tym idzie do wynalezienia w medycynie nowych sposobów naprawiania uszkodzonych ciał.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 697.6534999557771,
+      "total_ms": 697.6534999557771
+    },
+    {
+      "id": "fleurs-pl-0005",
+      "reference": "wkrótce po wybuchu działań wojennych wielka brytania wprowadziła blokadę morską niemiec",
+      "hypothesis": "Wkrótce po wybuchu działań wojennych Wielka Brytania wprowadziła blokadę morską Niemiec.",
+      "polished": "Wkrótce po wybuchu działań wojennych Wielka Brytania wprowadziła blokadę morską Niemiec.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 436.7490000440739,
+      "total_ms": 436.7490000440739
+    },
+    {
+      "id": "fleurs-pl-0006",
+      "reference": "można dostrzec pewne podobieństwa do narciarstwa alpejskiego i wspinaczki jednak w odróżnieniu od nich trasa nie przebiega przez stromy teren i nie są potrzebne solidniejsze narty i buty",
+      "hypothesis": "Można dostrzec pewne podobieństwa do narciarstwa alpejskiego i w spinaczki, jednak w odróżnieniu od nich trasa nie przebiega przez stromy teren i nie są potrzebne solidniejsze narty i buty.",
+      "polished": "Można dostrzec pewne podobieństwa do narciarstwa alpejskiego i w spinaczki, jednak w odróżnieniu od nich trasa nie przebiega przez stromy teren i nie są potrzebne solidniejsze narty i buty.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.07142857142857142,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 857.2105409693904,
+      "total_ms": 857.2105409693904
+    },
+    {
+      "id": "fleurs-pl-0007",
+      "reference": "to miasto zdecydowanie różni się od reszty miast w kraju ponieważ ma bardziej arabski niż afrykański klimat",
+      "hypothesis": "To miasto zdecydowanie różni się od reszty miast w kraju, ponieważ ma bardziej arabski niż afrykański klimat.",
+      "polished": "To miasto zdecydowanie różni się od reszty miast w kraju, ponieważ ma bardziej arabski niż afrykański klimat.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 459.6634170156904,
+      "total_ms": 459.6634170156904
+    },
+    {
+      "id": "fleurs-pl-0008",
+      "reference": "curry jest daniem którego bazę stanowią zioła i przyprawy podawane z mięsem albo warzywami",
+      "hypothesis": "Kery jest danin, którego bazą stanowią zioła i przyprawy podawane z mięsem albo warzywami.",
+      "polished": "Kery jest danin, którego bazą stanowią zioła i przyprawy podawane z mięsem albo warzywami.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.21428571428571427,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 552.3929999908432,
+      "total_ms": 552.3929999908432
+    },
+    {
+      "id": "fleurs-pl-0009",
+      "reference": "ludzie często nie przewidują że podróżni wracający do domu muszą wykazać się również cierpliwością i zrozumieniem",
+      "hypothesis": "Ludzie często nie przewidują, że podróżni wracający do domu muszą wykazać się również cierpliwością i zrozumieniem.",
+      "polished": "Ludzie często nie przewidują, że podróżni wracający do domu muszą wykazać się również cierpliwością i zrozumieniem.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 523.9981659688056,
+      "total_ms": 523.9981659688056
+    },
+    {
+      "id": "fleurs-pl-0010",
+      "reference": "wyłącznie mutacje w komórkach linii zarodkowej mogą być przekazywane dzieciom mutacje w innych miejscach mogą doprowadzić do śmierci komórki albo raka",
+      "hypothesis": "Wyrządźmy mutacje w komórkach linii zarodkowej i mogą być przekazywane dzieciom. Mutacje w innych miejscach mogą doprowadzić do śmierci komórki albo raka.",
+      "polished": "Wyrządźmy mutacje w komórkach linii zarodkowej i mogą być przekazywane dzieciom. Mutacje w innych miejscach mogą doprowadzić do śmierci komórki albo raka.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.09523809523809523,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 585.9656250104308,
+      "total_ms": 585.9656250104308
+    },
+    {
+      "id": "fleurs-pl-0011",
+      "reference": "jeśli nie masz w zwyczaju jeździć po wiejskich drogach miej oczy dookoła głowy bo często napotkasz strome podjazdy wąskie odcinki i ostre zakręty",
+      "hypothesis": "Jeśli nie masz zwyczaju jeździć po wiejskich drogach, miej oczy dookoła głowy, bo często nadpotkasz w strome podjazdy, wąskie odcinki i ostre zakręty.",
+      "polished": "Jeśli nie masz zwyczaju jeździć po wiejskich drogach, miej oczy dookoła głowy, bo często nadpotkasz w strome podjazdy, wąskie odcinki i ostre zakręty.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.13043478260869565,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 698.1681250035763,
+      "total_ms": 698.1681250035763
+    },
+    {
+      "id": "fleurs-pl-0012",
+      "reference": "australijczyk mitchell gourley zajął jedenaste miejsce w supergigancie mężczyzn w kategorii stojącej czeski zawodnik oldrich jelinek był szesnasty w supergigancie mężczyzn w kategorii siedzącej",
+      "hypothesis": "Austrilic Mitchell Curley zajął 11 miejsce w supergigancie męczyzn w kategorii stojącej. Czeski zawodnik Odrich Jelinek był 16 w supergigancie męczyzn w kategorii siedzącej.",
+      "polished": "Austrilic Mitchell Curley zajął 11 miejsce w supergigancie męczyzn w kategorii stojącej. Czeski zawodnik Odrich Jelinek był 16 w supergigancie męczyzn w kategorii siedzącej.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.2916666666666667,
+      "substitutions": 7,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 806.6703749937005,
+      "total_ms": 806.6703749937005
+    },
+    {
+      "id": "fleurs-pl-0013",
+      "reference": "dziś do jedynych owadów nieposiadających zdolności składania skrzydeł należą ważki i jętki",
+      "hypothesis": "Dziś do jedynych owadów nieposiadających zdolności składania skrzydeł należą waszki i jętki.",
+      "polished": "Dziś do jedynych owadów nieposiadających zdolności składania skrzydeł należą waszki i jętki.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.08333333333333333,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 443.8661250169389,
+      "total_ms": 443.8661250169389
+    },
+    {
+      "id": "fleurs-pl-0014",
+      "reference": "w zależności od obszaru wodę wystarczy gotować przez minutę albo potrzebne jest kilka minut",
+      "hypothesis": "W zależności od obszaru wodę wystarczy gotować przez minutę albo potrzebne jest kilka minut.",
+      "polished": "W zależności od obszaru wodę wystarczy gotować przez minutę albo potrzebne jest kilka minut.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 381.040291977115,
+      "total_ms": 381.040291977115
+    },
+    {
+      "id": "fleurs-pl-0015",
+      "reference": "w przeważającej mierze praca była natury teoretycznej ale program został napisany na potrzeby symulowania obserwacji galaktyki w gwiazdozbiorze strzelca",
+      "hypothesis": "W przeważającej mierze praca była natury teoretycznej, ale program został napisany na potrzeby symulowania obserwacji galaktyki w gwiazdozbiorze strzelca.",
+      "polished": "W przeważającej mierze praca była natury teoretycznej, ale program został napisany na potrzeby symulowania obserwacji galaktyki w gwiazdozbiorze strzelca.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 643.7896669958718,
+      "total_ms": 643.7896669958718
+    },
+    {
+      "id": "fleurs-pl-0016",
+      "reference": "53-letni cuomo objął na początku tego roku stanowisko gubernatora a w poprzednim miesiącu ratyfikował ustawę legalizującą małżeństwa osób tej samej płci",
+      "hypothesis": "Pięćdziesięciotrzyletnik Łoma objął na początku tego roku stanowisko gubernatora, a w poprzednim miesiącu ratyfikował ustawę legalizującą małżeństwo osób tej samej płci.",
+      "polished": "Pięćdziesięciotrzyletnik Łoma objął na początku tego roku stanowisko gubernatora, a w poprzednim miesiącu ratyfikował ustawę legalizującą małżeństwo osób tej samej płci.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 644.6768339956179,
+      "total_ms": 644.6768339956179
+    },
+    {
+      "id": "fleurs-pl-0017",
+      "reference": "wielka piramida zbudowana w iii w p.n.e. jest jedną z wielu dużych piramid wzniesionych ku czci zmarłego faraona",
+      "hypothesis": "Wielka piramida zbudowana w III wieku przed naszą erą jest jedną z wielu dużych piramid wzniesionych ku czci zmarłego faraona.",
+      "polished": "Wielka piramida zbudowana w III wieku przed naszą erą jest jedną z wielu dużych piramid wzniesionych ku czci zmarłego faraona.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.2222222222222222,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 540.0792500004172,
+      "total_ms": 540.0792500004172
+    },
+    {
+      "id": "fleurs-pl-0018",
+      "reference": "prądy strugowe tworzone są przez fale załamujące się na plaży rafie lub podobnej barierze",
+      "hypothesis": "Prawdy strugowe tworzone są przez fale załamujące się na plaży, rawie lub podobnej barierze.",
+      "polished": "Prawdy strugowe tworzone są przez fale załamujące się na plaży, rawie lub podobnej barierze.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 446.6152919922024,
+      "total_ms": 446.6152919922024
+    },
+    {
+      "id": "fleurs-pl-0019",
+      "reference": "zadaniem marynarki wojennej od zawsze było zapewnienie krajowi możliwości transportowania ludzi i towarów jednocześnie uniemożliwiając wrogowi przemieszczanie jego ludzi i towarów",
+      "hypothesis": "Zadaniem marynarki wojennej od zawsze było zapewnienie krajowi możliwości transportowania ludzi i towarów, jednocześnie uniemożliwiając rzogowi przemieszczanie jego ludzi i towarów.",
+      "polished": "Zadaniem marynarki wojennej od zawsze było zapewnienie krajowi możliwości transportowania ludzi i towarów, jednocześnie uniemożliwiając rzogowi przemieszczanie jego ludzi i towarów.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.047619047619047616,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 650.2522499649785,
+      "total_ms": 650.2522499649785
+    },
+    {
+      "id": "fleurs-pl-0020",
+      "reference": "zakup dzikiej karty może być korzystny gdyż umożliwia wstęp do wybranych parków w afryce południowej albo do wszystkich parków narodowych rpa",
+      "hypothesis": "Zakup dzięki karty może być korzystny, gdyż umożliwia dostęp do wybranych parków w Afryce Południowej albo do wszystkich parków narodowych RPA.",
+      "polished": "Zakup dzięki karty może być korzystny, gdyż umożliwia dostęp do wybranych parków w Afryce Południowej albo do wszystkich parków narodowych RPA.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.09523809523809523,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 577.3931249859743,
+      "total_ms": 577.3931249859743
+    },
+    {
+      "id": "fleurs-pl-0021",
+      "reference": "paryżan uważa się za egocentrycznych grubiańskich i zadufanych",
+      "hypothesis": "Paryżan uważa się za egocentrycznych, grubińskich, renufowanych.",
+      "polished": "Paryżan uważa się za egocentrycznych, grubińskich, renufowanych.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.375,
+      "substitutions": 2,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 324.66287503484637,
+      "total_ms": 324.66287503484637
+    },
+    {
+      "id": "fleurs-pl-0022",
+      "reference": "arnold schwarzenegger gubernator stanu kalifornia wprowadził ustawę zakazującą sprzedaży i wypożyczania brutalnych gier wideo osobom niepełnoletnim",
+      "hypothesis": "Arnold Schwarzenegger, gubernator stanu Kalifornia, wprowadził ustawę zakazującą sprzedaży i wypożyczenia brutalnej gierwito osobom niepełnoletnim.",
+      "polished": "Arnold Schwarzenegger, gubernator stanu Kalifornia, wprowadził ustawę zakazującą sprzedaży i wypożyczenia brutalnej gierwito osobom niepełnoletnim.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.25,
+      "substitutions": 3,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 612.7927079796791,
+      "total_ms": 612.7927079796791
+    },
+    {
+      "id": "fleurs-pl-0023",
+      "reference": "od roku 1988 urny wyborcze muszą być przezroczyste aby wyborcy i obserwatorzy nie mieli wątpliwości że w momencie otwarcia lokalu wyborczego w urnie nie ma żadnych kopert i że nie są do niej wrzucane żadne koperty z wyjątkiem kopert należycie policzonych i upoważnionych wyborców",
+      "hypothesis": "Od roku 1988 urny wyborcze muszą być przezroczyste, aby wyborcy i obserwatorzy nie mieli wątpliwości, że w momencie otwarcia lekalu wyborczego w urnie nie ma żadnych kopert i że nie są do niej wrzucane żadne koperty z wyjątkiem kopert należycie policzonych i upoważnionych wyborców.",
+      "polished": "Od roku 1988 urny wyborcze muszą być przezroczyste, aby wyborcy i obserwatorzy nie mieli wątpliwości, że w momencie otwarcia lekalu wyborczego w urnie nie ma żadnych kopert i że nie są do niej wrzucane żadne koperty z wyjątkiem kopert należycie policzonych i upoważnionych wyborców.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.022727272727272728,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 1161.668082990218,
+      "total_ms": 1161.668082990218
+    },
+    {
+      "id": "fleurs-pl-0024",
+      "reference": "kongres rozpoczął finansowanie inicjatywy dotyczącej obsceniczności w roku fiskalnym 2005 określając że fbi ma przeznaczyć 10 agentów ds pornografii z udziałem dorosłych",
+      "hypothesis": "Konkretny plan sposobu finansowania inicjatywy dotyczącej obstoletności w roku fiskalnym 2005, określając, że FBI ma przeznaczyć 10 agentów do spraw pornografii z udziałem dorosłych.",
+      "polished": "Konkretny plan sposobu finansowania inicjatywy dotyczącej obstoletności w roku fiskalnym 2005, określając, że FBI ma przeznaczyć 10 agentów do spraw pornografii z udziałem dorosłych.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.3181818181818182,
+      "substitutions": 5,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 709.3255830113776,
+      "total_ms": 709.3255830113776
+    },
+    {
+      "id": "fleurs-pl-0025",
+      "reference": "mozazaur był wówczas największym drapieżnikiem więc obawiał się jedynie innych mozazaurów",
+      "hypothesis": "Mozazaur był wówczas największym trabestnikiem, więc obawiał się jedynie innych mozazaurów.",
+      "polished": "Mozazaur był wówczas największym trabestnikiem, więc obawiał się jedynie innych mozazaurów.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.09090909090909091,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 444.78466699365526,
+      "total_ms": 444.78466699365526
+    },
+    {
+      "id": "fleurs-pl-0026",
+      "reference": "rozumie się samo przez się że znając jakikolwiek język romański łatwiej nauczysz się portugalskiego",
+      "hypothesis": "Rozumie się samo przez się, że znając jakikolwiek język romański łatwiej nauczy się portugalskiego.",
+      "polished": "Rozumie się samo przez się, że znając jakikolwiek język romański łatwiej nauczy się portugalskiego.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.07142857142857142,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 440.4877500492148,
+      "total_ms": 440.4877500492148
+    },
+    {
+      "id": "fleurs-pl-0027",
+      "reference": "53-letni cuomo objął na początku tego roku stanowisko gubernatora a w poprzednim miesiącu ratyfikował ustawę legalizującą małżeństwa osób tej samej płci",
+      "hypothesis": "Pięćdziesięciochronny Kłomo objął na początku tego roku stanowisko gubernatora, a w poprzednim miesiącu ratyfikował ustawę legalizującą małżeństwo osób tej samej płci.",
+      "polished": "Pięćdziesięciochronny Kłomo objął na początku tego roku stanowisko gubernatora, a w poprzednim miesiącu ratyfikował ustawę legalizującą małżeństwo osób tej samej płci.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 638.5913330013864,
+      "total_ms": 638.5913330013864
+    },
+    {
+      "id": "fleurs-pl-0028",
+      "reference": "przebywając w tropikach zaledwie kilka stopni na północ od równika musisz radzić sobie zarówno z upałem zawsze i silnym słońcem gdy niebo jest bezchmurne – rzadziej",
+      "hypothesis": "Przybywając w tropikach, ale tylko kilka stopni na północ od równika, musisz radzić sobie zarówno z upałem, zawsze, i silnym słońcem, gdy niebo jest zbyt chmurnie, rzadziej.",
+      "polished": "Przybywając w tropikach, ale tylko kilka stopni na północ od równika, musisz radzić sobie zarówno z upałem, zawsze, i silnym słońcem, gdy niebo jest zbyt chmurnie, rzadziej.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.2,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 2,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 899.0922920056619,
+      "total_ms": 899.0922920056619
+    },
+    {
+      "id": "fleurs-pl-0029",
+      "reference": "wystarczyły dwa tygodnie aby siły usa i wolnej francji wyzwoliły południową francję i skierowały się w stronę niemiec",
+      "hypothesis": "Wystarczyły dwa tygodnie, aby siły USA i Wolnej Francji wyzwoliły Południową Francję i skierowały się w stronę Niemiec.",
+      "polished": "Wystarczyły dwa tygodnie, aby siły USA i Wolnej Francji wyzwoliły Południową Francję i skierowały się w stronę Niemiec.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 545.48741603503,
+      "total_ms": 545.48741603503
+    },
+    {
+      "id": "fleurs-pl-0030",
+      "reference": "dzięki właściwemu korzystaniu z blogów uczniowie mogą stać się bardziej analityczni i krytyczni; poprzez aktywne odpowiadanie na wpisy internetowe mogą określać swoje stanowisko w odniesieniu do twórczości innych osób oraz nakreślić własną perspektywę na określone zagadnienia” oravec 2002",
+      "hypothesis": "Dzięki właściwemu korzystaniu z blogów uczniowie mogą stać się bardziej analityczni i krytyczni. Poprzez aktywne odpowiadanie na wpisy internetowe mogą określać swoje stanowisko w odniesieniu do twórczości innych osób oraz nakreślić własną perspektywę na określone zagadnienia. Oradec 2002",
+      "polished": "Dzięki właściwemu korzystaniu z blogów uczniowie mogą stać się bardziej analityczni i krytyczni. Poprzez aktywne odpowiadanie na wpisy internetowe mogą określać swoje stanowisko w odniesieniu do twórczości innych osób oraz nakreślić własną perspektywę na określone zagadnienia. Oradec 2002",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.02631578947368421,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 8,
+      "polish_failed": [
+        "terminal_punctuation",
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 1146.3156669633463,
+      "total_ms": 1146.3156669633463
+    },
+    {
+      "id": "fleurs-pl-0031",
+      "reference": "także zapaśnicy złożyli hołd lunie",
+      "hypothesis": "Także za paśnice złożyli hold lunie.",
+      "polished": "Także za paśnice złożyli hold lunie.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.6,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 254.77016699733213,
+      "total_ms": 254.77016699733213
+    },
+    {
+      "id": "fleurs-pl-0032",
+      "reference": "po wypadku gibson został zabrany do szpitala ale zaraz potem zmarł",
+      "hypothesis": "Porto Patko Gibson został zabrany do szpitala, ale zaraz potem zmarł.",
+      "polished": "Porto Patko Gibson został zabrany do szpitala, ale zaraz potem zmarł.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.18181818181818182,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 369.5884590269998,
+      "total_ms": 369.5884590269998
+    },
+    {
+      "id": "fleurs-pl-0033",
+      "reference": "del potro zyskał przewagę na początku drugiego seta ale w związku z wynikiem 6:6 konieczny był tie-break",
+      "hypothesis": "Del Potro zyskał przy wagę na początku drugiego seta, ale w związku z wynikiem 6-6 konieczny był tiebreak.",
+      "polished": "Del Potro zyskał przy wagę na początku drugiego seta, ale w związku z wynikiem 6-6 konieczny był tiebreak.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.11764705882352941,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 1,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination",
+        "bullets_when_listing"
+      ],
+      "asr_ms": 510.64670796040446,
+      "total_ms": 510.64670796040446
+    },
+    {
+      "id": "fleurs-pl-0034",
+      "reference": "nazwa robak jest formalnie stosowana przez entomologów dla tej grupy owadów",
+      "hypothesis": "Nazwa Robakis formalnie stosowana przez entomologów dla tej grupy owadów.",
+      "polished": "Nazwa Robakis formalnie stosowana przez entomologów dla tej grupy owadów.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.18181818181818182,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 360.2038340177387,
+      "total_ms": 360.2038340177387
+    },
+    {
+      "id": "fleurs-pl-0035",
+      "reference": "martelly przysięgał w dniu wczorajszym w nowej tymczasowej radzie wyborczej cep w skład której wchodzi dziewięcioro członków",
+      "hypothesis": "Marteli przysięgł w dniu wczorajszym w nowej tymczasowej Radzie Wyborczej, CEP, w skład której wchodzili dziewięcioro członków.",
+      "polished": "Marteli przysięgł w dniu wczorajszym w nowej tymczasowej Radzie Wyborczej, CEP, w skład której wchodzili dziewięcioro członków.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.17647058823529413,
+      "substitutions": 3,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 581.1869999743067,
+      "total_ms": 581.1869999743067
+    },
+    {
+      "id": "fleurs-pl-0036",
+      "reference": "wilgoć na twoich dłoniach wejdzie w reakcję z zewnętrznymi warstwami co spowoduje dziwne odczucie i utworzy pewien rodzaj skorupy",
+      "hypothesis": "Wilgoż na twoich dłoniach wejdzie w reakcję z zewnętrznymi warstwami, co spowoduje dziwne odczucia i utworzy pewien rodzaj skorupy.",
+      "polished": "Wilgoż na twoich dłoniach wejdzie w reakcję z zewnętrznymi warstwami, co spowoduje dziwne odczucia i utworzy pewien rodzaj skorupy.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.10526315789473684,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 632.0991670363583,
+      "total_ms": 632.0991670363583
+    },
+    {
+      "id": "fleurs-pl-0037",
+      "reference": "internet może służyć zarówno do komunikacji masowej jak i interpersonalnej",
+      "hypothesis": "Internet może służyć zarówno do komunikacji masowej, jak i interpersonalnej.",
+      "polished": "Internet może służyć zarówno do komunikacji masowej, jak i interpersonalnej.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 305.7642500498332,
+      "total_ms": 305.7642500498332
+    },
+    {
+      "id": "fleurs-pl-0038",
+      "reference": "haitański instytut sprawiedliwości i demokracji odniósł się do niezależnych badań sugerujących że nepalski batalion pokojowy onz bezwiednie przeniósł chorobę na haiti",
+      "hypothesis": "Haitański Instytut Sprawiedliwości i Demokracji odniósł siedem niezależnych badań sugerujących, że nepalski Batalion Pokojowy ONZ bezwietnie przeniósł chorobę na Haiti.",
+      "polished": "Haitański Instytut Sprawiedliwości i Demokracji odniósł siedem niezależnych badań sugerujących, że nepalski Batalion Pokojowy ONZ bezwietnie przeniósł chorobę na Haiti.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 2,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 750.4925000248477,
+      "total_ms": 750.4925000248477
+    },
+    {
+      "id": "fleurs-pl-0039",
+      "reference": "sundarbany wpisano na listę światowego dziedzictwa unesco część lasu położona na terytorium indii jest nazywana parkiem narodowym sundarban",
+      "hypothesis": "Sundarbany wpisana na listę światowego dziedzictwa UNESCO. Ręśla supołoczna na terytorium Indii jest nazwana Parkiem Narodowym Sundarbany.",
+      "polished": "Sundarbany wpisana na listę światowego dziedzictwa UNESCO. Ręśla supołoczna na terytorium Indii jest nazwana Parkiem Narodowym Sundarbany.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.3333333333333333,
+      "substitutions": 5,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 574.6119999676012,
+      "total_ms": 574.6119999676012
+    },
+    {
+      "id": "fleurs-pl-0040",
+      "reference": "nazywamy to wskaźnikiem ph substancji chemicznej sok z czerwonej kapusty ma zdolność wykrywania ph",
+      "hypothesis": "Naswamy to wskaźnikiem pH substancji chemicznej. Sok czerwonej kapusty ma zdolność wykrywania pH.",
+      "polished": "Naswamy to wskaźnikiem pH substancji chemicznej. Sok czerwonej kapusty ma zdolność wykrywania pH.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.14285714285714285,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 504.33291599620134,
+      "total_ms": 504.33291599620134
+    },
+    {
+      "id": "fleurs-pl-0041",
+      "reference": "wśród tematów omawianych na bali znalazł się również problem ocalenia lasów które jeszcze pozostały na kuli ziemskiej a także kwestia dzielenia się technologiami mogącymi pomóc krajom rozwijającym się zredukować ilość zanieczyszczeń",
+      "hypothesis": "Wśród tematów omawianych na Bali znalazł się również problem ocalenia lasów, które jeszcze pozostają na powierzchni ziemskiej, a także kwestia dzielenia się technologiami mogącymi pomóc krajom rozwijającym się zredukować ilość zanieczyszczeń.",
+      "polished": "Wśród tematów omawianych na Bali znalazł się również problem ocalenia lasów, które jeszcze pozostają na powierzchni ziemskiej, a także kwestia dzielenia się technologiami mogącymi pomóc krajom rozwijającym się zredukować ilość zanieczyszczeń.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.06451612903225806,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 860.6081670150161,
+      "total_ms": 860.6081670150161
+    },
+    {
+      "id": "fleurs-pl-0042",
+      "reference": "zadaniem marynarki wojennej od zawsze było zapewnienie krajowi możliwości transportowania ludzi i towarów jednocześnie uniemożliwiając wrogowi przemieszczanie jego ludzi i towarów",
+      "hypothesis": "Zadaniem marynarki wojennej od zawsze było zapewnienie krajowi możliwości transportowania ludzi i towarów, jednocześnie uniemożliwiając wrogowi przemieszczanie jego ludzi i towarów.",
+      "polished": "Zadaniem marynarki wojennej od zawsze było zapewnienie krajowi możliwości transportowania ludzi i towarów, jednocześnie uniemożliwiając wrogowi przemieszczanie jego ludzi i towarów.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 710.3406250244007,
+      "total_ms": 710.3406250244007
+    },
+    {
+      "id": "fleurs-pl-0043",
+      "reference": "w roku 1990 miasto wpisano na listę zagrożonych miejsc światowego dziedzictwa z powodu zniszczeń powodowanych przez piaski pustynne",
+      "hypothesis": "W roku 1999 miasto wpisano na listę zagrożonych miejsc światowego dziedzictwa z powodu zniszczeń powodowanych przez piaski pustynne.",
+      "polished": "W roku 1999 miasto wpisano na listę zagrożonych miejsc światowego dziedzictwa z powodu zniszczeń powodowanych przez piaski pustynne.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.05555555555555555,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 524.4522499851882,
+      "total_ms": 524.4522499851882
+    },
+    {
+      "id": "fleurs-pl-0044",
+      "reference": "lakkha singh przedstawił też chhappan bhog bhadżan akompaniował mu wokalista raju khandelwal",
+      "hypothesis": "Lak Kasingh, przedstawił też Chapan Bokbajan, akompaniewał mu wokalistę Raju Kandelwal.",
+      "polished": "Lak Kasingh, przedstawił też Chapan Bokbajan, akompaniewał mu wokalistę Raju Kandelwal.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.6666666666666666,
+      "substitutions": 7,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 427.5022090296261,
+      "total_ms": 427.5022090296261
+    },
+    {
+      "id": "fleurs-pl-0045",
+      "reference": "osad był konieczny do tworzenia ławic i plaż które służyły jako siedliska roślin i zwierząt",
+      "hypothesis": "Osad był konieczny do tworzenia ławic i plaż, które służyły jako siedliska roślin i zwierząt.",
+      "polished": "Osad był konieczny do tworzenia ławic i plaż, które służyły jako siedliska roślin i zwierząt.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 441.2709170137532,
+      "total_ms": 441.2709170137532
+    },
+    {
+      "id": "fleurs-pl-0046",
+      "reference": "im mniejszy jest stres tym bardziej pozytywna jest siła życiowa każda osoba ma potencjał by odnaleźć całkowity spokój i zadowolenie",
+      "hypothesis": "Im mniejszy jest stres, tym bardziej pozytywna jest siła życiowa. Każda osoba ma potencjał, aby odnaleźć całkowity spokój i zadowolenie.",
+      "polished": "Im mniejszy jest stres, tym bardziej pozytywna jest siła życiowa. Każda osoba ma potencjał, aby odnaleźć całkowity spokój i zadowolenie.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.05,
+      "substitutions": 1,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 60,
+      "polish_failed": [
+        "no_hallucination"
+      ],
+      "asr_ms": 597.2419579629786,
+      "total_ms": 597.2419579629786
+    },
+    {
+      "id": "fleurs-pl-0047",
+      "reference": "według przecieku dokument będzie dotyczył spornych granic które palestyna chce przywrócić do stanu sprzed wojny sześciodniowej według przecieku dokument będzie dotyczył spornych granic które palestyna chce przywrócić do stanu sprzed wojny sześciodniowej w 1967 roku",
+      "hypothesis": "Według Przecieku dokument będzie dotyczył spornych granic, które Palestyna chce przywrócić do stanu sprzed wojny sześciodniowej. Według Przecieku dokument będzie dotyczył spornych granic, które Palestyna chce przywrócić do stanu sprzed wojny sześciodniowej w 1967 roku.",
+      "polished": "Według Przecieku dokument będzie dotyczył spornych granic, które Palestyna chce przywrócić do stanu sprzed wojny sześciodniowej. Według Przecieku dokument będzie dotyczył spornych granic, które Palestyna chce przywrócić do stanu sprzed wojny sześciodniowej w 1967 roku.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.0,
+      "substitutions": 0,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 100,
+      "polish_failed": [],
+      "asr_ms": 1046.254500048235,
+      "total_ms": 1046.254500048235
+    },
+    {
+      "id": "fleurs-pl-0048",
+      "reference": "przede wszystkim większość dżokejów nosi buty do jazdy konnej z obcasem i gładką dosyć wąską podeszwą",
+      "hypothesis": "Przede wszystkim większość jokejów nosi buty do jazdy konnej z obsasem i gładką, dosyć wąską podeszwą.",
+      "polished": "Przede wszystkim większość jokejów nosi buty do jazdy konnej z obsasem i gładką, dosyć wąską podeszwą.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.125,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 557.397416967433,
+      "total_ms": 557.397416967433
+    },
+    {
+      "id": "fleurs-pl-0049",
+      "reference": "te teorie odnoszą się do tego co sprawia że niektórzy ludzie chcą tego co robią i co w ich środowisku sprawia że robią pewne rzeczy a innych nie robią",
+      "hypothesis": "Tetyary odnoszą się do tego, co sprawia, że niektórzy ludzie chcą tego, co robią i co w ich środowisku sprawia, że robią pewne rzeczy, a innych nie robią.",
+      "polished": "Tetyary odnoszą się do tego, co sprawia, że niektórzy ludzie chcą tego, co robią i co w ich środowisku sprawia, że robią pewne rzeczy, a innych nie robią.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.06896551724137931,
+      "substitutions": 1,
+      "deletions": 1,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 704.2164159938693,
+      "total_ms": 704.2164159938693
+    },
+    {
+      "id": "fleurs-pl-0050",
+      "reference": "wirtualne rusztowania są zinternalizowane w oprogramowaniu i mają kwestionować podpowiadać i wyjaśniać procedury których samodzielne zrozumienie przez studenta może stanowić wyzwanie",
+      "hypothesis": "Wirtualne roztwarzania są zinternalizowane w oprogramowaniu i mają kwestionować, podpowiadać i wyjaśnić procedury, których samodzielne zrozumienie przez studenta może stanowić wyzwanie.",
+      "polished": "Wirtualne roztwarzania są zinternalizowane w oprogramowaniu i mają kwestionować, podpowiadać i wyjaśnić procedury, których samodzielne zrozumienie przez studenta może stanowić wyzwanie.",
+      "tags": [
+        "fleurs-pl"
+      ],
+      "human": false,
+      "wer": 0.09523809523809523,
+      "substitutions": 2,
+      "deletions": 0,
+      "insertions": 0,
+      "polish_score": 10,
+      "polish_failed": [
+        "no_content_loss",
+        "no_hallucination"
+      ],
+      "asr_ms": 729.5294580399059,
+      "total_ms": 729.5294580399059
+    }
+  ],
+  "wer_verbatim_micro": 0.11318795430944964,
+  "wer_verbatim_macro": 0.12947781347527398,
+  "wer_clean_micro": null,
+  "wer_clean_human_micro": null,
+  "vocab_recall": null,
+  "vocab_false_alarm": null,
+  "entity_accuracy": 0.6363636363636364,
+  "semantic_ok_rate": null,
+  "latency_release_to_paste": null,
+  "boost": null,
+  "case_errors": []
+}

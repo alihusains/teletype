@@ -1,0 +1,16 @@
+{
+  "boost": "on",
+  "corpus": null,
+  "engine": "large-v3-turbo-q5",
+  "entity_ref_count": 541,
+  "git_sha": "d4b433b",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "earnings22-vocab"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1792228437",
+  "vocab_cases": 6
+}

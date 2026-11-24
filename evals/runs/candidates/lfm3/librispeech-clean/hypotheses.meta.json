@@ -1,0 +1,14 @@
+{
+  "model": "lfm3",
+  "model_dir": ".tmp/asrbench/models/lfm3-audio-2b",
+  "sets": [
+    "librispeech-clean"
+  ],
+  "cases": 200,
+  "errors": [],
+  "audio_seconds": 1502.45,
+  "model_seconds": 74.56,
+  "rtf": 0.0496,
+  "wall_seconds": 74.87,
+  "threads": 4
+}

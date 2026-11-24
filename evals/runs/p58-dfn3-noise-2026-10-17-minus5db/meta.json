@@ -1,0 +1,15 @@
+{
+  "corpus": null,
+  "engine": "parakeet-ultra",
+  "entity_ref_count": 0,
+  "git_sha": "98f116a",
+  "live": false,
+  "polish": "none",
+  "semantic_judged": 0,
+  "sets": [
+    "noise--5db"
+  ],
+  "skipped_sets": [],
+  "timestamp": "1792209402",
+  "vocab_cases": 0
+}

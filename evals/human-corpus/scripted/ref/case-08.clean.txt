@@ -1,0 +1,1 @@
+Quick one: can you look at the PR when you have a second? The router keeps falling back to the slow model and our p95 is spiking again. I did not touch the fallback thresholds, so it is probably the stale index. Also check Priya's comment; she flagged the off-by-one, and people are DMing me about it.

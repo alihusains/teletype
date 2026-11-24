@@ -1,0 +1,362 @@
+[
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "rambling",
+    "input": "um so basically i think we should uh probably move the meeting to friday at like 2 pm because uh the current time doesn't work for everyone and also we want to make sure that everyone can join",
+    "output": "We should probably move the meeting to Friday at 2 pm because the current time doesn't work for everyone and we want to make sure everyone can join.",
+    "words_in": 38,
+    "words_out": 28,
+    "ratio": 0.737,
+    "shared_content": 0.792,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "tangled",
+    "input": "the invoice total is four thousand two hundred dollars and it needs finance approval and it was sent on tuesday and before approving it we should check the line items",
+    "output": "The invoice total is four thousand two hundred dollars and requires finance approval. It was sent on Tuesday, and before approving it, we should check the line items.",
+    "words_in": 30,
+    "words_out": 28,
+    "ratio": 0.933,
+    "shared_content": 0.952,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "tone",
+    "input": "hey so i was wondering if you could maybe take a look at the draft whenever you get a sec and just let me know what you think",
+    "output": "hey, could you please take a look at the draft whenever you get a chance and let me know what you think?",
+    "words_in": 28,
+    "words_out": 22,
+    "ratio": 0.786,
+    "shared_content": 0.737,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q three numbers from the readme by tuesday at 2 pm",
+    "output": "Please send the report to shivon at example.com and cc the Q3 numbers from the readme by Tuesday at 2 pm.",
+    "words_in": 25,
+    "words_out": 21,
+    "ratio": 0.84,
+    "shared_content": 0.733,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "question",
+    "input": "what time is the meeting on friday and can you send me the agenda",
+    "output": "What time is the meeting on Friday? Can you send me the agenda?",
+    "words_in": 14,
+    "words_out": 13,
+    "ratio": 0.929,
+    "shared_content": 0.9,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "casual",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "steps",
+    "input": "first we update the docs then we notify support and after that we schedule the announcement",
+    "output": "- First, we update the documentation.\n- Next, we notify support.\n- Finally, we schedule the announcement.",
+    "words_in": 16,
+    "words_out": 17,
+    "ratio": 1.062,
+    "shared_content": 0.583,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "rambling",
+    "input": "um so basically i think we should uh probably move the meeting to friday at like 2 pm because uh the current time doesn't work for everyone and also we want to make sure that everyone can join",
+    "output": "- Move the meeting to Friday at 2 PM so everyone can join.\n- This change aligns with the current time and ensures participation.",
+    "words_in": 38,
+    "words_out": 24,
+    "ratio": 0.579,
+    "shared_content": 0.417,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "tangled",
+    "input": "the invoice total is four thousand two hundred dollars and it needs finance approval and it was sent on tuesday and before approving it we should check the line items",
+    "output": "The invoice total is four thousand two hundred dollars and requires finance approval. It was sent on Tuesday, and before approving it, we should check the line items.",
+    "words_in": 30,
+    "words_out": 28,
+    "ratio": 0.933,
+    "shared_content": 0.952,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "tone",
+    "input": "hey so i was wondering if you could maybe take a look at the draft whenever you get a sec and just let me know what you think",
+    "output": "hey, could you please take a look at the draft whenever you get a chance and let me know what you think?",
+    "words_in": 28,
+    "words_out": 22,
+    "ratio": 0.786,
+    "shared_content": 0.737,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q three numbers from the readme by tuesday at 2 pm",
+    "output": "Please send the report to shivon at example.com and cc the Q3 numbers from the readme by Tuesday at 2 pm.",
+    "words_in": 25,
+    "words_out": 21,
+    "ratio": 0.84,
+    "shared_content": 0.733,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "question",
+    "input": "what time is the meeting on friday and can you send me the agenda",
+    "output": "What time is the meeting on Friday, and can you send me the agenda?",
+    "words_in": 14,
+    "words_out": 14,
+    "ratio": 1.0,
+    "shared_content": 1.0,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-casual",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "steps",
+    "input": "first we update the docs then we notify support and after that we schedule the announcement",
+    "output": "- First, we update the documentation.\n- Next, we notify support.\n- Finally, we schedule the announcement.",
+    "words_in": 16,
+    "words_out": 17,
+    "ratio": 1.062,
+    "shared_content": 0.583,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "rambling",
+    "input": "um so basically i think we should uh probably move the meeting to friday at like 2 pm because uh the current time doesn't work for everyone and also we want to make sure that everyone can join",
+    "output": "We should move the meeting to Friday at 2 pm because the current time doesn't work for everyone and we want to ensure everyone can join.",
+    "words_in": 38,
+    "words_out": 26,
+    "ratio": 0.684,
+    "shared_content": 0.667,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "tangled",
+    "input": "the invoice total is four thousand two hundred dollars and it needs finance approval and it was sent on tuesday and before approving it we should check the line items",
+    "output": "The invoice total is four thousand two hundred dollars and requires finance approval. It was sent on Tuesday, and before approving it, we should check the line items.",
+    "words_in": 30,
+    "words_out": 28,
+    "ratio": 0.933,
+    "shared_content": 0.952,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "tone",
+    "input": "hey so i was wondering if you could maybe take a look at the draft whenever you get a sec and just let me know what you think",
+    "output": "I am writing to request your review of the draft whenever you have a moment. Please let me know your thoughts.",
+    "words_in": 28,
+    "words_out": 21,
+    "ratio": 0.75,
+    "shared_content": 0.316,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q three numbers from the readme by tuesday at 2 pm",
+    "output": "Please send the report to shivon at example.com and cc the Q3 numbers from the readme by Tuesday at 2 pm.",
+    "words_in": 25,
+    "words_out": 21,
+    "ratio": 0.84,
+    "shared_content": 0.733,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "question",
+    "input": "what time is the meeting on friday and can you send me the agenda",
+    "output": "What time is the meeting on Friday, and can you send me the agenda?",
+    "words_in": 14,
+    "words_out": 14,
+    "ratio": 1.0,
+    "shared_content": 1.0,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "semi-formal",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "steps",
+    "input": "first we update the docs then we notify support and after that we schedule the announcement",
+    "output": "- First, we update the documentation.\n- Next, we notify support.\n- Finally, we schedule the announcement.",
+    "words_in": 16,
+    "words_out": 17,
+    "ratio": 1.062,
+    "shared_content": 0.583,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "rambling",
+    "input": "um so basically i think we should uh probably move the meeting to friday at like 2 pm because uh the current time doesn't work for everyone and also we want to make sure that everyone can join",
+    "output": "We should move the meeting to Friday at 2:00 PM because the current time does not work for everyone and we want to ensure everyone can join.",
+    "words_in": 38,
+    "words_out": 27,
+    "ratio": 0.711,
+    "shared_content": 0.625,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "tangled",
+    "input": "the invoice total is four thousand two hundred dollars and it needs finance approval and it was sent on tuesday and before approving it we should check the line items",
+    "output": "The invoice total is four thousand two hundred dollars and requires finance approval. It was sent on Tuesday, and before approving it, we should verify the line items.",
+    "words_in": 30,
+    "words_out": 28,
+    "ratio": 0.933,
+    "shared_content": 0.905,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "tone",
+    "input": "hey so i was wondering if you could maybe take a look at the draft whenever you get a sec and just let me know what you think",
+    "output": "I am writing to request your review of the draft whenever you have a moment. Please let me know your thoughts.",
+    "words_in": 28,
+    "words_out": 21,
+    "ratio": 0.75,
+    "shared_content": 0.316,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "fidelity",
+    "input": "can you send the report to shivon at example dot com and cc the q three numbers from the readme by tuesday at 2 pm",
+    "output": "Please send the report to shivon at example.com and cc the Q3 numbers from the readme by Tuesday at 2 pm.",
+    "words_in": 25,
+    "words_out": 21,
+    "ratio": 0.84,
+    "shared_content": 0.733,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "prose",
+      "context": "general"
+    },
+    "case": "question",
+    "input": "what time is the meeting on friday and can you send me the agenda",
+    "output": "What time is the meeting scheduled for Friday, and could you please send me the agenda?",
+    "words_in": 14,
+    "words_out": 16,
+    "ratio": 1.143,
+    "shared_content": 0.9,
+    "problems": []
+  },
+  {
+    "control": {
+      "styling": "formal",
+      "structure": "lists",
+      "context": "general"
+    },
+    "case": "steps",
+    "input": "first we update the docs then we notify support and after that we schedule the announcement",
+    "output": "- First, we update the documentation.\n- Next, we notify support.\n- Finally, we schedule the announcement.",
+    "words_in": 16,
+    "words_out": 17,
+    "ratio": 1.062,
+    "shared_content": 0.583,
+    "problems": []
+  }
+]
