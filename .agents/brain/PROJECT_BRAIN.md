@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.22 head=c81bf44 updated=2026-11-24 -->
+<!-- brain-freshness: version=v0.2.22 head=fad3d05 updated=2026-11-24 -->
 
 This file is the durable working memory for this project.
 
@@ -2634,7 +2634,7 @@ light-theme contrast failures — see the audit report for details.)
 2026-10-29); rendered screenshots of all 13 nav screens + dark mode captured
 2026-11-09; `ui/index.html` token block vs `DESIGN.md` frontmatter.
 
-### Decision D044
+### Decision D052
 
 **Title:** Meeting recorder — record → transcribe → optional LLM summary →
 self-contained HTML report
@@ -3368,8 +3368,8 @@ The brain must describe the checkout it sits in, not a historical snapshot.
 - If a task changed no durable knowledge, say so explicitly in the final report
   ("no brain change needed"). Do not manufacture entries, and do not leave a
   known-stale section standing because it was not in the diff.
-- Recorded IDs are unique: D001–D043 plus D044 (Notetaker) and D045 (fetched
-  model weights). A duplicate ID or a
+- Recorded IDs are unique: D001–D051 (up to the Sentry crash-reporting
+  path) plus D052 (meeting recorder). A duplicate ID or a
   reference to a decision that does not match its block is a defect to fix on
   sight (see the D011/D016/D017/D020 corrections made 2026-11-19).
 
