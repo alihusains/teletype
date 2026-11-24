@@ -159,10 +159,15 @@ pub fn group_token_timings(
         let boundary = token.starts_with('\u{2581}') || token.starts_with(' ');
         let piece = token.replace('\u{2581}', " ").trim().to_string();
         if boundary && !current.is_empty() {
+            let start_ms = (start * 1000.0).round().max(0.0) as u32;
+            let end_ms = (end * 1000.0).round().max(0.0) as u32;
             words.push(Word {
                 text: std::mem::take(&mut current),
-                start_ms: (start * 1000.0).round().max(0.0) as u32,
-                end_ms: (end * 1000.0).round().max(0.0) as u32,
+                start_ms,
+                // Defensive: a misbehaving engine can report an end before
+                // the start (or a duration where an end belongs). Never emit
+                // an inverted interval — downstream gap logic splits on it.
+                end_ms: end_ms.max(start_ms),
                 conf: 1.0,
             });
             current.clear();
@@ -174,10 +179,12 @@ pub fn group_token_timings(
         end = end_seconds[i];
     }
     if !current.is_empty() {
+        let start_ms = (start * 1000.0).round().max(0.0) as u32;
+        let end_ms = (end * 1000.0).round().max(0.0) as u32;
         words.push(Word {
             text: current,
-            start_ms: (start * 1000.0).round().max(0.0) as u32,
-            end_ms: (end * 1000.0).round().max(0.0) as u32,
+            start_ms,
+            end_ms: end_ms.max(start_ms),
             conf: 1.0,
         });
     }

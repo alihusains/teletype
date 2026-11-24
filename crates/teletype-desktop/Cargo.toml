@@ -81,6 +81,10 @@ arboard = { workspace = true }
 enigo = { workspace = true }
 uuid = { workspace = true }
 dirs = { workspace = true }
+# Local time formatting for meeting report headers (already in the
+# dependency tree via tauri; minimal feature set to avoid pulling in
+# oldtime/serde extras).
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
 # Parses the user-supplied provider base URL. Hand-rolled splitting on
 # `:` and `/` mistook URL userinfo for the host (see read_api_key).

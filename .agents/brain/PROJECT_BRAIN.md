@@ -2634,6 +2634,108 @@ light-theme contrast failures — see the audit report for details.)
 2026-10-29); rendered screenshots of all 13 nav screens + dark mode captured
 2026-11-09; `ui/index.html` token block vs `DESIGN.md` frontmatter.
 
+### Decision D044
+
+**Title:** Meeting recorder — record → transcribe → optional LLM summary →
+self-contained HTML report
+
+**Date:** 2026-11-11
+
+**Status:** accepted, implemented, verified (real-time streaming rework + report UX
+2026-11-11; live app on Windows: start → record with live commits → stop →
+same-page report + new-tab HTML)
+
+**Decision:**
+1. A new **Meeting** screen (Record nav group, `calendar-check` icon) records
+   the active microphone input as one durable 16 kHz mono 16-bit WAV, then
+   transcribes it and writes a self-contained, print-friendly HTML report
+   (inline CSS, no JS, no network refs) plus a machine-readable
+   `transcript.json`.
+2. The lifecycle is a pure state machine in `teletype-core` (`meeting.rs`):
+   `Idle → Recording → Finalizing → Done`, driven by `decide(input, phase)`.
+   The desktop `MeetingEngine` (`teletype-desktop/src/meeting.rs`) owns the
+   in-flight capture and the finalize thread.
+3. **Real-time transcription reuses the dictation P4 streaming path** (the
+   user rejected the original batch-only design): `start` builds the same
+   `StreamingTake` + `Committer` dictation arms per take (`streaming_for_take`
+   semantics: own engine handle, background `load_model`, Silero VAD,
+   `Segmenter` 350 ms pause / 12 s cut), and the capture frame callback
+   resamples device rate → 16 kHz once (`BlockResampler`) and feeds the
+   stream. Words commit while the user speaks; the UI polls `meeting_status`
+   every second and renders `liveText` + live word/segment counts. On stop,
+   `StreamingTake::finish` (tail + in-flight, de-duplicated fold) yields the
+   transcript. Engines without a streaming provider (Qwen3-ASR, Apple,
+   transcribe.cpp, Whistle) fall back to one batch `transcribe_detailed`
+   pass over the whole audio.
+4. **The report is built in real time**: while recording, every status poll
+   calls `refresh_live_report`, which rewrites `<id>/report.html` whenever
+   new segments have committed (change-detected, so steady-state polls are
+   free). The meeting folder is created at start, not at finalize. The
+   final report overwrites the live one with the LLM overview + details.
+5. **Report content** (`meeting_report.rs::render_report`): header →
+   **Overview** (the LLM "what this meeting was about" summary when a
+   provider ran, else a mechanical duration/words/segments line, so the
+   section is never empty) → **Action items** → **Details** (started /
+   duration / words / WPM / segments / speakers / language / ASR engine) →
+   **Transcript** (timestamps + speaker labels) → footer.
+6. **Same-page report after the meeting**: the finished meeting is kept in
+   the engine (`FinishedMeeting`), and a `meeting_report` command returns
+   `ReportData` (overview, action items, stats, full segment list) so the
+   Done view renders the whole report in-app. `meeting_open_report` opens
+   the HTML as a `file://` URL via `opener().open_url` — a URL opens as a
+   **new browser tab** (a raw path opens a new window); `open_path` remains
+   the fallback if the URL open fails.
+7. Speaker attribution: a single microphone cannot separate speakers, so
+   every word/segment is labeled `Speaker 1` (`SPEAKER_LABEL`). The field is
+   first-class (`Option<String>`), so the macOS parakeet.cpp
+   diarization/SAS path (Option A) fills real labels later without a schema
+   change. Segments split on >1 s pauses (`SEGMENT_GAP_MS`).
+8. Summarization is optional and map-reduce under the llama-server 4096-token
+   context: `chunk_text` (11k chars/chunk) → per-chunk summaries → combine
+   into `{summary, action_items}` via `generate_json`. A missing or failing
+   provider degrades the report to transcript-only (the UI shows a
+   "No AI summary" note; the report shows the mechanical overview).
+9. While a meeting is recording, dictation start is refused ("A meeting is
+   recording. Stop it before using dictation.").
+
+**Context:** the user asked to record a meeting, stop it, and get a
+self-contained HTML report — and after the first batch-only cut, demanded
+real-time text, speaker labels, combined (not one-word-per-line)
+segments, and a report with a real overview (what it was about, details,
+stats) — all built on the existing dictation logic rather than a parallel
+pipeline, with the report openable in a new tab and visible on the Meeting
+screen itself. The one-word-per-line symptom was a real bug: sherpa's
+`transcribe_detailed` passed token **durations** as **end times** to
+`group_token_timings`, so every word had `end_ms < start_ms` and the
+1-second gap splitter cut every word into its own segment (see L091).
+
+**Evidence:** `cargo test -p teletype-core --lib meeting` 20/20 (state
+machine, chunking, report sections incl. Overview/Details fallbacks, HTML
+escaping, self-containment); meeting unit tests compile (the desktop test
+*binary* cannot launch on this Windows box — pre-existing 0xC0000139, also
+hits unrelated tests); `tsc --noEmit` clean; `cargo check` green for
+speech/core/desktop. Live CDP runs in the real app on Windows: streaming
+commit logged mid-recording (`streaming commit: 11776 ms segment` — the log
+line marks `submit_segment`; the decode lands in `committed` later via
+`poll_completed`); final reports show combined segments with `Speaker 1`
+labels and sane timings; report.html carries Overview + Details +
+action-items sections and stays self-contained (no script/http refs);
+the Done view renders the full report on the same page (Overview, stats
+grid, transcript, "Open in new tab"); `meeting_open_report` via
+`open_url` succeeds. Speaker→mic loopback test audio is below the VAD
+speech threshold in most automated runs (recorded peaks 248–472/32767),
+so live-text polls often stay null; real human speech drives the same VAD
+path dictation already uses.
+
+**How to apply:** meeting audio lives in `<local app data>/meetings/`. The
+finalize thread picks the speech manager slot via `active_speech_manager`
+(L090). Real-time meeting quality depends on the same VAD/segmenter tuning
+as dictation; if live text seems slow, check the committer log lines
+(`streaming commit: N ms segment`) — note the decode of a long segment can
+land seconds after the cut on a loaded CPU. Windows parakeet.cpp
+diarization is unavailable (FFI is macOS-only); Windows reports carry
+`Speaker 1`.
+
 ---
 
 ### Decision D046

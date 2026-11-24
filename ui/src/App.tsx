@@ -14,6 +14,7 @@ import DictionaryScreen from "./screens/DictionaryScreen";
 import StylesScreen from "./screens/StylesScreen";
 import CommandModeScreen from "./screens/CommandModeScreen";
 import NotetakerScreen from "./screens/NotetakerScreen";
+import MeetingScreen from "./screens/MeetingScreen";
 import TransformsScreen from "./screens/TransformsScreen";
 import AutoTextScreen from "./screens/AutoTextScreen";
 import PersonalizationScreen from "./screens/PersonalizationScreen";
@@ -34,6 +35,7 @@ type Screen =
   | "style"
   | "command-mode"
   | "notetaker"
+  | "meeting"
   | "personalization"
   | "models"
   | "settings"
@@ -56,6 +58,7 @@ const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
     items: [
       { id: "dictation", label: "Dictation", icon: "dictation" },
       { id: "notetaker", label: "Notetaker", icon: "notetaker" },
+      { id: "meeting", label: "Meeting", icon: "calendar-check" },
     ],
   },
   {
@@ -772,6 +775,9 @@ export default function App() {
           </div>
           <div style={{ display: screen === "notetaker" ? "block" : "none" }}>
             <NotetakerScreen />
+          </div>
+          <div style={{ display: screen === "meeting" ? "block" : "none" }}>
+            <MeetingScreen />
           </div>
           <div style={{ display: screen === "autotext" ? "block" : "none" }}>
             <AutoTextScreen />

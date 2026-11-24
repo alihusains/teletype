@@ -30,6 +30,8 @@ pub mod itn;
 pub mod language_habits;
 pub mod learning;
 pub mod llm;
+pub mod meeting;
+pub mod meeting_report;
 pub mod persist;
 pub mod personalization;
 pub mod pipeline;

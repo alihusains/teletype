@@ -73,6 +73,7 @@ mod mod_tap;
 mod permission_watch;
 mod persist;
 mod recordings;
+mod meeting;
 // P8.5: Windows UIA readers (focused control text, selection, caret
 // context) and start/stop dictation cues (PlaySoundW).
 mod overlay;
@@ -250,6 +251,10 @@ pub struct AppState {
     /// voice recordings must stay on this PC. On macOS both are the same
     /// Application Support folder.
     pub recordings_dir: std::path::PathBuf,
+    /// Meeting recording engine (durable audio + report). One meeting at a
+    /// time; the engine is clone-cheap (Arc-backed) so the finalize thread
+    /// shares state with the commands.
+    pub meetings: crate::meeting::MeetingEngine,
     /// The last dictation inserted into another app, kept so the
     /// personalization loop can diff it against what the user changed it into.
     /// See `edit_watch::EditWatch`.
@@ -416,6 +421,9 @@ impl AppState {
             config_dir: dir.join("config"),
             data_dir: dir.join("data"),
             recordings_dir: crate::recordings::dir(&dir.join("data")),
+            meetings: crate::meeting::MeetingEngine::new(crate::meeting::dir(
+                &dir.join("data"),
+            )),
             edit_watch: Mutex::new(Default::default()),
             bandit: Mutex::new(BanditState::default()),
             save_lock: Mutex::new(()),
@@ -432,6 +440,30 @@ impl AppState {
 impl AppState {
     pub fn settings(&self) -> commands::Settings {
         (*self.settings.get()).clone()
+    }
+
+    /// The speech-model manager that holds the selected transcription
+    /// engine — the same slot mapping the warm-up thread uses: whisper in
+    /// `speech`, parakeet/parakeet-cpp in their dedicated slots, and
+    /// everything else (sherpa, fluid, qwen3-asr, apple, transcribe-cpp,
+    /// whistle) in `neural`.
+    pub fn active_speech_manager(&self) -> &teletype_inference::manager::SpeechModelManager<
+        Box<dyn teletype_speech::SpeechProvider>,
+    > {
+        let settings = self.settings();
+        let (_, kind) = crate::dictation::resolve_speech_model(&settings, &self.models_dir);
+        use crate::dictation::SpeechEngineKind;
+        match kind {
+            SpeechEngineKind::Parakeet => &self.parakeet,
+            SpeechEngineKind::ParakeetCpp => &self.parakeet_cpp,
+            SpeechEngineKind::Whisper => &self.speech,
+            SpeechEngineKind::Fluid
+            | SpeechEngineKind::Sherpa
+            | SpeechEngineKind::Qwen3Asr
+            | SpeechEngineKind::AppleSpeech
+            | SpeechEngineKind::TranscribeCpp
+            | SpeechEngineKind::Whistle => &self.neural,
+        }
     }
 
     pub fn replace_settings(&self, settings: commands::Settings) -> commands::CommandResult<()> {
@@ -998,6 +1030,13 @@ pub fn run() {
             // background thread.
             let autotext = Arc::new(Repo::new(autotext_store, autotext));
             typing::set_autotext_store(Arc::clone(&autotext));
+            // Meeting audio is sensitive: it lives next to recordings in the
+            // LOCAL data dir (never the roaming one), same as take audio.
+            let meetings_dir = crate::meeting::dir(
+                recordings_dir
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("")),
+            );
 
             let bandit = BanditStore::new(AppState::bandit_path(&data_dir))
                 .load()
@@ -1052,6 +1091,7 @@ pub fn run() {
                 config_dir,
                 data_dir,
                 recordings_dir,
+                meetings: crate::meeting::MeetingEngine::new(meetings_dir),
                 e2e: e2e_slot,
             };
             app.manage(state);
@@ -1534,6 +1574,14 @@ pub fn run() {
             commands::open_note,
             commands::save_note,
             commands::delete_note,
+            // Meeting recording
+            commands::meeting::meeting_start,
+            commands::meeting::meeting_stop,
+            commands::meeting::meeting_cancel,
+            commands::meeting::meeting_status,
+            commands::meeting::meeting_report,
+            commands::meeting::meeting_reset,
+            commands::meeting::meeting_open_report,
             // Escape recovery
             commands::recover_last_dictation,
             commands::discard_recovery,

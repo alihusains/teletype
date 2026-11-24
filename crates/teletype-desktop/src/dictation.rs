@@ -73,32 +73,36 @@ type AppSlot = Arc<Mutex<Option<tauri::AppHandle>>>;
 /// and pushes it to the segmenter. Every `SegmentEvent::Ready` slices the
 /// buffer and hands the samples to the [`Committer`], which transcribes
 /// them on its own engine while the user is still talking.
-struct StreamingTake {
+///
+/// `pub(crate)` so the meeting engine (crate::meeting) can reuse the same
+/// real-time path: a meeting is a long take that never releases until the
+/// user stops it.
+pub(crate) struct StreamingTake {
     /// 16 kHz take buffer; sample `i` is the `(i + base_offset)`th 16 kHz
     /// sample of the take. HARD-3 (#9): the committed prefix is released
     /// from the front, so `base_offset` tracks how many samples have been
     /// released. The buffer stays bounded by the uncommitted tail.
-    buf16: Vec<f32>,
+    pub(crate) buf16: Vec<f32>,
     /// Samples released from the front of `buf16` (HARD-3 #9).
-    base_offset: usize,
+    pub(crate) base_offset: usize,
     /// The segmenter (16 kHz, default config: 350 ms pause / 12 s cut).
-    segmenter: Segmenter,
+    pub(crate) segmenter: Segmenter,
     /// The streaming VAD: its OWN `silero_16k()` instance, fed 512-sample
     /// chunks; only [`VadDetector::last_probability`] is consumed (the
     /// silence window is irrelevant here — auto-stop has its own detector).
-    vad: VadDetector,
+    pub(crate) vad: VadDetector,
     /// 16 kHz samples carried from the previous frame so the VAD always
     /// sees whole 512-sample chunks.
-    carry: Vec<f32>,
+    pub(crate) carry: Vec<f32>,
     /// 16 kHz samples up to where the committed segments cover. The tail
     /// on release is `buf16[last_commit_end..]`: the segmenter never
     /// re-covers committed audio, and `next_start_sample` already accounts
     /// for the forced-cut overlap.
-    last_commit_end: usize,
+    pub(crate) last_commit_end: usize,
     /// The take's committer (its own engine handle, its own worker thread).
-    committer: crate::committer::Committer,
+    pub(crate) committer: crate::committer::Committer,
     /// The language passed to the committer's engine for each segment.
-    language: String,
+    pub(crate) language: String,
 }
 
 impl StreamingTake {
@@ -111,7 +115,7 @@ impl StreamingTake {
     /// in 100 ms blocks, in the frame callback (`BlockResampler`), and the
     /// pre-roll path resamples in `feed_capture_frame`. Resampling again
     /// here stretched every non-16 kHz frame to a full 100 ms of output.
-    fn feed_frame(&mut self, frame: &[f32], rate: u32) -> usize {
+    pub(crate) fn feed_frame(&mut self, frame: &[f32], rate: u32) -> usize {
         debug_assert_eq!(rate, 16_000, "feed_frame expects 16 kHz input");
         // Append BEFORE the chunk loop: `buf16` must mirror the sample
         // stream the segmenter sees, or a segment that ends inside this
@@ -167,7 +171,7 @@ impl StreamingTake {
 
     /// The uncommitted remainder of the take: `buf16` (the committed prefix
     /// is released, so the entire buffer is the uncommitted tail, HARD-3 #9).
-    fn tail(&self) -> Vec<f32> {
+    pub(crate) fn tail(&self) -> Vec<f32> {
         self.buf16.clone()
     }
 
@@ -197,7 +201,7 @@ impl StreamingTake {
     /// committed segments in order followed by the tail, plus the take's
     /// word-loss accounting. Consumes the committer (it resets itself for
     /// the next take and its worker exits on drop).
-    fn finish(self, language: String) -> Result<crate::committer::CommitterResult, String> {
+    pub(crate) fn finish(self, language: String) -> Result<crate::committer::CommitterResult, String> {
         let mut tail = self.tail();
         // ASRHALL-1: the tail holds the end of the take, so it carries the
         // silent tail the ASR engines hallucinate over. Cut it before decode.
@@ -3841,6 +3845,13 @@ impl Session {
         let Some(app) = self.app().cloned() else {
             return;
         };
+        // A meeting recording owns the microphone. Starting a dictation
+        // take at the same time would fight the meeting capture for the
+        // device and interleave the two UIs, so the press is gated.
+        if self.state().is_some_and(|s| s.meetings.is_recording()) {
+            self.flash("A meeting is recording. Stop it before using dictation.");
+            return;
+        }
         // F-12: gate the press on the selected model being installed.
         // Recording with a missing model would fail on release with a
         // generic "Speech model not downloaded" flash, so the user speaks
@@ -9457,7 +9468,7 @@ pub(crate) fn neural_provider_for(
 /// decodes whole after release instead of streaming, which is what Qwen3-ASR
 /// answers on purpose: its provider handle is a child `llama-server` process,
 /// so a second one would load a second copy of a 2.4 GB model mid-take.
-fn streaming_provider_for(
+pub(crate) fn streaming_provider_for(
     kind: SpeechEngineKind,
     model_id: &str,
 ) -> Option<Box<dyn teletype_speech::SpeechProvider>> {
