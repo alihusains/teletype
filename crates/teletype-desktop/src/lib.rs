@@ -74,6 +74,7 @@ mod permission_watch;
 mod persist;
 mod recordings;
 mod meeting;
+mod island;
 // P8.5: Windows UIA readers (focused control text, selection, caret
 // context) and start/stop dictation cues (PlaySoundW).
 mod overlay;
@@ -100,7 +101,7 @@ use std::sync::{Arc, Mutex};
 
 use teletype_core::learning::profile_bandit::{BanditState, BanditStore};
 
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Listener, Manager};
 
 use teletype_core::{
     autotext::AutoTextStore, injector::TextInjector, personalization::UserProfile,
@@ -1237,7 +1238,7 @@ pub fn run() {
             // by the overlay module anyway; the main window must not flash)
             // and start the e2e IPC hook.
             if e2e_mode {
-                for label in ["main", "pill"] {
+                for label in ["main", "pill", "island"] {
                     if let Some(w) = app.get_webview_window(label) {
                         let _ = w.hide();
                     }
@@ -1249,6 +1250,25 @@ pub fn run() {
                     #[cfg(not(unix))]
                     let _ = slot;
                 }
+            }
+
+            // The meeting island (a separate webview) asks to bring the main
+            // window forward on the Meeting screen: show/focus main here, then
+            // re-emit the standard "navigate" event the main window already
+            // listens for (same seam as the tray and open_main_window).
+            {
+                let bridge = app.handle().clone();
+                app.listen("meeting-island:go-to-meeting", move |_event| {
+                    let handle = bridge.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Some(main) = handle.get_webview_window("main") {
+                            let _ = main.unminimize();
+                            let _ = main.show();
+                            let _ = main.set_focus();
+                        }
+                        let _ = handle.emit("navigate", "meeting");
+                    });
+                });
             }
 
             // Register the global shortcut for every transform that has one
@@ -1582,6 +1602,8 @@ pub fn run() {
             commands::meeting::meeting_report,
             commands::meeting::meeting_reset,
             commands::meeting::meeting_open_report,
+            commands::meeting::meeting_rubrics,
+            island::island_save_position,
             // Escape recovery
             commands::recover_last_dictation,
             commands::discard_recovery,

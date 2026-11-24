@@ -47,21 +47,32 @@ fn status(state: &AppState) -> MeetingStatus {
 }
 
 /// Starts recording a meeting. `title` may be empty (defaults to "Meeting").
-/// `device_id` empty means the system default microphone.
+/// `device_id` empty means the system default microphone. `rubric_id` picks
+/// the scoring rubric (e.g. "sales", "support", "performance", "general");
+/// empty or unknown means no rubric.
 #[tauri::command]
 pub async fn meeting_start(
     app: AppHandle,
     state: State<'_, AppState>,
     title: Option<String>,
     device_id: Option<String>,
+    rubric_id: Option<String>,
 ) -> CommandResult<MeetingStatus> {
     let title = title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "Meeting".into());
     let device_id = device_id.unwrap_or_default();
     state
         .meetings
-        .start(&app, &title, &device_id)
+        .start(&app, &title, &device_id, rubric_id.as_deref())
         .map_err(CommandError::internal)?;
+    // The island appears so the meeting is visible from any screen.
+    crate::island::show(&app);
     Ok(status(&state))
+}
+
+/// The built-in scoring rubrics, for the UI's rubric select.
+#[tauri::command]
+pub fn meeting_rubrics() -> CommandResult<Vec<teletype_core::rubric::Rubric>> {
+    Ok(teletype_core::rubric::builtin_rubrics())
 }
 
 /// Stops the meeting and kicks off finalization (transcription + report) on
@@ -99,6 +110,7 @@ pub async fn meeting_stop(
                 Err(e) => {
                     tracing::warn!(error = %e, "meeting finalization failed");
                     engine.mark_failed(e);
+                    crate::island::hide(&app);
                 }
             }
         })
@@ -109,8 +121,9 @@ pub async fn meeting_stop(
 
 /// Cancels the meeting: stops capture and discards the audio.
 #[tauri::command]
-pub async fn meeting_cancel(state: State<'_, AppState>) -> CommandResult<MeetingStatus> {
+pub async fn meeting_cancel(app: AppHandle, state: State<'_, AppState>) -> CommandResult<MeetingStatus> {
     state.meetings.cancel();
+    crate::island::hide(&app);
     Ok(status(&state))
 }
 
@@ -141,24 +154,40 @@ pub async fn meeting_reset(state: State<'_, AppState>) -> CommandResult<MeetingS
     Ok(status(&state))
 }
 
-/// Opens the last meeting's report in a NEW BROWSER TAB: the report path
-/// is passed as a `file://` URL (URLs open as tabs), with a fallback to
+/// Opens the meeting's report in a NEW BROWSER TAB: the report path is
+/// passed as a `file://` URL (URLs open as tabs), with a fallback to
 /// launching the file in its default app if the URL open fails.
+///
+/// While a meeting is still recording, this opens the LIVE report — the
+/// self-refreshing file the engine rewrites on every committed segment —
+/// so the report can be watched without stopping the meeting.
 #[tauri::command]
 pub async fn meeting_open_report(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<()> {
-    let report = state
-        .meetings
-        .last_report()
-        .ok_or_else(|| CommandError::not_found("No meeting report available"))?;
     use tauri_plugin_opener::OpenerExt;
-    let url = report_file_url(&report.report_path);
+    let path: String = if state.meetings.is_recording() {
+        // Make sure the live file exists before opening it (it is seeded at
+        // start; this is belt-and-braces for a start that raced the open).
+        state.meetings.ensure_live_report();
+        let live = state
+            .meetings
+            .live_report_path()
+            .ok_or_else(|| CommandError::not_found("No live report available"))?;
+        live.to_string_lossy().to_string()
+    } else {
+        let report = state
+            .meetings
+            .last_report()
+            .ok_or_else(|| CommandError::not_found("No meeting report available"))?;
+        report.report_path
+    };
+    let url = report_file_url(&path);
     if let Err(e) = app.opener().open_url(&url, None::<&str>) {
         // Fallback: launch the file in its default app (new window).
         app.opener()
-            .open_path(&report.report_path, None::<&str>)
+            .open_path(&path, None::<&str>)
             .map_err(|e2| CommandError::internal(format!("open report: {e}; {e2}")))?;
     }
     Ok(())

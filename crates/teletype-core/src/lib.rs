@@ -32,6 +32,7 @@ pub mod learning;
 pub mod llm;
 pub mod meeting;
 pub mod meeting_report;
+pub mod rubric;
 pub mod persist;
 pub mod personalization;
 pub mod pipeline;

@@ -58,6 +58,7 @@ use teletype_core::meeting::{
     MeetingWord, MAX_CHUNK_CHARS,
 };
 use teletype_core::meeting_report::{render_report, ReportSummary};
+use teletype_core::rubric::{find_rubric, Rubric, RubricScore};
 use teletype_core::segmenter::{Segmenter, SegmenterConfig};
 use teletype_core::vad::VadDetector;
 use teletype_inference::manager::SpeechModelManager;
@@ -118,6 +119,10 @@ pub struct ReportData {
     /// inference provider ran the map-reduce pass.
     pub summary: Option<String>,
     pub action_items: Vec<String>,
+    /// The rubric selected at start (when the user picked one).
+    pub rubric: Option<Rubric>,
+    /// The LLM's score against the rubric; `None` when unscored.
+    pub rubric_scores: Option<RubricScore>,
     pub segments: Vec<ReportSegmentRow>,
 }
 
@@ -136,6 +141,11 @@ pub struct FinishedMeeting {
     pub report: ReportRef,
     pub transcript: MeetingTranscript,
     pub summary: Option<ReportSummary>,
+    /// The rubric selected at start (when the user picked one).
+    pub rubric: Option<Rubric>,
+    /// The LLM's score against the rubric; `None` when no rubric was
+    /// selected or no inference provider ran.
+    pub rubric_scores: Option<RubricScore>,
     pub started_at_ms: u64,
 }
 
@@ -153,6 +163,9 @@ struct ActiveMeeting {
     /// trailing partial block into the stream the same way dictation does.
     resampler: Arc<Mutex<Option<BlockResampler>>>,
     language: String,
+    /// The rubric selected at start (when the user picked one); carried
+    /// through to finalization for LLM scoring and the report.
+    rubric: Option<Rubric>,
     /// Last transcript text written to the live `report.html`; change
     /// detection so status polls don't rewrite the file every second.
     last_live_report: String,
@@ -240,7 +253,7 @@ impl MeetingEngine {
             Some(t) => t,
             None => return,
         };
-        let (id, title, started_at_ms, changed) = {
+        let (id, title, started_at_ms, changed, rubric) = {
             let mut inner = self.lock();
             let active = match inner.active.as_mut() {
                 Some(a) => a,
@@ -250,7 +263,13 @@ impl MeetingEngine {
             if changed {
                 active.last_live_report.clone_from(&live.text);
             }
-            (active.id.clone(), active.title.clone(), active.started_at_ms, changed)
+            (
+                active.id.clone(),
+                active.title.clone(),
+                active.started_at_ms,
+                changed,
+                active.rubric.clone(),
+            )
         };
         if !changed {
             return;
@@ -260,8 +279,56 @@ impl MeetingEngine {
             return;
         }
         let started_at = format_local_time(started_at_ms);
-        let html = render_report(&title, &started_at, &live, None);
+        let html = render_report(&title, &started_at, &live, None, rubric.as_ref(), None, true);
         let _ = write_atomic(&meeting_dir.join("report.html"), &html);
+    }
+
+    /// Seeds the live `report.html` if it does not exist yet, so the
+    /// report can be opened from the very first second of a meeting — the
+    /// browser tab shows the LIVE badge and updates as segments commit.
+    /// Without this, opening the live report before the first committed
+    /// segment pointed at a missing file.
+    pub fn ensure_live_report(&self) {
+        let (id, title, started_at_ms, rubric) = {
+            let inner = self.lock();
+            let active = match inner.active.as_ref() {
+                Some(a) => a,
+                None => return,
+            };
+            (
+                active.id.clone(),
+                active.title.clone(),
+                active.started_at_ms,
+                active.rubric.clone(),
+            )
+        };
+        let path = self.meetings_dir.join(&id).join("report.html");
+        if path.exists() {
+            return;
+        }
+        if fs::create_dir_all(self.meetings_dir.join(&id)).is_err() {
+            return;
+        }
+        let started_at = format_local_time(started_at_ms);
+        let html = render_report(
+            &title,
+            &started_at,
+            &MeetingTranscript::default(),
+            None,
+            rubric.as_ref(),
+            None,
+            true,
+        );
+        let _ = write_atomic(&path, &html);
+    }
+
+    /// The live `report.html` path while recording (rewritten on every
+    /// committed segment). The island and the recording view open this in
+    /// a new tab so the report can be watched mid-meeting — no stop needed.
+    pub fn live_report_path(&self) -> Option<std::path::PathBuf> {
+        let inner = self.lock();
+        let active = inner.active.as_ref()?;
+        Some(self.meetings_dir.join(&active.id).join("report.html"))
     }
 
     pub fn last_report(&self) -> Option<ReportRef> {
@@ -295,6 +362,8 @@ impl MeetingEngine {
                 .as_ref()
                 .map(|s| s.action_items.clone())
                 .unwrap_or_default(),
+            rubric: fm.rubric.clone(),
+            rubric_scores: fm.rubric_scores.clone(),
             segments: fm
                 .transcript
                 .segments
@@ -319,12 +388,24 @@ impl MeetingEngine {
     /// (`streaming_for_take`): a committer with its own engine handle for
     /// the selected model, loaded in the background, and a
     /// [`StreamingTake`] whose segmenter cuts the stream into utterances.
-    pub fn start(&self, app: &tauri::AppHandle, title: &str, device_id: &str) -> Result<String, String> {
+    pub fn start(
+        &self,
+        app: &tauri::AppHandle,
+        title: &str,
+        device_id: &str,
+        rubric_id: Option<&str>,
+    ) -> Result<String, String> {
         let state = app.state::<crate::AppState>();
         let settings = state.settings();
         let (model_path, kind) = resolve_speech_model(&settings, &state.models_dir);
         let language = effective_language_for_app(&state, kind);
         let model_id = settings.selected_speech_model.clone();
+
+        // The scoring rubric (e.g. "sales"): unknown ids are ignored rather
+        // than failing the start — a meeting must always be able to record.
+        let rubric = rubric_id
+            .filter(|r| !r.trim().is_empty())
+            .and_then(find_rubric);
 
         let stream: Option<Arc<Mutex<Option<StreamingTake>>>> =
             match streaming_provider_for(kind, &model_id) {
@@ -431,6 +512,7 @@ impl MeetingEngine {
             stream,
             resampler,
             language,
+            rubric,
             last_live_report: String::new(),
         });
         debug_assert_eq!(
@@ -439,6 +521,10 @@ impl MeetingEngine {
         );
         inner.phase = MeetingPhase::Recording;
         drop(inner);
+
+        // Seed the live report so it can be opened from second one (the
+        // LIVE badge + "no speech yet"); it is rewritten as segments commit.
+        self.ensure_live_report();
 
         // The live report is built in real time regardless of UI polling:
         // a lightweight thread refreshes report.html whenever new segments
@@ -543,6 +629,7 @@ impl MeetingEngine {
             samples: captured.samples,
             duration_ms: (captured.duration_secs * 1000.0) as u64,
             transcripts,
+            rubric: active.rubric,
         })
     }
 
@@ -603,6 +690,9 @@ pub struct FinalizeInput {
     /// the streaming path failed — the finalize step then falls back to a
     /// batch decode of `samples`.
     pub transcripts: Vec<Transcript>,
+    /// The rubric selected at start (when the user picked one); the
+    /// finalize step scores the transcript against it via the LLM.
+    pub rubric: Option<Rubric>,
 }
 
 /// Runs the finalization pipeline on the calling (blocking) thread:
@@ -652,14 +742,38 @@ pub fn finalize(
     //    the report to transcript-only; it never fails the meeting.
     let summary = summarize(inference, &transcript.text);
 
+    // 3b. LLM rubric score (when a rubric was selected): same best-effort
+    //     contract — no provider or a failed pass just leaves the report
+    //     unscored.
+    let rubric_scores = input
+        .rubric
+        .as_ref()
+        .and_then(|r| score_rubric(inference, r, &transcript.text));
+
     // 4. transcript.json + report.html.
     let transcript_json =
         serde_json::to_string_pretty(&transcript).unwrap_or_else(|_| "{}".to_string());
     write_atomic(&meeting_dir.join("transcript.json"), &transcript_json)
         .map_err(|e| format!("write transcript: {e}"))?;
 
+    // The rubric + its score, as a durable artifact next to the transcript
+    // (the report renders it too; this file is the machine-readable copy).
+    if let Some(r) = &input.rubric {
+        let artifact = serde_json::json!({ "rubric": r, "score": rubric_scores });
+        let json = serde_json::to_string_pretty(&artifact).unwrap_or_else(|_| "{}".to_string());
+        let _ = write_atomic(&meeting_dir.join("rubric.json"), &json);
+    }
+
     let started_at = format_local_time(input.started_at_ms);
-    let html = render_report(&input.title, &started_at, &transcript, summary.as_ref());
+    let html = render_report(
+        &input.title,
+        &started_at,
+        &transcript,
+        summary.as_ref(),
+        input.rubric.as_ref(),
+        rubric_scores.as_ref(),
+        false,
+    );
     let report_path = meeting_dir.join("report.html");
     write_atomic(&report_path, &html).map_err(|e| format!("write report: {e}"))?;
 
@@ -689,6 +803,8 @@ pub fn finalize(
         },
         transcript,
         summary,
+        rubric: input.rubric,
+        rubric_scores,
         started_at_ms: input.started_at_ms,
     })
 }
@@ -883,6 +999,177 @@ fn parse_summary(raw: &str) -> Option<ReportSummary> {
         summary,
         action_items,
     })
+}
+
+/// Scores a transcript against a rubric under the 4096-token
+/// llama-server context, with the same map-reduce shape as the summary:
+/// long meetings get short per-criterion *observations* per chunk, then
+/// one scoring pass over the combined observations. Best-effort: `None`
+/// when no provider is loaded or every pass fails.
+fn score_rubric(
+    inference: &Mutex<Option<Arc<dyn InferenceProvider>>>,
+    rubric: &Rubric,
+    text: &str,
+) -> Option<RubricScore> {
+    let provider = inference
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()?;
+    let chunks = chunk_text(text, MAX_CHUNK_CHARS);
+    if chunks.is_empty() {
+        return None;
+    }
+    if chunks.len() == 1 {
+        return score_pass(&provider, rubric, &chunks[0]);
+    }
+    // Map: per-chunk observations (plain text, cheap) — what each speaker
+    // did that bears on the rubric's criteria.
+    let mut observations = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        match observe_chunk(&provider, rubric, chunk) {
+            Some(o) => observations.push(o),
+            None => tracing::warn!(chunk = i, "meeting rubric: chunk observations failed"),
+        }
+    }
+    if observations.is_empty() {
+        return None;
+    }
+    let combined = observations.join("\n\n---\n\n");
+    let system = "You score a meeting against a rubric from combined per-chunk observations. \
+                  Base every score only on the observed evidence; when the evidence is thin, \
+                  score conservatively and say so in the note.";
+    let user = format!(
+        "Score this meeting against the rubric.\n\n{combined}"
+    );
+    let params = GenerationParams {
+        max_tokens: 900,
+        temperature: 0.0,
+        timeout: scaled_timeout(900),
+    };
+    let raw = provider
+        .generate_json(system, &user, params, &rubric_score_schema(rubric))
+        .ok()?;
+    parse_rubric_score(&raw)
+}
+
+/// One chunk, scored directly (short meetings skip the observation map).
+fn score_pass(provider: &Arc<dyn InferenceProvider>, rubric: &Rubric, chunk: &str) -> Option<RubricScore> {
+    let system = "You score a meeting transcript against a rubric. Judge only what is \
+                  actually said; cite the transcript in each note. Score each criterion \
+                  0–10 (0 = not demonstrated, 10 = exemplary) and an overall 0–10 that \
+                  weighs the criteria. List concrete strengths and improvements.";
+    let user = format!(
+        "Score this meeting transcript against the rubric.\n\nTranscript:\n{chunk}"
+    );
+    let params = GenerationParams {
+        max_tokens: 900,
+        temperature: 0.0,
+        timeout: scaled_timeout(900),
+    };
+    let raw = provider
+        .generate_json(system, &user, params, &rubric_score_schema(rubric))
+        .ok()?;
+    parse_rubric_score(&raw)
+}
+
+/// Map step: short observations from one chunk that bear on the rubric.
+fn observe_chunk(provider: &Arc<dyn InferenceProvider>, rubric: &Rubric, chunk: &str) -> Option<String> {
+    let criteria: Vec<String> = rubric
+        .criteria
+        .iter()
+        .map(|c| format!("- {} ({}): {}", c.name, c.id, c.description))
+        .collect();
+    let prompt = format!(
+        "You are taking notes for a meeting score against this rubric:\n{}\n\n\
+         Read this part of the meeting transcript and list the concrete observations \
+         (who said/did what) that bear on each criterion. Plain text, bullet points, \
+         under 200 words. If a criterion is not evidenced here, say \"not evidenced\". \
+         Do not score.\n\nTranscript part:\n{}",
+        criteria.join("\n"),
+        chunk
+    );
+    let params = GenerationParams {
+        max_tokens: 500,
+        temperature: 0.0,
+        timeout: scaled_timeout(500),
+    };
+    let raw = provider.generate(&prompt, params).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn rubric_score_schema(rubric: &Rubric) -> serde_json::Value {
+    let criteria_ids: Vec<serde_json::Value> = rubric
+        .criteria
+        .iter()
+        .map(|c| serde_json::json!(c.id))
+        .collect();
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "overall": { "type": "number" },
+            "scores": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "criterion": { "type": "string", "enum": criteria_ids },
+                        "score": { "type": "number", "minimum": 0, "maximum": 10 },
+                        "note": { "type": "string" }
+                    },
+                    "required": ["criterion", "score", "note"]
+                }
+            },
+            "strengths": { "type": "array", "items": { "type": "string" } },
+            "improvements": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["overall", "scores", "strengths", "improvements"]
+    })
+}
+
+fn parse_rubric_score(raw: &str) -> Option<RubricScore> {
+    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let overall = v.get("overall")?.as_f64()?.clamp(0.0, 10.0) as f32;
+    let scores = v
+        .get("scores")?
+        .as_array()?
+        .iter()
+        .filter_map(|s| {
+            Some(teletype_core::rubric::CriterionScore {
+                criterion: s.get("criterion")?.as_str()?.trim().to_string(),
+                score: s.get("score")?.as_f64()?.clamp(0.0, 10.0) as f32,
+                note: s.get("note")?.as_str()?.trim().to_string(),
+            })
+        })
+        .filter(|s| !s.criterion.is_empty())
+        .collect::<Vec<_>>();
+    let strengths = string_list(&v, "strengths");
+    let improvements = string_list(&v, "improvements");
+    if scores.is_empty() {
+        return None;
+    }
+    Some(RubricScore {
+        overall,
+        scores,
+        strengths,
+        improvements,
+    })
+}
+
+fn string_list(v: &serde_json::Value, key: &str) -> Vec<String> {
+    v.get(key)
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| a.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// `1765432123456` → "Tuesday, December 9, 2026, 9:05 AM" (local time).

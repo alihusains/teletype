@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.22 head=fad3d05 updated=2026-11-24 -->
+<!-- brain-freshness: version=v0.2.22 head=2306501 updated=2026-11-24 -->
 
 This file is the durable working memory for this project.
 
@@ -2643,7 +2643,7 @@ self-contained HTML report
 
 **Status:** accepted, implemented, verified (real-time streaming rework + report UX
 2026-11-11; live app on Windows: start → record with live commits → stop →
-same-page report + new-tab HTML)
+same-page report + new-tab HTML; island + rubric scoring 2026-11-24)
 
 **Decision:**
 1. A new **Meeting** screen (Record nav group, `calendar-check` icon) records
@@ -2697,6 +2697,45 @@ same-page report + new-tab HTML)
    "No AI summary" note; the report shows the mechanical overview).
 9. While a meeting is recording, dictation start is refused ("A meeting is
    recording. Stop it before using dictation.").
+10. **Meeting island** (`teletype-desktop/src/island.rs` + `ui/src/island.tsx`):
+   a small always-on-top, non-focusable, transparent window (label `island`,
+   440×92 in `tauri.conf.json`) shown on start, hidden on cancel/failure,
+   auto-hidden after the "report ready" moment. It polls `meeting_status` and
+   shows REC + timer + live word count + Report/Stop; clicking the body
+   navigates the main window to the Meeting screen via the
+   `meeting-island:go-to-meeting` event. It is **minimizable** (compact
+   dot+timer pill, click to expand) and **draggable** (native
+   `window.startDragging()` from the pill body, never from buttons); the drop
+   position persists in `<app data>/island-position.json` (logical points)
+   and is restored on the next show when it still fits the primary monitor's
+   work area (top-center fallback otherwise).
+11. **Rubric scoring** (`teletype-core/src/rubric.rs`): a meeting can be
+   judged against a named rubric — built-ins: `general` (default), `sales`,
+   `support`, `performance`, each 5 criteria with stable ids. The user picks
+   one (or none) at start (`meeting_start` takes `rubric_id`; unknown ids
+   degrade to no rubric, never a failed start; `meeting_rubrics` lists the
+   built-ins). Finalization runs a best-effort LLM pass (`score_rubric`,
+   same map-reduce shape as the summary: per-chunk observations → one
+   schema-constrained scoring call) producing `RubricScore` (overall 0–10,
+   per-criterion 0–10 + note, strengths, improvements). The durable
+   `rubric.json` artifact (rubric + score) is written next to the transcript;
+   the report and the same-page Done view render a Score section (colored
+   overall + per-criterion bars, green ≥ 7 / amber ≥ 4 / red below).
+   Without a model the rubric is listed **unscored** — never faked — and the
+   live report carries that unscored section from the first second.
+12. **Report visual design** (2026-11-24): the report is a finished document
+   — gradient hero with title + meta chips, Overview with a brand-purple
+   accent border, checkbox-style action items, stat tiles (duration / words
+   /
+   WPM / segments), speaker **avatars** (colored initials, stable palette of
+   8 colors + light tints), hoverable transcript rows, centered brand
+   footer. The app's Done view mirrors the palette (speaker dots + colored
+   names, accented Overview/Score cards). `render_report` signature:
+   `(title, started_at, transcript, summary, rubric, rubric_scores, live)`.
+13. **Live report seeding**: `start()` writes the initial `report.html`
+   (LIVE badge + "no speech yet" + unscored rubric section) so the live
+   report can be opened from second one — opening a missing file surfaced a
+   Windows "cannot find" dialog before the fix.
 
 **Context:** the user asked to record a meeting, stop it, and get a
 self-contained HTML report — and after the first batch-only cut, demanded
@@ -2709,23 +2748,23 @@ screen itself. The one-word-per-line symptom was a real bug: sherpa's
 `group_token_timings`, so every word had `end_ms < start_ms` and the
 1-second gap splitter cut every word into its own segment (see L091).
 
-**Evidence:** `cargo test -p teletype-core --lib meeting` 20/20 (state
-machine, chunking, report sections incl. Overview/Details fallbacks, HTML
-escaping, self-containment); meeting unit tests compile (the desktop test
-*binary* cannot launch on this Windows box — pre-existing 0xC0000139, also
-hits unrelated tests); `tsc --noEmit` clean; `cargo check` green for
-speech/core/desktop. Live CDP runs in the real app on Windows: streaming
-commit logged mid-recording (`streaming commit: 11776 ms segment` — the log
-line marks `submit_segment`; the decode lands in `committed` later via
-`poll_completed`); final reports show combined segments with `Speaker 1`
-labels and sane timings; report.html carries Overview + Details +
-action-items sections and stays self-contained (no script/http refs);
-the Done view renders the full report on the same page (Overview, stats
-grid, transcript, "Open in new tab"); `meeting_open_report` via
-`open_url` succeeds. Speaker→mic loopback test audio is below the VAD
-speech threshold in most automated runs (recorded peaks 248–472/32767),
-so live-text polls often stay null; real human speech drives the same VAD
-path dictation already uses.
+**Evidence:** `cargo test -p teletype-core --lib meeting` 25/25 (state
+machine, chunking, report sections incl. Score/Overview/Details fallbacks,
+HTML escaping, self-containment) + `rubric` 5/5; meeting unit tests compile
+(the desktop test *binary* cannot launch on this Windows box — pre-existing
+0xC0000139, also hits unrelated tests); `tsc --noEmit` clean; `cargo check`
+green for speech/core/desktop. Live CDP runs in the real app on Windows:
+streaming commit logged mid-recording; final reports show combined segments
+with `Speaker 1` labels and sane timings; report.html carries Overview +
+Score + Details + action-items sections and stays self-contained (no
+script/http refs); the Done view renders the full report on the same page;
+`meeting_open_report` via `open_url` succeeds; the island shows full →
+minimized (dot+timer) → expanded states, and a sales-rubric meeting
+produced a report with the unscored "Score — Sales call" section plus
+`rubric.json` (`{"rubric":{"id":"sales",...},"score":null}`). Speaker→mic
+loopback test audio is below the VAD speech threshold in most automated
+runs, so live-text polls often stay null; real human speech drives the same
+VAD path dictation already uses.
 
 **How to apply:** meeting audio lives in `<local app data>/meetings/`. The
 finalize thread picks the speech manager slot via `active_speech_manager`
