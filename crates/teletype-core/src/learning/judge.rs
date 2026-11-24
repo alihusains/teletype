@@ -813,7 +813,7 @@ fn contraction_pair(a: &str, b: &str) -> bool {
     let a = a.replace('’', "'");
     let b = b.replace('’', "'");
     CONTRACTIONS
-        .chunks_exact(2)
+        .as_chunks::<2>().0.iter()
         .any(|pair| pair[0] == a && pair[1] == b || pair[1] == a && pair[0] == b)
 }
 
