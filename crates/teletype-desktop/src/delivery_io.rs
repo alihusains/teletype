@@ -15,7 +15,6 @@
 //! the crate still compiles cross-platform.
 
 use std::sync::Arc;
-use std::sync::Mutex;
 
 #[cfg(target_os = "macos")]
 use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};

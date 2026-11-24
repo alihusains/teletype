@@ -27,7 +27,7 @@
 //! [`SendEvidence`] and formatted into one of three result strings:
 //! verified, unverified, or a hard `Err` when the send itself failed.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use teletype_core::context::ApplicationContext;
 use teletype_core::llm::CommandAction;

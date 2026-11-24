@@ -78,7 +78,7 @@ impl Platform for WindowsPlatform {
 fn foreground_app() -> Option<ApplicationContext> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        OpenProcess,
         PROCESS_QUERY_LIMITED_INFORMATION,
     };
     use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
@@ -119,7 +119,7 @@ fn query_image_name(handle: &windows::Win32::Foundation::HANDLE) -> Option<Strin
 
     const MAX_PATH: u32 = 260;
     let mut buf = [0u16; MAX_PATH as usize];
-    let mut size = MAX_PATH as u32;
+    let mut size = MAX_PATH;
 
     // SAFETY: buf is a valid writable wide buffer of `size` elements; handle is
     // valid with PROCESS_QUERY_LIMITED_INFORMATION.

@@ -69,7 +69,7 @@ fn focused_element() -> Option<IUIAutomationElement> {
     }
     // SAFETY: hwnd is the live foreground window handle; standard UIA
     // client query on a local COM object.
-    Some(unsafe { automation.GetFocusedElement() }.ok()?)
+    unsafe { automation.GetFocusedElement() }.ok()
 }
 
 fn automation() -> Result<IUIAutomation, String> {
