@@ -7,6 +7,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This file records user-visible changes; it does not claim feature parity with
 any other dictation product.
 
+## [0.2.22]
+
+### Added
+
+- A floating learned-word pill with Undo, a hover-pausable countdown and
+  added/updated provenance, plus a configurable 12-second undo window shared
+  with the tray.
+- All keyboard bindings, including transform shortcuts, now live in one
+  Shortcuts section inside Settings, with conflict detection and deep links
+  from Dictionary, Command Mode and AI Polish.
+
+### Fixed
+
+- Polish capitalizes sentences and repairs unambiguous subject-verb agreement
+  on every model path, including card-locked cleanup models.
+- The dictionary Forget control now also clears remembered refusals, and the
+  Learn-from tab shows the blocked-pair count.
+
 ## [0.2.21]
 
 ### Fixed

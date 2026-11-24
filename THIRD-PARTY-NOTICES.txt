@@ -147,6 +147,11 @@ JSON serialization. https://github.com/serde-rs/json
 License: MIT OR Apache-2.0
 SHA-2 hash functions. https://github.com/RustCrypto/hashes
 
+=== sentry 0.49.x ===
+License: Apache-2.0 OR MIT
+Crash, hang and error-log reporting, enabled only when the user turns on
+Send crash reports. https://github.com/getsentry/sentry-rust
+
 === thiserror 2.x ===
 License: MIT OR Apache-2.0
 Error type generation. https://github.com/dtolnay/thiserror
