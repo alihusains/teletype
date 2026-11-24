@@ -33,6 +33,38 @@ fn make_wav(path: &std::path::Path, secs: u32, rate: u32, hz: f64) {
     w.write_all(&data).unwrap();
 }
 
+/// Writes a stereo WAV with a 440 Hz tone in the left channel and the same
+/// tone at half amplitude in the right. The downmix should be non-silent and
+/// differ from either channel alone.
+fn make_stereo_wav(path: &std::path::Path, secs: u32, rate: u32, hz: f64) {
+    use std::io::Write;
+    let n = (secs * rate) as usize;
+    let mut data = Vec::with_capacity(n * 4);
+    for i in 0..n {
+        let left =
+            (8000.0 * (2.0 * std::f64::consts::PI * hz * i as f64 / rate as f64).sin()) as i16;
+        let right = (left as f64 * 0.5) as i16;
+        data.extend_from_slice(&left.to_le_bytes());
+        data.extend_from_slice(&right.to_le_bytes());
+    }
+    let mut w = std::fs::File::create(path).expect("create stereo wav");
+    let total = 36 + data.len() as u32;
+    w.write_all(b"RIFF").unwrap();
+    w.write_all(&total.to_le_bytes()).unwrap();
+    w.write_all(b"WAVE").unwrap();
+    w.write_all(b"fmt ").unwrap();
+    w.write_all(&16u32.to_le_bytes()).unwrap(); // fmt chunk size
+    w.write_all(&1u16.to_le_bytes()).unwrap(); // PCM
+    w.write_all(&2u16.to_le_bytes()).unwrap(); // stereo
+    w.write_all(&rate.to_le_bytes()).unwrap();
+    w.write_all(&(rate * 4).to_le_bytes()).unwrap(); // byte rate
+    w.write_all(&4u16.to_le_bytes()).unwrap(); // block align
+    w.write_all(&16u16.to_le_bytes()).unwrap(); // bits per sample
+    w.write_all(b"data").unwrap();
+    w.write_all(&(data.len() as u32).to_le_bytes()).unwrap();
+    w.write_all(&data).unwrap();
+}
+
 #[test]
 fn decodes_wav_to_16khz_mono() {
     let tmp = tempfile::TempDir::new().expect("temp dir");
@@ -65,4 +97,23 @@ fn resamples_44khz_wav_to_16khz() {
         (2.8..=3.2).contains(&secs),
         "expected ~3 s after 44.1k->16k resample, got {secs} s"
     );
+}
+
+#[test]
+fn decodes_stereo_wav_to_16khz_mono() {
+    let tmp = tempfile::TempDir::new().expect("temp dir");
+    let wav = tmp.path().join("tt_test_stereo.wav");
+    make_stereo_wav(&wav, 3, 16_000, 440.0);
+
+    let pcm = teletype_desktop_lib::decode_audio_file_public(&wav).expect("decode");
+
+    // A stereo file must downmix to one mono sample per frame: ~3 s at 16 kHz,
+    // not one sample per channel per decoded packet.
+    let secs = pcm.len() as f64 / TARGET_RATE as f64;
+    assert!(
+        (2.8..=3.2).contains(&secs),
+        "expected ~3 s of mono audio from a stereo file, got {secs} s"
+    );
+    let peak = pcm.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    assert!(peak > 0.1, "downmixed tone too quiet: peak {peak}");
 }

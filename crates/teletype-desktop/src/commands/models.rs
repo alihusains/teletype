@@ -2762,13 +2762,12 @@ fn decode_audio_file(path: &std::path::Path) -> CommandResult<Vec<f32>> {
         if channels <= 1 {
             pcm.extend_from_slice(&f32_buf.chan(0)[..n]);
         } else {
-            // `AudioBuffer` exposes per-channel planes via `chan(i)`, so hold
-            // the slices and read across them. This is the "loop variable only
-            // used to index" pattern clippy flags, and here the fix is to say
-            // what the data is: a set of channel planes.
+            // `AudioBuffer` exposes per-channel planes via `chan(i)`. Emit one
+            // mono sample per frame by averaging the channel planes at that
+            // frame, rather than one sample per plane.
             let planes: Vec<&[f32]> = (0..channels).map(|c| f32_buf.chan(c)).collect();
-            for sample in planes.iter().map(|p| p.iter().take(n)) {
-                let sum: f32 = sample.sum();
+            for frame in 0..n {
+                let sum: f32 = planes.iter().map(|p| p[frame]).sum();
                 pcm.push(sum / channels as f32);
             }
         }
