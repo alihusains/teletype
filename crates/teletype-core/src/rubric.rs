@@ -226,7 +226,6 @@ pub fn find_rubric(id: &str) -> Option<Rubric> {
     builtin_rubrics()
         .into_iter()
         .find(|r| r.id == id)
-        .map(|r| r)
 }
 
 #[cfg(test)]
