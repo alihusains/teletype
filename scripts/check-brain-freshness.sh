@@ -42,6 +42,11 @@ else
   else
     warn_msg "marker version '$mk_version' != latest tag '${tag:-none}'"
   fi
+  if [[ -n "$mk_head" && -n "$head" && "$mk_head" == "$head" ]]; then
+    pass 'marker head matches checkout HEAD'
+  else
+    warn_msg "marker head '$mk_head' != checkout HEAD '$head'"
+  fi
   mk_year=${mk_updated%%-*}
   topo_year=$(grep -o '\*\*Current work topology ([0-9]\{4\}' "$brain" | grep -o '[0-9]\{4\}' | sort -r | head -1)
   if [[ -n "$topo_year" && "$topo_year" == "$mk_year" ]]; then
