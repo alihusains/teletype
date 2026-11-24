@@ -220,7 +220,12 @@ in the app today.
 ```bash
 cargo test              # tests across core, speech, and inference
 cd ui && npm run typecheck
+cd ui && npm test
 ```
+
+Run `bash scripts/qa.sh --fast` before merging: it is the single-command gate
+that covers the Rust checks, the UI typecheck and Vitest suite, and the repo
+contracts.
 
 To rebuild the local LLM server binary used for polish:
 

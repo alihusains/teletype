@@ -75,6 +75,12 @@ ui_typecheck() {
   (cd ui && npx tsc --noEmit) >/dev/null 2>&1
 }
 
+# --- Stage 4b: UI unit tests (vitest) --------------------------------------
+ui_tests() {
+  (cd ui && npm test 2>&1) | tail -20
+  (cd ui && npm test) >/dev/null 2>&1
+}
+
 # --- Stage 5: UI production build ------------------------------------------
 ui_build() {
   (cd ui && npm run build 2>&1) | tail -8
@@ -150,12 +156,14 @@ stage "rust fmt (must be clean)" rust_fmt
 stage "clippy (must be clean)" rust_clippy
 stage "rust tests (workspace)" rust_tests
 stage "ui typecheck (tsc)" ui_typecheck
+stage "ui tests (vitest)" ui_tests
 stage "ui build (vite)" ui_build
 stage "release build" release_build
 stage "main thread responsive after background/foreground" main_thread_responsive
 stage "secret scan" secret_scan
 stage "ew/ leak scan" ew_leak_scan
 stage "static repo checks (pins, inventory, licenses)" repo_checks
+stage "ignored-test contract" bash scripts/check-ignored-tests.sh
 stage "eval gate + soak selfcheck" eval_gate
 
 echo

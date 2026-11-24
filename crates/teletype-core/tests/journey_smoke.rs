@@ -24,17 +24,15 @@
 //! the same traits production uses, so a signature change in a trait breaks
 //! these tests the same day it breaks the app.
 //!
-//! # Confirmed defects
+//! # BUG-xx defect tests
 //!
-//! Tests annotated `BUG-xx` reproduce a defect that is present in the code
-//! today. They are `#[ignore]`d so the suite stays green for CI, and are
-//! the reproduction for the corresponding finding. Run them all with:
+//! Every `BUG-xx` test in this suite is fixed and active. They all run in the
+//! normal `cargo test` run; none is excluded from CI.
 //!
-//! ```text
-//! cargo test -p teletype-core --test journey_smoke -- --ignored
-//! ```
-//!
-//! When a `BUG-xx` test starts passing, delete the `#[ignore]` line.
+//! Do not add an ignore attribute to this file: CI no longer has an
+//! `--ignored` step, so a skipped test here would silently disappear from the
+//! gate. A future defect reproduction that truly needs to be skipped requires
+//! an explicit CI gate alongside it, not a quiet skip.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

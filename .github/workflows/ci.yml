@@ -65,7 +65,7 @@ jobs:
   # 1) Cheap, compile-free gates. Fails in ~1m so a broken notices check does
   #    not cost a 20-minute wait to find out.
   checks:
-    name: Checks (notices, manifest, UI types)
+    name: Checks (notices, manifest, static gates)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,6 +83,8 @@ jobs:
         run: bash scripts/check-artifact-pins.sh
       - name: Check test suite inventory freeze
         run: python3 scripts/test-inventory.py --check
+      - name: Check ignored-test contract
+        run: bash scripts/check-ignored-tests.sh
       - name: Command-suite eval gate (self-test + frozen report)
         run: |
           python3 scripts/eval/command_suite_gate.py --self-test
@@ -93,17 +95,6 @@ jobs:
         run: bash scripts/soak.sh --selfcheck
       - name: Check the updater manifest assembly
         run: bash scripts/check-updater-manifest.sh
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: ui/package-lock.json
-      - name: Install UI deps
-        run: cd ui && npm ci
-      - name: UI typecheck
-        run: cd ui && npx tsc --noEmit
-      - name: UI tests (vitest)
-        run: cd ui && npm test
 
   # 2) Format + clippy. Split from the test jobs so a lint failure does not
   #    wait behind two C/C++ builds, and so clippy has its own cargo cache
@@ -235,9 +226,12 @@ jobs:
             cargo-target-ci-core-${{ runner.arch }}-
       - name: Rust tests (core)
         run: cargo test -p teletype-core
-      - name: Confirmed defects still reproduce
-        run: cargo test -p teletype-core --test journey_smoke -- --ignored
-        continue-on-error: true
+      - name: No ignored journey-smoke defects
+        run: |
+          if grep -Rq '#[ignore' crates/teletype-core/tests/journey_smoke.rs; then
+            echo "::error::journey_smoke.rs contains ignored tests but CI no longer runs --ignored; fix the header or restore a gate"
+            exit 1
+          fi
       # speech builds whisper.cpp through parakeet-sys, so this step is not
       # as cheap as its crate suggests. It lives here rather than in its own
       # job because it is the same dependency graph teletype-inference needs.
@@ -974,8 +968,9 @@ jobs:
           name: models-check-report
           path: scripts/models-check.sh
 
-  # Phase 9: UI gate — typecheck (already in `checks`) plus the vitest
-  # suite, which the checks job deliberately does not run.
+  # Phase 9: UI gate — the only job that installs UI deps and runs the
+  # typecheck + vitest suite. Keep it that way: a second UI gate in another
+  # job doubles install/test cost and creates competing sources of truth.
   ui:
     name: UI (typecheck + vitest)
     runs-on: macos-latest
