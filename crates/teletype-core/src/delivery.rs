@@ -609,32 +609,32 @@ pub fn deliver(
                     }
                     true
                 });
-                let outcome = match paste_and_verify(text, io) {
-                    Some(outcome) => outcome,
+                let (outcome, count_after_our_write) = match paste_and_verify(text, io) {
+                    (Some(outcome), count) => (outcome, count),
                     // F-19: `paste_and_verify` now returns `None` only when
                     // the clipboard write itself failed (no clipboard at
                     // all), in which case the typed / set-value routes are
                     // the only remaining options. An inconclusive
                     // verification is a `Some(ClipboardOnly)` above and
                     // never reaches here.
-                    None => fallback(text, io),
+                    (None, count) => (fallback(text, io), count),
                 };
                 // F-18: restore exactly once, on every outcome of the
                 // clipboard path, but only if the clipboard still holds our
                 // write. A `None` snapshot means "we could not read it, do
-                // not touch it". A snapshot whose `change_count` has moved
-                // since we wrote means the user or another app copied
-                // something in the meantime, and restoring would overwrite
-                // their copy, so the restore is skipped. A `None` count
-                // (platform without a change count, or a snapshot taken
-                // before this guard existed) restores unconditionally, the
-                // old behaviour.
+                // not touch it". Compare the live count against the count
+                // captured immediately AFTER our own `set_text`, not the
+                // snapshot's pre-write count: writing bumps the count on
+                // macOS, so comparing against the snapshot would always
+                // conclude the clipboard moved and skip the restore. If the
+                // count moved again after our write, the user or another
+                // app copied something in the meantime and restoring would
+                // overwrite their copy, so skip. A `None` count (platform
+                // without a change count) restores unconditionally, the old
+                // behaviour.
                 if let Some(snap) = &snapshot {
-                    let still_ours = match snap.change_count {
-                        Some(captured) => io
-                            .clipboard
-                            .change_count()
-                            .is_none_or(|now| now == captured),
+                    let still_ours = match count_after_our_write {
+                        Some(ours) => io.clipboard.change_count().is_none_or(|now| now == ours),
                         None => true,
                     };
                     if still_ours {
@@ -749,12 +749,16 @@ fn snapshot_size(snap: &ClipboardSnapshot) -> usize {
 ///   grace re-poll: the paste may genuinely not have landed. The outcome
 ///   is `ClipboardOnly`: the text stays on the clipboard as a kept write
 ///   and the caller tells the user to press the paste shortcut.
-fn paste_and_verify(text: &str, io: &DeliveryIo) -> Option<DeliveryOutcome> {
+fn paste_and_verify(text: &str, io: &DeliveryIo) -> (Option<DeliveryOutcome>, Option<u64>) {
     if io.clipboard.set_text(text).is_err() {
         // No clipboard at all: the paste key would paste the user's old
         // clipboard, which is worse than nothing. Fall through.
-        return None;
+        return (None, None);
     }
+    // The count that represents OUR write. The restore guard must compare
+    // against this, not the pre-write snapshot count: writing bumps the
+    // count on macOS, so the snapshot count is always stale by one.
+    let count_after_our_write = io.clipboard.change_count();
     let key_sent = (io.paste_key)();
     if !key_sent {
         // The keystroke failed. The text is on the clipboard. Fall through
@@ -762,12 +766,12 @@ fn paste_and_verify(text: &str, io: &DeliveryIo) -> Option<DeliveryOutcome> {
         // is no risk of a second copy, and the typed / set-value routes are
         // the only remaining options. If those also fail, the cascade holds
         // the text.
-        return None;
+        return (None, count_after_our_write);
     }
 
     let verified = verify_paste(text, io);
     if verified {
-        return Some(DeliveryOutcome::PastedVerified);
+        return (Some(DeliveryOutcome::PastedVerified), count_after_our_write);
     }
     // The first pass did not prove the paste. Three cases:
     //
@@ -793,11 +797,14 @@ fn paste_and_verify(text: &str, io: &DeliveryIo) -> Option<DeliveryOutcome> {
     //   clipboard-kept path is the safer answer to an inconclusive
     //   read-back.
     if io.field.selected_text().is_none() || text.len() < MIN_VERIFY_LEN {
-        Some(DeliveryOutcome::PastedUnverified)
+        (
+            Some(DeliveryOutcome::PastedUnverified),
+            count_after_our_write,
+        )
     } else if verify_paste_grace(text, io) {
-        Some(DeliveryOutcome::PastedVerified)
+        (Some(DeliveryOutcome::PastedVerified), count_after_our_write)
     } else {
-        Some(DeliveryOutcome::ClipboardOnly)
+        (Some(DeliveryOutcome::ClipboardOnly), count_after_our_write)
     }
 }
 
@@ -1188,6 +1195,89 @@ mod tests {
             (set_calls, type_calls, clip_set_calls, restore_calls),
             typed,
         )
+    }
+
+    /// A clipboard fake that models the real OS pasteboard: set_text
+    /// increments a shared change count, and snapshot captures the
+    /// pre-write count, exactly as the platform adapter does. The old fixed-
+    /// count fake hid the F-18 bug because our own write never moved the
+    /// count, making the broken guard look correct.
+    struct CountingClipboard {
+        count: Arc<std::sync::atomic::AtomicU64>,
+        restore_calls: Arc<std::sync::atomic::AtomicU32>,
+        snapshot: ClipboardSnapshot,
+    }
+
+    impl ClipboardIo for CountingClipboard {
+        fn set_text(&self, _text: &str) -> Result<(), String> {
+            self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        fn snapshot(&self) -> Option<ClipboardSnapshot> {
+            Some(self.snapshot.clone())
+        }
+        fn restore(&self, _snapshot: &ClipboardSnapshot) {
+            self.restore_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        fn change_count(&self) -> Option<u64> {
+            Some(self.count.load(std::sync::atomic::Ordering::SeqCst))
+        }
+    }
+
+    /// Build a DeliveryIo around a CountingClipboard that starts at
+    /// initial_count. bump_on_paste makes the paste-key closure simulate
+    /// a user copy landing between our write and the restore guard. The
+    /// field is pre-seeded with the dictated text so verification succeeds.
+    fn make_counting_io(
+        initial_count: u64,
+        bump_on_paste: bool,
+    ) -> (
+        DeliveryIo,
+        Arc<std::sync::atomic::AtomicU64>,
+        Arc<std::sync::atomic::AtomicU32>,
+    ) {
+        let count = Arc::new(std::sync::atomic::AtomicU64::new(initial_count));
+        let restore_calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let io = DeliveryIo {
+            field: Box::new(TestField {
+                text: Arc::new(std::sync::Mutex::new("hello world".to_string())),
+                secure: false,
+                set_ok: true,
+                writable_focus: true,
+                url_field: false,
+                readable: true,
+                set_calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            }),
+            typer: Box::new(TestTyper {
+                ok: true,
+                typed: Arc::new(std::sync::Mutex::new(String::new())),
+                calls: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            }),
+            clipboard: Box::new(CountingClipboard {
+                count: count.clone(),
+                restore_calls: restore_calls.clone(),
+                snapshot: ClipboardSnapshot {
+                    parts: Vec::new(),
+                    items: vec![vec![ClipboardPart {
+                        uti: ClipboardSnapshot::TEXT.to_string(),
+                        data: b"user's clipboard".to_vec(),
+                    }]],
+                    change_count: Some(initial_count),
+                },
+            }),
+            paste_key: {
+                let count = count.clone();
+                Box::new(move || {
+                    if bump_on_paste {
+                        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    true
+                })
+            },
+            accessibility_trusted: Box::new(|| true),
+        };
+        (io, count, restore_calls)
     }
 
     fn default_policy() -> DeliveryPolicy {
@@ -1993,55 +2083,36 @@ mode = "bogus"
     }
 
     #[test]
-    fn clipboard_restore_skipped_when_change_count_moved() {
-        // F-18: the snapshot captured a change count, and the live count has
-        // moved since (the user or another app copied something in the
-        // meantime). The restore must be skipped, so the user's new copy is
-        // not overwritten with the old snapshot.
-        let mut snap = snap_with_text("user's clipboard");
-        snap.change_count = Some(42);
-        let (io, _field, (_set, _type_calls, _clip, restore), _typed) = make_io(
-            "",
-            false,
-            true,
-            true,
-            true,
-            Some(snap),
-            true,
-            Some(43), // live count moved: 42 -> 43
-        );
+    fn clipboard_restore_runs_when_only_our_write_moved_the_count() {
+        // The clipboard starts at 41; our set_text bumps it to 42 and no one
+        // else writes. The live count (42) differs from the snapshot's
+        // pre-write count (41), but the restore must still run. The old
+        // fixed-count fake could not catch this bug.
+        let (io, count, restore_calls) = make_counting_io(41, false);
         let policy = default_policy();
-        let _ = deliver("hello world", None, &policy, &io);
+        let outcome = deliver("hello world", None, &policy, &io);
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 42);
+        assert_eq!(outcome, DeliveryOutcome::PastedVerified);
         assert_eq!(
-            restore.load(std::sync::atomic::Ordering::SeqCst),
-            0,
-            "restore must be skipped when the change count moved"
+            restore_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "restore must run when only our write moved the count"
         );
     }
 
     #[test]
-    fn clipboard_restore_runs_when_change_count_unchanged() {
-        // F-18: the snapshot captured a change count, and the live count has
-        // not moved since. The restore runs, so the user's clipboard is
-        // restored.
-        let mut snap = snap_with_text("user's clipboard");
-        snap.change_count = Some(42);
-        let (io, _field, (_set, _type_calls, _clip, restore), _typed) = make_io(
-            "",
-            false,
-            true,
-            true,
-            true,
-            Some(snap),
-            true,
-            Some(42), // live count unchanged: 42 -> 42
-        );
+    fn clipboard_restore_skipped_when_user_copies_after_our_write() {
+        // Our write bumps 41 -> 42, then a user copy (simulated in the
+        // paste-key closure) bumps 42 -> 43. The restore must be skipped so
+        // the user's new copy is not overwritten with the old snapshot.
+        let (io, count, restore_calls) = make_counting_io(41, true);
         let policy = default_policy();
         let _ = deliver("hello world", None, &policy, &io);
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 43);
         assert_eq!(
-            restore.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "restore must run when the change count is unchanged"
+            restore_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "restore must be skipped when the user copied after our write"
         );
     }
 
