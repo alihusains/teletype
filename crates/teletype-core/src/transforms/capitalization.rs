@@ -80,9 +80,9 @@ fn title_dot(chars: &[char], i: usize) -> bool {
 
 /// Capitalizes the first letter of every sentence, line and quoted sentence.
 ///
-/// Idempotent: an uppercase or non-alphabetic lead is left alone. Abbreviations,
+/// Idempotent: an uppercase or non-ASCII lead is left alone. Abbreviations,
 /// initials, decimals, domains and open quotes are handled without changing
-/// any other character.
+/// any other character. Other scripts are never touched.
 pub fn capitalize_sentences(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
@@ -100,8 +100,11 @@ pub fn capitalize_sentences(text: &str) -> String {
                 out.push(*c);
                 continue;
             }
-            if c.is_alphabetic() {
-                out.extend(c.to_uppercase());
+            // English-only by design: scripts with no case (CJK) or a
+            // different case system (Cyrillic, Arabic) stay byte-for-byte.
+            // The i18n round-trip test depends on this.
+            if c.is_ascii_lowercase() {
+                out.push(c.to_ascii_uppercase());
             } else {
                 out.push(*c);
             }

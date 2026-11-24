@@ -1070,7 +1070,13 @@ fn run_single_chunk(
         // accepted Polish result gets the formatting guarantee.
         if outcome.transformed {
             outcome.text = super::agreement::fix_common_agreement(&outcome.text);
-            outcome.text = super::capitalization::capitalize_sentences(&outcome.text);
+            // Sentence casing is an English formatting rule (Wispr Flow
+            // ships it in English first). Other languages keep their exact
+            // bytes, including lowercase Latin scripts such as German.
+            let lang = ctx.language.to_ascii_lowercase();
+            if lang.is_empty() || lang.starts_with("en") {
+                outcome.text = super::capitalization::capitalize_sentences(&outcome.text);
+            }
         }
     }
     outcome

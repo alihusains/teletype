@@ -228,7 +228,19 @@ fn i18n_roundtrip_every_language_byte_for_byte() {
         // ITN and emoji restore. For the non-Latin cases the gate is off
         // by construction (ITN is English-gated), so the text must pass
         // through untouched regardless of what the polish mock does.
-        assert_roundtrip(&fx, lang, text);
+        if lang.starts_with("en") {
+            // English Polish now guarantees sentence-start capitalization;
+            // it is the only deterministic mutation allowed here.
+            let r = dictate(&fx, lang, text, Some(&EchoLlm));
+            assert_eq!(
+                r.final_text,
+                teletype_core::transforms::capitalization::capitalize_sentences(text),
+                "[{lang}] pipeline changed more than the English lead: {text:?} -> {final:?}",
+                final = r.final_text
+            );
+        } else {
+            assert_roundtrip(&fx, lang, text);
+        }
         eprintln!("i18n [{lang}] ({why}): {text:?} -> OK");
     }
 }
