@@ -45,6 +45,7 @@ use teletype_core::personalization::UserProfile;
 use teletype_core::pipeline::{InputSource, Pipeline, PipelineResult, UnifiedInput};
 use teletype_core::platform::MockPlatform;
 use teletype_core::style::StyleProfileStore;
+use teletype_core::transforms::capitalization::capitalize_sentences;
 use teletype_core::transforms::TransformStore;
 
 // ---------------------------------------------------------------------------
@@ -178,13 +179,15 @@ fn stress_1000_back_to_back_dictations_single_threaded() {
     for i in 0..N {
         let text = corpus(i);
         let r = run_one(&stores, &text);
-        // Every output must be byte-for-byte its input: the echo mock
-        // returns the input unchanged and no deterministic pass may mutate
-        // it (ITN is English-gated and these contain no English number
-        // words; filler removal is off; no autotext triggers present).
+        // The echo mock returns the input unchanged; the only deterministic
+        // pass allowed to touch it is Polish sentence capitalization, which
+        // now runs on every accepted polish result. Everything else (ITN,
+        // fillers, autotext) is off for this corpus. Compare against the
+        // canonical capitalization rather than the raw input so the
+        // concurrency invariant stays strict about all other mutations.
         assert_eq!(
-            r.final_text.as_bytes(),
-            text.as_bytes(),
+            r.final_text,
+            capitalize_sentences(&text),
             "dictation {i} mutated its input: {text:?} -> {:?}",
             r.final_text
         );
@@ -254,8 +257,8 @@ fn stress_1000_dictations_4_threads_shared_read_only_stores() {
                     let text = corpus(idx);
                     let r = run_one(&stores, &text);
                     assert_eq!(
-                        r.final_text.as_bytes(),
-                        text.as_bytes(),
+                        r.final_text,
+                        capitalize_sentences(&text),
                         "thread {t} dictation {i} mutated its input: {text:?} -> {:?}",
                         r.final_text
                     );
