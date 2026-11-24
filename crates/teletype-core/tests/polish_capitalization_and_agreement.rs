@@ -1,3 +1,4 @@
+// claim: polish-quality
 //! Polish must keep Wispr Flow's formatting promise: the model edits words,
 //! while sentence casing and unambiguous agreement errors are guaranteed in
 //! code. This covers the card-locked cleanup path, which cannot be reprompted.
