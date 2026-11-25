@@ -703,6 +703,7 @@ pub fn finalize(
     speech: &SpeechModelManager<Box<dyn SpeechProvider>>,
     inference: &Mutex<Option<Arc<dyn InferenceProvider>>>,
     engine_label: &str,
+    models_dir: &std::path::Path,
     input: FinalizeInput,
 ) -> Result<FinishedMeeting, String> {
     let meetings_dir = engine.dir();
@@ -736,19 +737,46 @@ pub fn finalize(
     transcript.duration_ms = input.duration_ms;
     transcript.engine = Some(engine_label.to_string());
     transcript.segments = segments_from_words(&transcript.words);
-    label_single_speaker(&mut transcript);
 
-    // 3. LLM summary: best-effort. A missing or failing provider degrades
-    //    the report to transcript-only; it never fails the meeting.
-    let summary = summarize(inference, &transcript.text);
+    // 2b. Speaker labels: real diarization when the models are installed and
+    //     more than one speaker was found; otherwise the single-mic baseline
+    //     (everything "Speaker 1").
+    let diarized = teletype_speech::diarization::SpeakerDiarizer::try_new(models_dir)
+        .and_then(|d| d.process(&input.samples))
+        .filter(|segs| {
+            segs
+                .iter()
+                .map(|s| s.speaker)
+                .collect::<std::collections::BTreeSet<u32>>()
+                .len()
+                >= 2
+        });
+    match &diarized {
+        Some(segs) => {
+            let speakers = segs
+                .iter()
+                .map(|s| s.speaker)
+                .collect::<std::collections::BTreeSet<u32>>()
+                .len();
+            label_with_diarization(&mut transcript, segs);
+            tracing::info!(
+                speakers,
+                segments = segs.len(),
+                "meeting diarization: {speakers} speakers"
+            );
+        }
+        None => {
+            label_single_speaker(&mut transcript);
+        }
+    }
 
-    // 3b. LLM rubric score (when a rubric was selected): same best-effort
-    //     contract — no provider or a failed pass just leaves the report
-    //     unscored.
-    let rubric_scores = input
-        .rubric
-        .as_ref()
-        .and_then(|r| score_rubric(inference, r, &transcript.text));
+    // 3. LLM enrichment: summary + action items, and (when a rubric was
+    //    selected) the rubric score — in the fewest calls the 4096-token
+    //    llama-server context allows. Best-effort: a missing or failing
+    //    provider degrades the report to transcript-only; it never fails
+    //    the meeting.
+    let (summary, rubric_scores) =
+        enrich(inference, input.rubric.as_ref(), &transcript.text);
 
     // 4. transcript.json + report.html.
     let transcript_json =
@@ -855,6 +883,60 @@ fn label_single_speaker(transcript: &mut MeetingTranscript) {
     }
 }
 
+/// Stable "Speaker N" labels (by first appearance) from diarization
+/// segments: each word/segment takes the speaker of the segment containing
+/// its midpoint, falling back to the nearest segment between utterances.
+fn label_with_diarization(
+    transcript: &mut MeetingTranscript,
+    segs: &[teletype_speech::diarization::DiarizationSegment],
+) {
+    let mut order: Vec<u32> = Vec::new();
+    for s in segs {
+        if !order.contains(&s.speaker) {
+            order.push(s.speaker);
+        }
+    }
+    let label = |sp: u32| {
+        order
+            .iter()
+            .position(|x| *x == sp)
+            .map(|i| format!("Speaker {}", i + 1))
+            .unwrap_or_else(|| SPEAKER_LABEL.to_string())
+    };
+    let speaker_at = |ms: u64| -> Option<u32> {
+        segs
+            .iter()
+            .find(|s| ms >= s.start_ms && ms < s.end_ms)
+            .map(|s| s.speaker)
+            .or_else(|| {
+                segs
+                    .iter()
+                    .min_by_key(|s| {
+                        if ms < s.start_ms {
+                            s.start_ms - ms
+                        } else if ms >= s.end_ms {
+                            ms.saturating_sub(s.end_ms)
+                        } else {
+                            0
+                        }
+                    })
+                    .map(|s| s.speaker)
+            })
+    };
+    for word in &mut transcript.words {
+        let mid = (word.start_ms + word.end_ms) / 2;
+        if let Some(sp) = speaker_at(mid) {
+            word.speaker = Some(label(sp));
+        }
+    }
+    for segment in &mut transcript.segments {
+        let mid = (segment.start_ms + segment.end_ms) / 2;
+        if let Some(sp) = speaker_at(mid) {
+            segment.speaker = Some(label(sp));
+        }
+    }
+}
+
 /// Transcribes a meeting's samples. `NoSpeech` degrades to an empty
 /// transcript (the report says "No speech was captured") instead of failing.
 fn transcribe_meeting(
@@ -894,92 +976,258 @@ fn transcribe_meeting(
     }
 }
 
-/// Map-reduce summary under the 4096-token llama-server context.
-fn summarize(
+/// The LLM enrichment pass: summary + action items, and (when a rubric is
+/// selected) the rubric score — in as few calls as the 4096-token
+/// llama-server context allows:
+///
+/// - 1 chunk  → 1 call returning everything
+/// - N chunks → N partial calls (summary + actions + rubric-relevant
+///              observations) + 1 reduce call (final summary + actions +
+///              score)
+///
+/// Versus the previous two separate passes (2N+2 calls with a rubric),
+/// this halves the LLM work, which is the dominant finalization cost on a
+/// CPU llama-server. Best-effort: `None` components when no provider is
+/// loaded or a pass fails; the transcript is never affected.
+fn enrich(
     inference: &Mutex<Option<Arc<dyn InferenceProvider>>>,
+    rubric: Option<&Rubric>,
     text: &str,
-) -> Option<ReportSummary> {
-    let provider = inference
+) -> (Option<ReportSummary>, Option<RubricScore>) {
+    let provider = match inference
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .clone()?;
+        .clone()
+    {
+        Some(p) => p,
+        None => return (None, None),
+    };
     let chunks = chunk_text(text, MAX_CHUNK_CHARS);
     if chunks.is_empty() {
-        return None;
+        return (None, None);
     }
     if chunks.len() == 1 {
-        return summarize_chunk(&provider, &chunks[0]);
+        return match provider
+            .generate_json(
+                &enrich_system(rubric.is_some()),
+                &format!("Transcript:\n{}", chunks[0]),
+                GenerationParams {
+                    max_tokens: 1200,
+                    temperature: 0.0,
+                    timeout: scaled_timeout(1200),
+                },
+                &enrich_schema(rubric),
+            )
+        {
+            Ok(raw) => parse_enrich(&raw, rubric),
+            Err(e) => {
+                tracing::warn!("meeting enrich: single pass failed: {e}");
+                (None, None)
+            }
+        };
     }
-    // Map: one partial summary per chunk. A failed chunk is skipped; the
-    // partial set still yields a (partial) report summary.
-    let mut partials = Vec::new();
+    // Map: one partial per chunk. A failed chunk is skipped; the partial
+    // set still yields a (partial) enrichment.
+    let mut partials: Vec<PartialEnrichment> = Vec::new();
     for (i, chunk) in chunks.iter().enumerate() {
-        match summarize_chunk(&provider, chunk) {
+        match partial_enrichment(&provider, rubric, chunk) {
             Some(p) => partials.push(p),
-            None => tracing::warn!(chunk = i, "meeting summary: chunk failed"),
+            None => tracing::warn!(chunk = i, "meeting enrich: chunk pass failed"),
         }
     }
     if partials.is_empty() {
-        return None;
+        return (None, None);
     }
-    // Reduce: combine the partials into one summary + action list.
+    // Reduce: combine the partials into one summary + actions + score.
     let combined = partials
         .iter()
         .map(|p| {
             format!(
-                "Summary: {}\nAction items: {}",
+                "Summary: {}\nAction items: {}\nObservations: {}",
                 p.summary,
                 if p.action_items.is_empty() {
                     "(none)".to_string()
                 } else {
                     p.action_items.join("; ")
+                },
+                if p.observations.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    p.observations.join("; ")
                 }
             )
         })
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");
-    let system = "You combine partial summaries of the same meeting into one consistent summary. \
-                  Keep it concise and factual; merge duplicate action items.";
-    let user = format!(
-        "Combine these partial summaries of one meeting into a single summary and one list of \
-         explicit action items.\n\n{combined}"
-    );
-    let params = GenerationParams {
-        max_tokens: 700,
-        temperature: 0.0,
-        timeout: scaled_timeout(700),
+    let system = "You combine partial notes from the same meeting into one consistent summary                   and one list of explicit action items. Keep it concise and factual; merge                   duplicate action items. ";
+    let system = if rubric.is_some() {
+        format!(
+            "{system}Score the meeting against the rubric from the combined observations:              base every score only on the observed evidence; when the evidence is thin, score              conservatively and say so in the note."
+        )
+    } else {
+        system.into()
     };
-    let raw = provider
-        .generate_json(system, &user, params, &summary_schema())
-        .ok()?;
-    parse_summary(&raw)
+    let user = format!("Combine these partial notes from one meeting.\n\n{combined}");
+    match provider
+        .generate_json(
+            &system,
+            &user,
+            GenerationParams {
+                max_tokens: 1200,
+                temperature: 0.0,
+                timeout: scaled_timeout(1200),
+            },
+            &enrich_schema(rubric),
+        )
+    {
+        Ok(raw) => parse_enrich(&raw, rubric),
+        Err(e) => {
+            tracing::warn!("meeting enrich: reduce pass failed: {e}");
+            (None, None)
+        }
+    }
 }
 
-fn summarize_chunk(provider: &Arc<dyn InferenceProvider>, chunk: &str) -> Option<ReportSummary> {
-    let system = "You summarize meeting transcripts. Be concise and factual. \
-                  Extract only explicit action items (who should do what); do not invent any.";
-    let user = format!(
-        "Summarize this part of a meeting transcript in a few sentences, and list its explicit \
-         action items.\n\n{chunk}"
-    );
-    let params = GenerationParams {
-        max_tokens: 600,
-        temperature: 0.0,
-        timeout: scaled_timeout(600),
-    };
-    let raw = provider.generate_json(system, &user, params, &summary_schema()).ok()?;
-    parse_summary(&raw)
+/// One map-step result: the chunk's summary, its explicit action items,
+/// and (with a rubric) the concrete observations that bear on the
+/// criteria.
+struct PartialEnrichment {
+    summary: String,
+    action_items: Vec<String>,
+    observations: Vec<String>,
 }
 
-fn summary_schema() -> serde_json::Value {
-    serde_json::json!({
+fn partial_enrichment(
+    provider: &Arc<dyn InferenceProvider>,
+    rubric: Option<&Rubric>,
+    chunk: &str,
+) -> Option<PartialEnrichment> {
+    let system = "You are taking notes on a part of a meeting transcript. Summarize this part \n                  in a few sentences (concise, factual) and list its explicit action items \n                  (who should do what; do not invent any). ";
+    let system = match rubric {
+        Some(r) => {
+            let criteria: Vec<String> = r
+                .criteria
+                .iter()
+                .map(|c| format!("- {}: {}", c.name, c.description))
+                .collect();
+            format!(
+                "{system}Also note the concrete observations (who said/did what) that bear on \n                 these rubric criteria; if a criterion is not evidenced here, say (not \n                 evidenced). Do not score.
+Rubric criteria:
+{}",
+                criteria.join("
+")
+            )
+        }
+        None => system.into(),
+    };
+    let schema = serde_json::json!({
         "type": "object",
         "properties": {
             "summary": { "type": "string" },
-            "action_items": { "type": "array", "items": { "type": "string" } }
+            "action_items": { "type": "array", "items": { "type": "string" } },
+            "observations": { "type": "array", "items": { "type": "string" } }
         },
-        "required": ["summary", "action_items"]
+        "required": ["summary", "action_items", "observations"]
+    });
+    let raw = provider
+        .generate_json(
+            &system,
+            &format!("Transcript part:\n{chunk}"),
+            GenerationParams {
+                max_tokens: 800,
+                temperature: 0.0,
+                timeout: scaled_timeout(800),
+            },
+            &schema,
+        )
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let summary = v.get("summary")?.as_str()?.trim().to_string();
+    if summary.is_empty() {
+        return None;
+    }
+    Some(PartialEnrichment {
+        action_items: string_list(&v, "action_items"),
+        observations: string_list(&v, "observations"),
+        summary,
     })
+}
+
+/// The final-pass system prompt; the rubric instructions are appended when
+/// a rubric is selected.
+fn enrich_system(has_rubric: bool) -> String {
+    let base = "You analyze a meeting transcript. Be concise and factual. Summarize it in a                 few sentences and extract only explicit action items (who should do what); do                 not invent any.";
+    if !has_rubric {
+        return base.into();
+    }
+    format!(
+        "{base} Judge the meeting against the rubric: score each criterion 0-10 (0 = not          demonstrated, 10 = exemplary) and an overall 0-10 that weighs the criteria. Cite the          transcript in each note and list concrete strengths and improvements. Judge only          what is actually said."
+    )
+}
+
+/// The final-pass schema: summary + actions, plus the rubric score fields
+/// when a rubric is selected.
+fn enrich_schema(rubric: Option<&Rubric>) -> serde_json::Value {
+    let mut properties = serde_json::json!({
+        "summary": { "type": "string" },
+        "action_items": { "type": "array", "items": { "type": "string" } }
+    });
+    let mut required: Vec<String> = vec!["summary".into(), "action_items".into()];
+    if let Some(r) = rubric {
+        let criteria_ids: Vec<serde_json::Value> =
+            r.criteria.iter().map(|c| serde_json::json!(c.id)).collect();
+        let mut obj = serde_json::Map::new();
+        obj.extend(properties.as_object().unwrap().clone());
+        obj.insert(
+            "overall".into(),
+            serde_json::json!({ "type": "number" }),
+        );
+        obj.insert(
+            "scores".into(),
+            serde_json::json!({
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "criterion": { "type": "string", "enum": criteria_ids },
+                        "score": { "type": "number", "minimum": 0, "maximum": 10 },
+                        "note": { "type": "string" }
+                    },
+                    "required": ["criterion", "score", "note"]
+                }
+            }),
+        );
+        obj.insert(
+            "strengths".into(),
+            serde_json::json!({ "type": "array", "items": { "type": "string" } }),
+        );
+        obj.insert(
+            "improvements".into(),
+            serde_json::json!({ "type": "array", "items": { "type": "string" } }),
+        );
+        properties = serde_json::Value::Object(obj);
+        required.extend(["overall".into(), "scores".into()]);
+        required.extend(["strengths".into(), "improvements".into()]);
+    }
+    serde_json::json!({
+        "type": "object",
+        "properties": properties,
+        "required": required
+    })
+}
+
+/// Parses the final pass: the summary part is required; the score part
+/// (with a rubric) degrades to `None` when absent or empty.
+fn parse_enrich(
+    raw: &str,
+    rubric: Option<&Rubric>,
+) -> (Option<ReportSummary>, Option<RubricScore>) {
+    let summary = match parse_summary(raw) {
+        Some(s) => s,
+        None => return (None, None),
+    };
+    let score = rubric.and_then(|_| parse_rubric_score(raw));
+    (Some(summary), score)
 }
 
 fn parse_summary(raw: &str) -> Option<ReportSummary> {
@@ -999,107 +1247,6 @@ fn parse_summary(raw: &str) -> Option<ReportSummary> {
         summary,
         action_items,
     })
-}
-
-/// Scores a transcript against a rubric under the 4096-token
-/// llama-server context, with the same map-reduce shape as the summary:
-/// long meetings get short per-criterion *observations* per chunk, then
-/// one scoring pass over the combined observations. Best-effort: `None`
-/// when no provider is loaded or every pass fails.
-fn score_rubric(
-    inference: &Mutex<Option<Arc<dyn InferenceProvider>>>,
-    rubric: &Rubric,
-    text: &str,
-) -> Option<RubricScore> {
-    let provider = inference
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .clone()?;
-    let chunks = chunk_text(text, MAX_CHUNK_CHARS);
-    if chunks.is_empty() {
-        return None;
-    }
-    if chunks.len() == 1 {
-        return score_pass(&provider, rubric, &chunks[0]);
-    }
-    // Map: per-chunk observations (plain text, cheap) — what each speaker
-    // did that bears on the rubric's criteria.
-    let mut observations = Vec::new();
-    for (i, chunk) in chunks.iter().enumerate() {
-        match observe_chunk(&provider, rubric, chunk) {
-            Some(o) => observations.push(o),
-            None => tracing::warn!(chunk = i, "meeting rubric: chunk observations failed"),
-        }
-    }
-    if observations.is_empty() {
-        return None;
-    }
-    let combined = observations.join("\n\n---\n\n");
-    let system = "You score a meeting against a rubric from combined per-chunk observations. \
-                  Base every score only on the observed evidence; when the evidence is thin, \
-                  score conservatively and say so in the note.";
-    let user = format!(
-        "Score this meeting against the rubric.\n\n{combined}"
-    );
-    let params = GenerationParams {
-        max_tokens: 900,
-        temperature: 0.0,
-        timeout: scaled_timeout(900),
-    };
-    let raw = provider
-        .generate_json(system, &user, params, &rubric_score_schema(rubric))
-        .ok()?;
-    parse_rubric_score(&raw)
-}
-
-/// One chunk, scored directly (short meetings skip the observation map).
-fn score_pass(provider: &Arc<dyn InferenceProvider>, rubric: &Rubric, chunk: &str) -> Option<RubricScore> {
-    let system = "You score a meeting transcript against a rubric. Judge only what is \
-                  actually said; cite the transcript in each note. Score each criterion \
-                  0–10 (0 = not demonstrated, 10 = exemplary) and an overall 0–10 that \
-                  weighs the criteria. List concrete strengths and improvements.";
-    let user = format!(
-        "Score this meeting transcript against the rubric.\n\nTranscript:\n{chunk}"
-    );
-    let params = GenerationParams {
-        max_tokens: 900,
-        temperature: 0.0,
-        timeout: scaled_timeout(900),
-    };
-    let raw = provider
-        .generate_json(system, &user, params, &rubric_score_schema(rubric))
-        .ok()?;
-    parse_rubric_score(&raw)
-}
-
-/// Map step: short observations from one chunk that bear on the rubric.
-fn observe_chunk(provider: &Arc<dyn InferenceProvider>, rubric: &Rubric, chunk: &str) -> Option<String> {
-    let criteria: Vec<String> = rubric
-        .criteria
-        .iter()
-        .map(|c| format!("- {} ({}): {}", c.name, c.id, c.description))
-        .collect();
-    let prompt = format!(
-        "You are taking notes for a meeting score against this rubric:\n{}\n\n\
-         Read this part of the meeting transcript and list the concrete observations \
-         (who said/did what) that bear on each criterion. Plain text, bullet points, \
-         under 200 words. If a criterion is not evidenced here, say \"not evidenced\". \
-         Do not score.\n\nTranscript part:\n{}",
-        criteria.join("\n"),
-        chunk
-    );
-    let params = GenerationParams {
-        max_tokens: 500,
-        temperature: 0.0,
-        timeout: scaled_timeout(500),
-    };
-    let raw = provider.generate(&prompt, params).ok()?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
 }
 
 fn rubric_score_schema(rubric: &Rubric) -> serde_json::Value {
@@ -1175,7 +1322,11 @@ fn string_list(v: &serde_json::Value, key: &str) -> Vec<String> {
 /// `1765432123456` → "Tuesday, December 9, 2026, 9:05 AM" (local time).
 fn format_local_time(ms: u64) -> String {
     use chrono::TimeZone;
-    let dt = chrono::Local.timestamp_millis(i64::try_from(ms).unwrap_or(0));
+    let ts = i64::try_from(ms).unwrap_or(0);
+    let dt = chrono::Local
+        .timestamp_millis_opt(ts)
+        .single()
+        .unwrap_or_else(|| chrono::Local.from_utc_datetime(&chrono::DateTime::UNIX_EPOCH.naive_utc()));
     let day = dt.format("%d").to_string().trim_start_matches('0').to_string();
     let time = dt.format("%I:%M %p").to_string().trim_start_matches('0').to_string();
     format!(
@@ -1366,9 +1517,10 @@ mod tests {
             duration_ms: 500,
             // Empty: exercises the batch fallback path.
             transcripts: Vec::new(),
+            rubric: None,
         };
 
-        let meeting = finalize(&engine, &speech, &inference, "mock", input)
+        let meeting = finalize(&engine, &speech, &inference, "mock", &std::env::temp_dir(), input)
             .expect("finalize should succeed");
         let report = &meeting.report;
 
@@ -1439,8 +1591,9 @@ mod tests {
                 confidence: 1.0,
                 language: Some("en".into()),
             }],
+            rubric: None,
         };
-        let meeting = finalize(&engine, &speech, &inference, "mock", input).unwrap();
+        let meeting = finalize(&engine, &speech, &inference, "mock", &std::env::temp_dir(), input).unwrap();
         let tjson = fs::read_to_string(dir.path().join("streamed/transcript.json")).unwrap();
         let t: serde_json::Value = serde_json::from_str(&tjson).unwrap();
         // The committed text wins over the mock's batch text.
@@ -1484,8 +1637,9 @@ mod tests {
             samples: vec![0.0f32; 1_600],
             duration_ms: 100,
             transcripts: Vec::new(),
+            rubric: None,
         };
-        let meeting = finalize(&engine, &speech, &inference, "mock", input)
+        let meeting = finalize(&engine, &speech, &inference, "mock", &std::env::temp_dir(), input)
             .expect("no-speech should not fail the meeting");
         let html = fs::read_to_string(PathBuf::from(&meeting.report.report_path)).unwrap();
         assert!(html.contains("No speech was captured."));

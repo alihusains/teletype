@@ -1603,6 +1603,8 @@ pub fn run() {
             commands::meeting::meeting_reset,
             commands::meeting::meeting_open_report,
             commands::meeting::meeting_rubrics,
+            commands::meeting::diarization_status,
+            commands::meeting::download_diarization_models,
             island::island_save_position,
             island::island_set_size,
             // Escape recovery

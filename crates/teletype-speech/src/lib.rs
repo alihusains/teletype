@@ -11,6 +11,7 @@
 )]
 
 pub mod catalog;
+pub mod diarization;
 pub mod parakeet;
 pub mod parakeet_cpp;
 pub mod sherpa;

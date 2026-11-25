@@ -218,6 +218,9 @@ export default function MeetingScreen() {
   const [title, setTitle] = useState("");
   const [rubrics, setRubrics] = useState<Rubric[]>([]);
   const [rubricId, setRubricId] = useState<string>("");
+  const [diarInstalled, setDiarInstalled] = useState<boolean | null>(null);
+  const [diarProgress, setDiarProgress] = useState<number | null>(null);
+  const [diarError, setDiarError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<number | null>(null);
   // The backend only reports elapsedMs while we poll (i.e. after stop), so
@@ -295,6 +298,63 @@ export default function MeetingScreen() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Diarization models (optional): installed status + download progress.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s: { installed: boolean } = await invoke("diarization_status");
+        if (!cancelled) setDiarInstalled(s.installed);
+      } catch {
+        // Not in a Tauri context; hide the row.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (diarProgress === null) return;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        unlisten = await listen<{ kind: string; percent: number; status: string; error: string | null }>(
+          "model-download-progress",
+          (e) => {
+            if (e.payload.kind !== "diarization") return;
+            if (e.payload.status === "error") {
+              setDiarError(e.payload.error ?? "download failed");
+              setDiarProgress(null);
+            } else if (e.payload.status === "done") {
+              setDiarProgress(null);
+              setDiarInstalled(true);
+              setDiarError(null);
+            } else {
+              setDiarProgress(e.payload.percent);
+            }
+          },
+        );
+      } catch {
+        // Not in a Tauri context; progress is best-effort.
+      }
+    })();
+    return () => unlisten?.();
+  }, [diarProgress === null]);
+
+  const handleDownloadDiarization = useCallback(async () => {
+    setDiarError(null);
+    setDiarProgress(0);
+    try {
+      await invoke("download_diarization_models");
+      // "done" progress event flips the installed flag.
+    } catch (e) {
+      setDiarProgress(null);
+      setDiarError(errorMessage(e));
+    }
   }, []);
 
   // When the meeting settles into `done`, fetch the full report content
@@ -488,6 +548,66 @@ export default function MeetingScreen() {
               </select>
             </label>
           )}
+          {diarInstalled !== null && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+                fontSize: 13,
+              }}
+            >
+              <span style={{ color: "var(--text-secondary)", fontWeight: 550 }}>
+                Speaker diarization — separate who said what
+              </span>
+              {diarInstalled ? (
+                <span
+                  style={{
+                    background: "var(--surface-2)",
+                    border: "1px solid var(--border-subtle)",
+                    borderRadius: 100,
+                    padding: "3px 11px",
+                    fontSize: 12,
+                    fontWeight: 650,
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  Installed
+                </span>
+              ) : diarProgress !== null ? (
+                <span
+                  style={{
+                    color: "var(--text-secondary)",
+                    fontVariantNumeric: "tabular-nums",
+                    fontSize: 12.5,
+                  }}
+                >
+                  Downloading… {Math.round(diarProgress)}%
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleDownloadDiarization}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid var(--border)",
+                    borderRadius: 100,
+                    padding: "4px 13px",
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    color: "var(--text)",
+                    cursor: "pointer",
+                  }}
+                >
+                  Download (34 MB)
+                </button>
+              )}
+              {diarError && (
+                <span style={{ color: "var(--danger)", fontSize: 12.5 }}>{diarError}</span>
+              )}
+            </div>
+          )}
           <button
             onClick={handleStart}
             disabled={busy}
@@ -580,13 +700,13 @@ export default function MeetingScreen() {
 
           {/* Actions */}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button onClick={handleStop} disabled={busy} style={{ ...actionBtn, opacity: busy ? 0.6 : 1 }}>
+            <button type="button" onClick={handleStop} disabled={busy} style={{ ...actionBtn, opacity: busy ? 0.6 : 1 }}>
               Stop &amp; generate report
             </button>
-            <button onClick={handleOpenReport} style={ghostBtn} title="Open the live report in a new browser tab — it updates while the meeting runs">
+            <button type="button" onClick={handleOpenReport} style={ghostBtn} title="Open the live report in a new browser tab — it updates while the meeting runs">
               Open live report
             </button>
-            <button onClick={handleCancel} disabled={busy} style={{ ...ghostBtn, color: "var(--text-secondary)", opacity: busy ? 0.6 : 1 }}>
+            <button type="button" onClick={handleCancel} disabled={busy} style={{ ...ghostBtn, color: "var(--text-secondary)", opacity: busy ? 0.6 : 1 }}>
               Cancel
             </button>
           </div>
@@ -944,10 +1064,10 @@ export default function MeetingScreen() {
           )}
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button onClick={handleOpenReport} style={actionBtn}>
+            <button type="button" onClick={handleOpenReport} style={actionBtn}>
               Open report in new tab
             </button>
-            <button onClick={handleReset} style={ghostBtn}>
+            <button type="button" onClick={handleReset} style={ghostBtn}>
               New meeting
             </button>
           </div>
