@@ -102,6 +102,11 @@ https://github.com/rust-lang/bzip2-rs
 License: MIT OR Apache-2.0
 C compiler detection for build scripts. https://github.com/rust-lang/cc-rs
 
+=== chrono 0.4.x ===
+License: MIT OR Apache-2.0
+Date/time formatting for meeting report timestamps.
+https://github.com/chronotope/chrono
+
 === cmake 0.1.x ===
 License: MIT OR Apache-2.0
 CMake build driver (build-dep of parakeet-sys). https://github.com/mateusgrouz/cmake-rs
