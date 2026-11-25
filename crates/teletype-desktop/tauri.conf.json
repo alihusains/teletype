@@ -37,6 +37,23 @@
         "focus": false,
         "focusable": false,
         "visibleOnAllWorkspaces": true
+      },
+      {
+        "label": "island",
+        "title": "Teletype Meeting",
+        "url": "island.html",
+        "width": 441,
+        "height": 93,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "focusable": false,
+        "visibleOnAllWorkspaces": true
       }
     ]
   },

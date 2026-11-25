@@ -240,7 +240,13 @@ impl SpeechProvider for SherpaParakeetProvider {
 
         let words = match (&result.timestamps, &result.durations) {
             (Some(ts), Some(durs)) if ts.len() == result.tokens.len() && ts.len() == durs.len() => {
-                crate::group_token_timings(&result.tokens, ts, durs)
+                // `durations` is each token's LENGTH in seconds, not its end
+                // time: the end of a token is start + duration. Passing the
+                // durations straight through made every word's end_ms smaller
+                // than its start_ms (verified in a live meeting transcript),
+                // which broke every downstream gap-based split.
+                let ends: Vec<f32> = ts.iter().zip(durs.iter()).map(|(t, d)| t + d).collect();
+                crate::group_token_timings(&result.tokens, ts, &ends)
             }
             _ => Vec::new(),
         };

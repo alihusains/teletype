@@ -565,6 +565,18 @@ impl Committer {
             .collect()
     }
 
+    /// Full committed transcripts (word timings included), in commit order.
+    /// The meeting engine uses this to render its live report: the words
+    /// are already take-absolute and de-duplicated by the fold.
+    pub fn committed_transcripts(&self) -> Vec<Transcript> {
+        self.committed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|(_, t)| t.clone())
+            .collect()
+    }
+
     /// Snapshot for the pill live-preview: `(committed_text, volatile_text)`.
     ///
     /// `committed_text` is the joined text of all committed segments (never

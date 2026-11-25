@@ -14,6 +14,7 @@ import DictionaryScreen from "./screens/DictionaryScreen";
 import StylesScreen from "./screens/StylesScreen";
 import CommandModeScreen from "./screens/CommandModeScreen";
 import NotetakerScreen from "./screens/NotetakerScreen";
+import MeetingScreen from "./screens/MeetingScreen";
 import TransformsScreen from "./screens/TransformsScreen";
 import AutoTextScreen from "./screens/AutoTextScreen";
 import PersonalizationScreen from "./screens/PersonalizationScreen";
@@ -34,6 +35,7 @@ type Screen =
   | "style"
   | "command-mode"
   | "notetaker"
+  | "meeting"
   | "personalization"
   | "models"
   | "settings"
@@ -56,6 +58,7 @@ const NAV_GROUPS_BASE: { label: string; items: NavItem[] }[] = [
     items: [
       { id: "dictation", label: "Dictation", icon: "dictation" },
       { id: "notetaker", label: "Notetaker", icon: "notetaker" },
+      { id: "meeting", label: "Meeting", icon: "calendar-check" },
     ],
   },
   {
@@ -227,25 +230,40 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean; pendingNotice?: string | null; crashNotice?: string | null }>(
-      "get_settings"
-    )
-      .then((s) => {
-        setOnboardingDone(s.hasCompletedOnboarding);
-        if (s.appIcon) setAppIcon(s.appIcon);
-        setDeveloperTabEnabled(!!s.enableDeveloperTab);
-        setTheme(s.theme || "system");
-        setReduceMotion(!!s.reduceMotion);
-        setPendingNotice(s.pendingNotice ?? null);
-        setCrashNotice(s.crashNotice ?? null);
-      })
-      .catch((e) => {
-        console.error("[teletype] get_settings failed:", e);
-        // A failed settings read must not trap a configured user on a
-        // transient error (permissions.ts rule). Show onboarding with a
-        // retry so the user can get back in.
-        setOnboardingDone(false);
-      });
+    let cancelled = false;
+    const apply = (s: { hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean; pendingNotice?: string | null; crashNotice?: string | null }) => {
+      if (cancelled) return;
+      setOnboardingDone(s.hasCompletedOnboarding);
+      if (s.appIcon) setAppIcon(s.appIcon);
+      setDeveloperTabEnabled(!!s.enableDeveloperTab);
+      setTheme(s.theme || "system");
+      setReduceMotion(!!s.reduceMotion);
+      setPendingNotice(s.pendingNotice ?? null);
+      setCrashNotice(s.crashNotice ?? null);
+    };
+    // The first call can fire before Tauri state is managed ("state not
+    // managed" on get_settings) — a launch-time race. Retry a few times
+    // before falling back to onboarding, so a configured user is never
+    // trapped on a startup blip (permissions.ts rule).
+    const attempt = (remaining: number) => {
+      invoke<{ hasCompletedOnboarding: boolean; appIcon: string; enableDeveloperTab?: boolean; theme?: string; reduceMotion?: boolean; pendingNotice?: string | null; crashNotice?: string | null }>(
+        "get_settings"
+      )
+        .then(apply)
+        .catch((e) => {
+          console.error("[teletype] get_settings failed:", e);
+          if (cancelled) return;
+          if (remaining > 0) {
+            setTimeout(() => attempt(remaining - 1), 400);
+          } else {
+            setOnboardingDone(false);
+          }
+        });
+    };
+    attempt(5);
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Re-fetch settings when the backend emits settings-changed (e.g. after
@@ -772,6 +790,9 @@ export default function App() {
           </div>
           <div style={{ display: screen === "notetaker" ? "block" : "none" }}>
             <NotetakerScreen />
+          </div>
+          <div style={{ display: screen === "meeting" ? "block" : "none" }}>
+            <MeetingScreen />
           </div>
           <div style={{ display: screen === "autotext" ? "block" : "none" }}>
             <AutoTextScreen />

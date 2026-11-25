@@ -474,7 +474,7 @@ impl Dfn3Stream {
     /// Flushes the trailing partial frame (zero-padded) so end-of-take
     /// audio is not lost.
     pub fn flush(&mut self) -> Result<Vec<f32>, String> {
-        let mut tail = self.pending_48k.drain(..).collect::<Vec<f32>>();
+        let mut tail = std::mem::take(&mut self.pending_48k);
         tail.resize(DFN3_HOP, 0.0);
         let out = if tail.len() >= DFN3_HOP {
             self.model.process(&tail)?
@@ -691,7 +691,7 @@ fn erb_features(spec: &[Complex], erb_fb: &[Complex]) -> Array2<f32> {
         feat[DFN3_NB_ERB + k] = im;
         feat[2 * DFN3_NB_ERB + k] = mag;
     }
-    feat.chunks_exact(DFN3_NB_ERB)
+    feat.as_chunks::<DFN3_NB_ERB>().0.iter()
         .map(|ch| ch.to_vec())
         .collect::<Vec<Vec<f32>>>()
         .into_iter()
@@ -722,7 +722,7 @@ fn deep_filter_inplace(bins: &mut [Complex], coefs: &[f32]) {
     for (j, bin) in out.iter_mut().enumerate() {
         let mut acc = Complex::new(0.0, 0.0);
         for (t, tap) in coefs[j * (DFN3_DF_ORDER * 2)..(j + 1) * (DFN3_DF_ORDER * 2)]
-            .chunks_exact(2)
+            .as_chunks::<2>().0.iter()
             .enumerate()
         {
             let c = Complex::new(tap[0], tap[1]);

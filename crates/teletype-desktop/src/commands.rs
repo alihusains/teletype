@@ -136,6 +136,7 @@ pub mod calibration;
 pub mod crash;
 pub mod dictionary;
 pub mod history;
+pub mod meeting;
 pub mod models;
 pub mod personalization;
 pub mod polish_feedback;
