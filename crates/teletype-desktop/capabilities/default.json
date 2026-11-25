@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main and pill windows: core IPC, events, and window control.",
-  "windows": ["main", "pill"],
+  "description": "Capabilities for the main, pill, and island windows: core IPC, events, and window control.",
+  "windows": ["main", "pill", "island"],
   "permissions": [
     "core:default",
     "core:event:default",
@@ -17,7 +17,11 @@
     "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-set-focus",
     "core:window:allow-set-position",
+    "core:window:allow-outer-position",
+    "core:window:allow-scale-factor",
+    "core:window:allow-start-dragging",
     "core:window:allow-outer-size",
+    "core:window:allow-inner-size",
     "core:window:allow-is-visible",
     "core:app:default",
     "core:app:allow-version",

@@ -1604,6 +1604,7 @@ pub fn run() {
             commands::meeting::meeting_open_report,
             commands::meeting::meeting_rubrics,
             island::island_save_position,
+            island::island_set_size,
             // Escape recovery
             commands::recover_last_dictation,
             commands::discard_recovery,
