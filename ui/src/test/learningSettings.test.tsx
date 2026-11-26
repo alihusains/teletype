@@ -74,7 +74,6 @@ const SETTINGS_MOCK = {
   restoreEmoji: false,
   spokenEmoji: false,
   spokenPunctuation: false,
-  modelUnloadDelaySecs: 60,
   activeStyleProfile: "default",
   appLanguageOverrides: {},
   enabledPacks: [],

@@ -27,6 +27,11 @@ OUT_DIR="$ROOT/crates/teletype-desktop/binaries"
 # landed in llama.cpp with b11960, PR ggml-org/llama.cpp#31257). Bumped from
 # b11488 (f95b0d95) so the LFM3 Omni row can load as a polish model. The
 # llama-server reports "build b12200".
+# The Windows release does not build this tree; it downloads the official
+# prebuilt, which is identified by release tag. That tag must match this one —
+# scripts/check-artifact-pins.sh compares it across this file, release.yml and
+# THIRD-PARTY-NOTICES.txt.
+LLAMA_RELEASE_TAG="b12200"
 COMMIT="c19043f67e52f1f1e00d797246e19643bb2f168e"
 
 # Deployment target floor. ggml-metal uses @available(macOS 15.0); building the

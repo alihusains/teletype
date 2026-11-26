@@ -45,7 +45,7 @@ That leaves two free ways to get an interactive Windows desktop from a Mac.
    - Rust via `winget install Rustlang.Rustup` (MSVC toolchain)
    - **Visual Studio Build Tools** with "Desktop development with C++"
      (needed for `link.exe`; Rust's MSVC target cannot link without it)
-   - Node 20+ and `cargo install tauri-cli --version "^2"`
+   - Node 24 and `cargo install tauri-cli --version "2.12.0" --locked`
    - Git
 4. Build and run in the VM:
    ```powershell

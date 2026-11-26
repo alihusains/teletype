@@ -129,7 +129,6 @@ const SETTINGS: Record<string, unknown> = {
   restoreEmoji: false,
   spokenEmoji: false,
   spokenPunctuation: false,
-  modelUnloadDelaySecs: 60,
   activeStyleProfile: "default",
   appLanguageOverrides: {},
   appStyleOverrides: {},

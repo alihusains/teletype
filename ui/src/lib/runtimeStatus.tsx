@@ -30,10 +30,10 @@ export interface RuntimeStatusInfo {
  * Reads the app's real runtime state.
  *
  * This exists as a hook rather than a one-shot fetch because the answer
- * changes on its own: a model unloads after an idle timeout, a download
- * finishes, a llama-server dies. A snapshot taken when a screen mounted is
- * stale the moment any of those happen, which is how the previous UI came to
- * show "Ready" next to a model that had been unloaded.
+ * changes on its own: a download finishes, the user switches or deletes a
+ * model, a llama-server dies. A snapshot taken when a screen mounted is stale
+ * the moment any of those happen, which is how the previous UI came to show
+ * "Ready" next to a model that was no longer loaded.
  *
  * The backend pushes a `runtime-status` event at every point that can change
  * the answer (model select/download, engine spawn/stop, startup restore), and

@@ -59,7 +59,7 @@ Plus: AutoText snippets (speak a phrase, get a full sentence or address) and bla
 
 **Open decisions:**
 - Linux support (not currently in scope)
-- Mobile app (planned but not started; see mobile-app-plan.md)
+- Mobile app (planned but not started; see ROADMAP.md §5)
 
 ## Brand Commitments
 

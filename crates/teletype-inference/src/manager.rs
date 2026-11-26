@@ -250,7 +250,12 @@ impl<P: UnloadableProvider + 'static> SpeechModelManager<P> {
     /// background thread on any cadence; a `Never` policy never arms a
     /// deadline, so this is a no-op for the default setting.
     pub fn tick(&self) {
-        if *self.lock::<bool>(&self.active) {
+        // Hold the active guard across the decision *and* the unload: a
+        // dictation that starts between the check and the unload would
+        // otherwise have its model freed mid-take. `begin_dictation()`
+        // acquires this same mutex, so it cannot win that window.
+        let active = self.lock::<bool>(&self.active);
+        if *active {
             return; // never unload mid-dictation
         }
         let due = self
@@ -259,6 +264,7 @@ impl<P: UnloadableProvider + 'static> SpeechModelManager<P> {
         if due == Some(true) {
             self.unload();
         }
+        drop(active);
     }
 
     /// Spawns the background thread that calls [`Self::tick`] on a fixed
@@ -310,6 +316,88 @@ mod unload_timer_tests {
                 path: std::path::PathBuf::new(),
             },
         )
+    }
+
+    /// Provider double whose `unload` blocks until the test releases it, so
+    /// a `begin_dictation` racing with `tick` can be sequenced deterministically.
+    struct BlockingProvider {
+        loaded: bool,
+        started: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    }
+
+    impl UnloadableProvider for BlockingProvider {
+        fn load(&mut self, _path: &std::path::Path) -> Result<(), String> {
+            self.loaded = true;
+            Ok(())
+        }
+        fn unload(&mut self) {
+            let _ = self.started.send(());
+            let _ = self.release.recv();
+            self.loaded = false;
+        }
+        fn is_loaded(&self) -> bool {
+            self.loaded
+        }
+    }
+
+    /// BUG-003's real acceptance criterion: a dictation may never begin on a
+    /// model that is being freed. On the pre-fix `tick()` the active check
+    /// released its guard before `unload()`, so `begin_dictation()` slipped
+    /// into that window and this assertion fails.
+    #[test]
+    fn begin_dictation_cannot_overlap_unload() {
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let manager = SpeechModelManager::new(
+            std::path::PathBuf::from("blocking-model.bin"),
+            BlockingProvider {
+                loaded: false,
+                started: started_tx,
+                release: release_rx,
+            },
+        );
+        manager.load().unwrap();
+        manager.end_dictation(Some(std::time::Duration::ZERO));
+
+        let (begin_called_tx, begin_called_rx) = std::sync::mpsc::channel();
+        let (begin_done_tx, begin_done_rx) = std::sync::mpsc::channel();
+
+        std::thread::scope(|scope| {
+            let tick_handle = scope.spawn(|| manager.tick());
+            started_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("tick must reach provider.unload()");
+
+            let begin_handle = scope.spawn(|| {
+                let _ = begin_called_tx.send(());
+                manager.begin_dictation();
+                let _ = begin_done_tx.send(());
+            });
+            begin_called_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("the begin_dictation thread must start");
+
+            assert!(
+                begin_done_rx
+                    .recv_timeout(std::time::Duration::from_millis(300))
+                    .is_err(),
+                "begin_dictation must block while an unload is in flight"
+            );
+
+            let _ = release_tx.send(());
+            tick_handle.join().expect("tick thread must not panic");
+            begin_handle.join().expect("begin thread must not panic");
+        });
+
+        assert!(!manager.is_loaded(), "the unload must have completed");
+        // The dictation is now active: a later tick must leave the model be.
+        manager.load().unwrap();
+        manager.tick();
+        assert!(
+            manager.is_loaded(),
+            "an active dictation must block the unload"
+        );
     }
 
     /// A provider double that records whether the manager unloaded it, so a

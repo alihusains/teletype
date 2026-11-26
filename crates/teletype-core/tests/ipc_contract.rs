@@ -1096,11 +1096,6 @@ const ADVERTISED_FEATURES: &[(&str, &str, &str)] = &[
         "",
     ),
     (
-        "unload model after idle (EW parity, brain 2026-09-25 port item 5)",
-        "modelUnloadDelaySecs",
-        "",
-    ),
-    (
         "VAD auto-stop (EW parity, brain 2026-09-25 port item 2)",
         "vadAutoStop",
         "",

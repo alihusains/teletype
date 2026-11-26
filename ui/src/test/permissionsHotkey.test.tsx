@@ -95,6 +95,33 @@ describe("Permissions hotkey row", () => {
     expect(screen.queryByRole("button", { name: "Re-register" })).toBeNull();
   });
 
+  it("permission_refresh_follows_focus_not_a_timer", async () => {
+    vi.useFakeTimers();
+    try {
+      mount({ active: true, binding: "Fn", reason: null });
+      const permissionCalls = () =>
+        invokeCalls().filter((c) => c.cmd === "get_permissions").length;
+
+      await act(async () => {});
+      const initial = permissionCalls();
+      expect(initial).toBeGreaterThan(0);
+
+      // No timer: half a minute of a visible window must not re-probe.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30000);
+      });
+      expect(permissionCalls()).toBe(initial);
+
+      // Coming back from System Settings is what refreshes.
+      await act(async () => {
+        window.dispatchEvent(new Event("focus"));
+      });
+      expect(permissionCalls()).toBe(initial + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("updates the chip when a fresh hotkey-status event arrives", async () => {
     mount({ active: false, binding: "Fn", reason: null }, null);
     expect(await screen.findByText("Inactive — re-register")).toBeTruthy();

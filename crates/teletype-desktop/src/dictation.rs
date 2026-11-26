@@ -505,9 +505,9 @@ pub enum EngineWarmTier {
     OnRelease,
     /// Load when the hotkey goes down, while the user is still speaking.
     /// This is the behaviour the app has always shipped (`warm_up()` from
-    /// `start()`), and every numeric policy resolves here: the seconds name
-    /// the *retention* window, not a load moment, and retention is folded
-    /// into the delay by [`idle_unload_delay_for`].
+    /// `start()`), and every numeric policy resolves here. The seconds are
+    /// legacy retention windows; retention itself is gone (D052), so `10`,
+    /// `30` and `60` all mean "load on the first press and stay resident".
     OnHotkeyDown,
     /// Keep it loaded: warm once at startup, re-warm after every take ends,
     /// and never arm the idle-unload timer.
@@ -529,99 +529,64 @@ pub fn engine_warm_tier(policy: commands::WarmEnginePolicy) -> EngineWarmTier {
     }
 }
 
-/// The retention window a numeric policy promises, in seconds (`None` for the
-/// two non-numeric values). `Unknown` reports itself as `30` through
-/// [`commands::WarmEnginePolicy::as_id`], so it degrades to the default
-/// window rather than to an unload.
-pub fn warm_window_secs(policy: commands::WarmEnginePolicy) -> Option<u64> {
-    match policy {
-        commands::WarmEnginePolicy::Sec10 => Some(10),
-        commands::WarmEnginePolicy::Sec30 | commands::WarmEnginePolicy::Unknown => Some(30),
-        commands::WarmEnginePolicy::Sec60 => Some(60),
-        commands::WarmEnginePolicy::Off | commands::WarmEnginePolicy::Always => None,
-    }
+/// The unload delay the app hands the speech managers when a take ends:
+/// always `None`, which their `end_dictation` reads as "stay resident". No
+/// setting feeds this on purpose (D052).
+///
+/// The model used to be freed by `warm_engine_policy`'s retention windows and
+/// the old model-unload-delay setting (both deleted). The first take after that
+/// idle unload then paid a
+/// full reload while the dictation that just worked sat behind a recording pill,
+/// which is exactly what a dead hotkey looks like. The rule now: the model is
+/// loaded and then stays loaded. The only unloads are the manual ones —
+/// switching the selected model, and deleting a downloaded one
+/// (`commands::models`).
+fn take_end_unload_delay() -> Option<std::time::Duration> {
+    None
 }
 
-/// Item 2: two settings speak to the same thing. `warm_engine_policy`
-/// ("Pre-warm the engine", `off`/`10`/`30`/`60`/`always`) and
-/// `model_unload_delay_secs` ("Keep the model in memory for Ns after a
-/// take"). The latter is what actually reaches
-/// `SpeechManager::end_dictation`, where `None` means "never unload, stay
-/// resident", so the overlap has to be decided in one place: here.
-///
-/// Resolution: the policy owns *when to load* (see [`engine_warm_tier`]) and
-/// the slider owns *how long to hold after a take*, with the policy's own
-/// window as the floor:
-///  * `always` -> `None` (resident; nothing shortens it),
-///  * `off` -> `Some(0)` (release as soon as the take is over, which is what
-///    that option's own title promises),
-///  * `10`/`30`/`60` -> `Some(max(slider, window))`.
-///
-/// Why the window is a floor rather than the slider simply winning: a user
-/// who picked "60s" in the engine section made the more deliberate statement
-/// about this exact axis (it is the setting named for the engine), and a
-/// slider left at a smaller number must not silently shrink that promise.
-/// A non-zero slider can still extend the window, which is its stated
-/// purpose. Why `0` on the slider does *not* win, even though its hint reads
-/// "unloads as soon as possible": `0` is also its serde default, so almost
-/// every config carries it without the user having chosen it, and treating it
-/// as "unset" is the only reading that does not silently disable the policy
-/// control.
-///
-/// This changes one shipped behaviour: the delay used to be
-/// `(model_unload_delay_secs > 0).then(…)`, so the default config (`0`) mapped
-/// to `None`, i.e. resident forever, the exact opposite of the hint the UI
-/// shows for `0`. With the default policy (`30`) the model now unloads 30s
-/// after a take and stays loaded only when the user asks for `always`.
-pub fn idle_unload_delay_for(
-    policy: commands::WarmEnginePolicy,
-    model_unload_delay_secs: u64,
-) -> Option<std::time::Duration> {
-    use std::time::Duration;
-    match engine_warm_tier(policy) {
-        EngineWarmTier::Resident => None,
-        EngineWarmTier::OnRelease => Some(Duration::ZERO),
-        EngineWarmTier::OnHotkeyDown => {
-            let secs = warm_window_secs(policy).unwrap_or(30);
-            Some(Duration::from_secs(model_unload_delay_secs.max(secs)))
+/// Ends the take's dictation session on every speech manager. This is the one
+/// place the app tells the managers a take is over, so it is the one place the
+/// no-unload rule has to hold.
+fn release_take_session(state: &AppState) {
+    each_speech_manager(state, |m| m.end_dictation(take_end_unload_delay()));
+}
+
+/// True when `kind`'s manager already holds `model_id`. For the neural slot
+/// the id has to match as well: that one slot is shared by Core ML, sherpa,
+/// Qwen3-ASR, Apple speech and transcribe.cpp, so "loaded" alone does not mean
+/// "loaded with the model the settings select".
+fn speech_model_ready_for(state: &AppState, kind: SpeechEngineKind, model_id: &str) -> bool {
+    match kind {
+        SpeechEngineKind::Fluid
+        | SpeechEngineKind::Sherpa
+        | SpeechEngineKind::Qwen3Asr
+        | SpeechEngineKind::AppleSpeech
+        | SpeechEngineKind::TranscribeCpp => {
+            let current = state
+                .neural_model_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            current.as_deref() == Some(model_id) && state.neural.is_loaded()
         }
+        SpeechEngineKind::Whistle => state.neural.is_loaded(),
+        SpeechEngineKind::Parakeet => state.parakeet.is_loaded(),
+        SpeechEngineKind::ParakeetCpp => state.parakeet_cpp.is_loaded(),
+        SpeechEngineKind::Whisper => state.speech.is_loaded(),
     }
 }
 
-/// F-10: the default policy is `always`, so a user who never touched the
-/// setting gets a resident model. The mapping from `always` to "never
-/// unload" is what makes the default resident; this test pins both halves.
-#[cfg(test)]
-mod f10_default_resident {
-    use super::commands::WarmEnginePolicy;
-    use super::idle_unload_delay_for;
-
-    #[test]
-    fn default_policy_is_always() {
-        assert_eq!(WarmEnginePolicy::default(), WarmEnginePolicy::Always);
-    }
-
-    #[test]
-    fn default_policy_never_unloads() {
-        // `always` maps to the Resident tier, which maps to `None` (never
-        // unload), regardless of the slider value.
-        assert_eq!(idle_unload_delay_for(WarmEnginePolicy::Always, 0), None);
-        assert_eq!(idle_unload_delay_for(WarmEnginePolicy::Always, 300), None);
-    }
-
-    #[test]
-    fn explicit_numeric_policy_still_unloads() {
-        // A user who picked a numeric tier keeps that behaviour: the model
-        // unloads after the longer of the window and the slider.
-        assert_eq!(
-            idle_unload_delay_for(WarmEnginePolicy::Sec30, 0),
-            Some(std::time::Duration::from_secs(30))
-        );
-        assert_eq!(
-            idle_unload_delay_for(WarmEnginePolicy::Sec10, 600),
-            Some(std::time::Duration::from_secs(600))
-        );
-    }
+/// Whether a press must announce the warm-up instead of painting the recording
+/// pill straight away. Two things have to hold: the policy loads on press
+/// (`off` deliberately defers the load to the release, so a warm pill there
+/// would promise work that is not happening), and the model is not already
+/// resident (a warm model needs no pill of its own).
+///
+/// This is what makes a cold first press — the app just started, the model was
+/// switched, or an earlier load failed — open on "Getting model ready…" rather
+/// than on a recording pill with a flat waveform that reads as a dead hotkey.
+pub fn press_warms_visibly(tier: EngineWarmTier, ready: bool) -> bool {
+    tier != EngineWarmTier::OnRelease && !ready
 }
 
 #[allow(clippy::large_enum_variant)] // `Transcribed` carries the take PCM
@@ -3071,13 +3036,12 @@ impl Session {
                         // on this same FIFO queue is discarded by the
                         // controller instead of injecting.
                         self.cancel_session(self.next_id);
-                        // BUG-003: the session is over; arm the idle-unload timer.
+                        // The session is over; the model stays resident (D052).
                         #[cfg(test)]
                         if self.headless_flash {
-                            // Test path: skip the model-unload timer.
+                            // Test path: no model managers.
                         } else if let Some(state) = self.state() {
-                            let delay = self.idle_unload_delay();
-                            each_speech_manager(&state, |m| m.end_dictation(delay));
+                            release_take_session(&state);
                         }
                         self.flash_note("Cancelled");
                     }
@@ -3244,18 +3208,6 @@ impl Session {
         self.live_settings()
             .map(|s| engine_warm_tier(s.warm_engine_policy))
             .unwrap_or(EngineWarmTier::OnHotkeyDown)
-    }
-
-    /// Item 2: the delay to hand `end_dictation` at the end of a take, from
-    /// the live policy and slider. See [`idle_unload_delay_for`] for how the
-    /// two overlap; the headless fallback is the same mapping applied to the
-    /// default policy, which keeps the value honest rather than magic (a
-    /// headless session has no managers to arm either way).
-    fn idle_unload_delay(&self) -> Option<std::time::Duration> {
-        match self.live_settings() {
-            Some(s) => idle_unload_delay_for(s.warm_engine_policy, s.model_unload_delay_secs),
-            None => idle_unload_delay_for(commands::WarmEnginePolicy::default(), 0),
-        }
     }
 
     /// A take whose result can still be escaped: recording, or anything after
@@ -3790,10 +3742,9 @@ impl Session {
                 self.phase = Phase::Cancelled;
                 #[cfg(test)]
                 if self.headless_flash {
-                    // Test path: skip the model-unload timer.
+                    // Test path: no model managers.
                 } else if let Some(state) = self.state() {
-                    let delay = self.idle_unload_delay();
-                    each_speech_manager(&state, |m| m.end_dictation(delay));
+                    release_take_session(&state);
                 }
                 self.flash_note("Cancelled");
             }
@@ -3869,9 +3820,6 @@ impl Session {
         if let Some(state) = self.state() {
             each_speech_manager(&state, |m| m.begin_dictation());
         }
-        // Show the pill immediately, BEFORE the (slow) mic open, so the UI
-        // responds instantly on keypress like Wispr Flow. The waveform begins
-        // as soon as levels arrive.
         let started_at_ms = teletype_core::storage::now_ms();
         self.started_at_ms = started_at_ms;
         // Monotonic marker for the speaking-rate figure. Reset here and
@@ -3880,10 +3828,23 @@ impl Session {
         self.recording_started = None;
         self.phase = Phase::Listening;
         self.broadcast(teletype_core::state::UiState::Listening { started_at_ms });
-        self.show(PillState::Recording {
-            started_at_ms,
-            command: kind == TakeKind::Command,
-        });
+        // Show the pill immediately, BEFORE the (slow) mic open, so the UI
+        // responds instantly on keypress like Wispr Flow. The waveform begins
+        // as soon as levels arrive.
+        //
+        // A cold press (the model was unloaded while the app sat idle) shows
+        // the warm-up instead, and starts the load here rather than after the
+        // mic opens. Painting the recording pill first and flipping to
+        // "Getting model ready…" only once capture was live made the first
+        // seconds of that take read as a dead hotkey: a flat waveform with no
+        // explanation, while the press was in fact working. `WarmupDone`
+        // repaints the recording pill when the model is ready.
+        if !self.warm_on_press() {
+            self.show(PillState::Recording {
+                started_at_ms,
+                command: kind == TakeKind::Command,
+            });
+        }
 
         // Record the paste target now, while the user is provably here: the
         // pipeline (ASR plus an optional 20 s LLM polish) finishes long after
@@ -4100,17 +4061,12 @@ impl Session {
                         t.mark(|s, now| s.t_first_audio = Some(now));
                     }
                 }
-                // Load the speech model in the background while the user
-                // speaks, so it's ready on release (P1.12: pre-warm on
-                // hotkey-down, not on release). No-op if already loaded.
-                // Item 2: `warm_engine_policy` gates it. `off` means "don't
-                // pay memory and battery to be ready", so the load happens
-                // where it always could anyway: `transcribe()` loads on demand
-                // (see `Session::engine_tier` for the mapping). The take still
-                // works, it just starts slowly.
-                if self.engine_tier() != EngineWarmTier::OnRelease {
-                    self.warm_up();
-                }
+                // The speech-model load already started at the press (see
+                // `warm_on_press`), so it overlaps this mic open instead of
+                // following it. No second warm here: another
+                // `load_speech_model` would bump the warm token and supersede
+                // the in-flight load, giving two concurrent loads and dropping
+                // the first `WarmupDone`.
                 // Pre-warm the LLM (polish) model in the background while the
                 // user is still talking. `ensure_local_provider` no-ops if a
                 // provider is already loaded, and the `llm_loading` guard
@@ -4133,13 +4089,9 @@ impl Session {
                 self.take_resampler = None;
                 // BUG-003: the mic never opened, so no dictation will
                 // complete — end the session now instead of leaving `active`
-                // stuck true (which would block every later unload). Item 2:
-                // the delay is the policy's, not a hard-coded `None`, so a
-                // failed open doesn't quietly pin the model resident for an
-                // `off` setting.
+                // stuck true. The model itself stays resident (D052).
                 if let Some(state) = self.state() {
-                    let delay = self.idle_unload_delay();
-                    each_speech_manager(&state, |m| m.end_dictation(delay));
+                    release_take_session(&state);
                 }
                 self.flash(&e);
             }
@@ -4653,9 +4605,6 @@ impl Session {
         }
     }
 
-    /// Loads the selected speech model in the background so the first
-    /// dictation (or a model switch) doesn't block the release. Shows the
-    /// warming pill while the load is in flight.
     fn play_cue(&self) {
         #[cfg(test)]
         if self.headless_flash {
@@ -4671,9 +4620,35 @@ impl Session {
 
     /// Item 2: pre-warm for the take in progress. Owns the pill (shows
     /// "Warming", then takes back the recording pill through `WarmupDone`)
-    /// and is the only warm the timed policies need.
-    fn warm_up(&mut self) {
-        self.load_speech_model(true);
+    /// and is the only warm the timed policies need. Returns true when the
+    /// warming pill was shown, i.e. a load is in flight.
+    fn warm_up(&mut self) -> bool {
+        self.load_speech_model(true)
+    }
+
+    /// The press-time warm. When the policy loads on press and the selected
+    /// model is not resident (the app unloaded it while idle), this starts the
+    /// load before the pill is chosen so the take opens on "Getting model
+    /// ready…" and the load overlaps the mic open. Returns true when the
+    /// warming pill owns the pill now; the caller must not paint the recording
+    /// pill over it.
+    fn warm_on_press(&mut self) -> bool {
+        if !press_warms_visibly(self.engine_tier(), self.speech_model_ready()) {
+            return false;
+        }
+        self.warm_up()
+    }
+
+    /// True when the selected speech model is already loaded, so a press can
+    /// go straight to the recording pill. The same rule `load_speech_model`
+    /// uses to skip a redundant load.
+    fn speech_model_ready(&self) -> bool {
+        let Some(state) = self.state() else {
+            return false;
+        };
+        let settings = state.settings();
+        let (_path, kind) = resolve_speech_model(&settings, &state.models_dir);
+        speech_model_ready_for(&state, kind, &settings.selected_speech_model)
     }
 
     /// Item 2: the same load with no pill and no session id, for warming that
@@ -4684,12 +4659,18 @@ impl Session {
     /// newer take owns, and bumping `next_id` here would invalidate the
     /// session guards of a take that starts while the load is in flight.
     fn warm_in_background(&mut self) {
-        self.load_speech_model(false);
+        let _ = self.load_speech_model(false);
     }
 
-    fn load_speech_model(&mut self, announce: bool) {
+    /// Loads the selected speech model in the background so the first
+    /// dictation (or a model switch) doesn't block the release, and shows the
+    /// warming pill while the load is in flight. Returns true when it announced
+    /// the load by showing `PillState::Warming` (i.e. a `WarmupDone` or
+    /// `WarmupFailed` will follow for `warm_token`), false when there was
+    /// nothing to load or nothing to load it with.
+    fn load_speech_model(&mut self, announce: bool) -> bool {
         let Some(state) = self.state() else {
-            return;
+            return false;
         };
         let (model_path, kind, model_id) = {
             let settings = state.settings();
@@ -4705,30 +4686,19 @@ impl Session {
             SpeechEngineKind::Fluid | SpeechEngineKind::AppleSpeech
         ) && !model_path.exists()
         {
-            return;
+            return false;
         }
         // Already loaded → skip the warming pill entirely; the model is
         // resident and the recording pill can stay as-is.
-        let ready = match kind {
-            SpeechEngineKind::Fluid
-            | SpeechEngineKind::Sherpa
-            | SpeechEngineKind::Qwen3Asr
-            | SpeechEngineKind::AppleSpeech
-            | SpeechEngineKind::TranscribeCpp => {
-                let current = state
-                    .neural_model_id
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                current.as_deref() == Some(model_id.as_str()) && state.neural.is_loaded()
-            }
-            SpeechEngineKind::Whistle => state.neural.is_loaded(),
-            SpeechEngineKind::Parakeet => state.parakeet.is_loaded(),
-            SpeechEngineKind::ParakeetCpp => state.parakeet_cpp.is_loaded(),
-            SpeechEngineKind::Whisper => state.speech.is_loaded(),
-        };
-        if ready {
-            return;
+        if speech_model_ready_for(&state, kind, &model_id) {
+            return false;
         }
+        // Resolve the app handle before claiming the pill: an early return
+        // after `show(PillState::Warming)` would leave a warm pill that no
+        // `WarmupDone` ever takes back.
+        let Some(app) = self.app().cloned() else {
+            return false;
+        };
         // F-11: the warm-up must not bump the take's session id. The
         // `VadFired` handler (hands-free auto-stop) requires
         // `next_id == session`, so an id bump here would invalidate the
@@ -4743,9 +4713,6 @@ impl Session {
             Some(self.warm_token)
         } else {
             None
-        };
-        let Some(app) = self.app().cloned() else {
-            return;
         };
         let controller = self.controller.clone();
         crate::log_entry(
@@ -4821,6 +4788,7 @@ impl Session {
                 }
             })
             .ok();
+        warm_token.is_some()
     }
 
     fn stop(&mut self, cancelled: bool) {
@@ -5068,15 +5036,14 @@ impl Session {
             if cancel_note.is_empty() {
                 self.go_idle();
             } else {
-                // BUG-003: the session is over; arm the idle-unload timer.
-                // (Headless: no managers to arm; `go_idle`'s headless guard
-                // skips the same block for the silent discard.)
+                // The session is over; the model stays resident (D052).
+                // (Headless: no managers; `go_idle`'s headless guard skips the
+                // same block for the silent discard.)
                 #[cfg(test)]
                 if self.headless_flash {
                     // Test path: no model managers.
                 } else if let Some(state) = self.state() {
-                    let delay = self.idle_unload_delay();
-                    each_speech_manager(&state, |m| m.end_dictation(delay));
+                    release_take_session(&state);
                 }
                 self.broadcast(teletype_core::state::UiState::Message {
                     text: cancel_note.into(),
@@ -9054,11 +9021,9 @@ impl Session {
             // touch.
             return;
         }
-        // BUG-003: the dictation session is over; arm the idle-unload timer
-        // (or leave the model resident for the "Never" policy).
+        // The dictation session is over; the model stays resident (D052).
         if let Some(state) = self.state() {
-            let delay = self.idle_unload_delay();
-            each_speech_manager(&state, |m| m.end_dictation(delay));
+            release_take_session(&state);
         }
         #[cfg(test)]
         if self.headless_flash {
@@ -15615,6 +15580,32 @@ fn f11_stale_warmup_done_is_dropped() {
         Phase::Listening,
         "a stale warm-up must not change the phase"
     );
+}
+
+// --- no automatic model unload ---
+
+/// The product rule (D052): the model is loaded and then stays loaded. Every
+/// take end hands the managers `None`, so no deadline is ever armed and the idle
+/// tick thread never frees a model the user did not free.
+#[test]
+fn a_finished_take_never_arms_an_unload() {
+    assert_eq!(take_end_unload_delay(), None);
+}
+
+// --- press-time warm-up visibility ---
+
+/// A cold first press (a fresh launch, a model switch, a failed earlier load)
+/// announces the load at the press; a resident model, and the `off` policy that
+/// defers the load to the release, must keep the recording pill as the first
+/// thing shown.
+#[test]
+fn press_warms_visibly_only_when_the_policy_loads_on_press_and_the_model_is_cold() {
+    assert!(press_warms_visibly(EngineWarmTier::OnHotkeyDown, false));
+    assert!(press_warms_visibly(EngineWarmTier::Resident, false));
+    assert!(!press_warms_visibly(EngineWarmTier::OnHotkeyDown, true));
+    assert!(!press_warms_visibly(EngineWarmTier::Resident, true));
+    assert!(!press_warms_visibly(EngineWarmTier::OnRelease, false));
+    assert!(!press_warms_visibly(EngineWarmTier::OnRelease, true));
 }
 
 // --- F-70: no-speech gate tests ---

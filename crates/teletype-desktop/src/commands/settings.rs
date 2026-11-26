@@ -8,17 +8,49 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use teletype_core::platform::{Permission, PermissionKind};
 
+/// Last binding confirmed by the native hotkey panel, handed over in-process.
+/// The panel used to write this to a fixed /tmp path that any local process
+/// could write first; the app then registered whatever was found there as the
+/// global hotkey.
+static HOTKEY_RESULT: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
+fn hotkey_result_slot() -> &'static std::sync::Mutex<Option<String>> {
+    HOTKEY_RESULT.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// C callback the native panel invokes with the confirmed binding. Defined on
+/// every platform so the unit tests exercise it without AppKit.
+#[no_mangle]
+pub extern "C" fn teletype_hotkey_captured_result(ptr: *const std::os::raw::c_char) {
+    if ptr.is_null() {
+        return;
+    }
+    // SAFETY: the native side passes a NUL-terminated UTF-8 string that lives
+    // for the duration of the call; a null pointer is handled above.
+    let text = unsafe { std::ffi::CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .trim()
+        .to_string();
+    if !text.is_empty() {
+        *hotkey_result_slot()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(text);
+    }
+}
+
 // ---- Native Hotkey Capture (macOS) ----
 
 /// Opens the native macOS hotkey capture panel. The user presses a key
-/// combination, Enter confirms (writes the result to a temp file), Esc cancels.
-/// Returns immediately; the UI should call `get_captured_hotkey` after a delay.
+/// combination, Enter confirms (the panel hands the binding back through
+/// `teletype_hotkey_captured_result`), Esc cancels. Returns immediately; the UI
+/// should call `get_captured_hotkey` after a delay.
 #[tauri::command]
 pub fn start_hotkey_capture() -> CommandResult<()> {
     #[cfg(target_os = "macos")]
     {
         extern "C" {
-            fn teletype_start_hotkey_capture();
+            fn teletype_start_hotkey_capture(handler: extern "C" fn(*const std::os::raw::c_char));
             fn teletype_hotkey_capture_has_app() -> bool;
         }
         // Creating the NSPanel without a running NSApplication raises an
@@ -32,7 +64,10 @@ pub fn start_hotkey_capture() -> CommandResult<()> {
         }
         // SAFETY: the C function creates an NSPanel on the main thread.
         // Tauri commands run on the main thread by default.
-        std::fs::remove_file("/tmp/teletype_hotkey_result.txt").ok();
+        // Drop any stale result before the capture starts.
+        *hotkey_result_slot()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         // Park the unified input engine while capturing: without this the
         // shortcut tap eats the second key of the combo (it matches a
         // registered shortcut) and the panel never sees it. Only done when
@@ -40,7 +75,7 @@ pub fn start_hotkey_capture() -> CommandResult<()> {
         crate::input_engine::set_capture_parked(true);
         // SAFETY: C function only creates an NSPanel on the main thread,
         // where Tauri commands run.
-        unsafe { teletype_start_hotkey_capture() };
+        unsafe { teletype_start_hotkey_capture(teletype_hotkey_captured_result) };
         Ok(())
     }
     #[cfg(not(target_os = "macos"))]
@@ -85,15 +120,10 @@ pub fn stop_hotkey_capture() -> CommandResult<()> {
 /// Returns `Ok(None)` if the user cancelled or hasn't confirmed yet.
 #[tauri::command]
 pub fn get_captured_hotkey() -> CommandResult<Option<String>> {
-    let path = std::path::Path::new("/tmp/teletype_hotkey_result.txt");
-    match std::fs::read_to_string(path) {
-        Ok(h) if !h.trim().is_empty() => {
-            let hotkey = h.trim().to_string();
-            std::fs::remove_file(path).ok();
-            Ok(Some(hotkey))
-        }
-        _ => Ok(None),
-    }
+    Ok(hotkey_result_slot()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take())
 }
 
 /// The current hotkey registration conflict, if the saved binding is the one
@@ -581,8 +611,17 @@ pub fn list_input_devices() -> CommandResult<Vec<teletype_core::audio::InputDevi
 }
 
 #[tauri::command]
-pub async fn get_permissions(state: State<'_, AppState>) -> CommandResult<Vec<Permission>> {
-    Ok(state.platform.permissions())
+pub async fn get_permissions(app: AppHandle) -> CommandResult<Vec<Permission>> {
+    // The macOS probe is synchronous and NotSend-friendly work: the
+    // accessibility check spawns a thread for an AX round trip and joins it.
+    // Running it here keeps a slow first-launch probe off the async runtime
+    // so it cannot stall other commands.
+    let permissions = tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().platform.permissions()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(permissions)
 }
 
 #[tauri::command]
@@ -612,6 +651,44 @@ pub async fn open_permission_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The result slot is process-global, so the two slot tests must not
+    /// interleave: one takes the value the other just stored.
+    static SLOT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_slot() -> std::sync::MutexGuard<'static, ()> {
+        let guard = SLOT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *hotkey_result_slot()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        guard
+    }
+
+    #[test]
+    fn stored_hotkey_is_returned_once() {
+        let _guard = lock_slot();
+        let value = std::ffi::CString::new("Cmd+Shift+Space").unwrap();
+        teletype_hotkey_captured_result(value.as_ptr());
+        assert_eq!(
+            get_captured_hotkey().ok().flatten(),
+            Some("Cmd+Shift+Space".to_string())
+        );
+        assert_eq!(
+            get_captured_hotkey().ok().flatten(),
+            None,
+            "the confirmed binding is handed over exactly once"
+        );
+    }
+
+    #[test]
+    fn empty_hotkey_result_is_ignored() {
+        let _guard = lock_slot();
+        let value = std::ffi::CString::new("   ").unwrap();
+        teletype_hotkey_captured_result(value.as_ptr());
+        assert_eq!(get_captured_hotkey().ok().flatten(), None);
+    }
 
     #[test]
     fn hotkey_status_serializes_the_ui_fields() {

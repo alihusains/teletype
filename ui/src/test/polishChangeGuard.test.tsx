@@ -67,7 +67,6 @@ const SETTINGS = {
   restoreEmoji: false,
   spokenEmoji: false,
   spokenPunctuation: false,
-  modelUnloadDelaySecs: 60,
   activeStyleProfile: "default",
   appLanguageOverrides: {},
   enabledPacks: [],

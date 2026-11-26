@@ -61,10 +61,11 @@ const STATE_CHIP: Record<PermissionState, { label: string; tone: "success" | "wa
   unsupported: { label: "Not applicable", tone: "neutral" },
 };
 
-// Granting happens in System Settings, so the screen notices the change when
-// the user comes back. A 2 s cadence is coarse enough to be free; the TCC
-// lookups are cheap once the window is back in front.
-const POLL_MS = 2000;
+// Granting happens in System Settings, so the only moment the state can change
+// is the user coming back to the app. Window focus, document visibility and the
+// Tauri focus event below are the refresh triggers; there is deliberately no
+// timer, because get_permissions is not free on macOS (the accessibility check
+// spawns a thread for an AX round trip) and polling bought no responsiveness.
 
 export function PermissionsSection(props: {
   settings: Settings;
@@ -98,24 +99,13 @@ export function PermissionsSection(props: {
 
   useEffect(() => {
     refresh();
-    let timer: number | undefined;
 
-    const tick = () => {
-      // Only poll while the window is in front. get_permissions is not free on
-      // macOS: the accessibility check spawns a thread for an AX round trip,
-      // so a hidden window ticking every 2 s for hours is real work for a
-      // screen nobody is looking at. Focus and visibility handlers below do
-      // the refresh the moment the user comes back.
-      if (!document.hidden) refresh();
-      timer = window.setTimeout(tick, POLL_MS);
-    };
     const onFocus = () => {
       // The user may have just toggled a permission in System Settings.
       refresh();
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
-    timer = window.setTimeout(tick, POLL_MS);
 
     let unlistenFocus: (() => void) | undefined;
     getCurrentWebviewWindow()
@@ -125,7 +115,6 @@ export function PermissionsSection(props: {
       .then((fn) => (unlistenFocus = fn));
 
     return () => {
-      window.clearTimeout(timer);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
       unlistenFocus?.();

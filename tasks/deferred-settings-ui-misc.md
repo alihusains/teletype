@@ -2,7 +2,7 @@
 
 **Status:** closed (both fixed; verified 2026-10-01)
 **Filed:** 2026-09-28 by productivity monitor
-**Tickets:** `bugs/BUG-017-fillercounts-object-vs-array.md`, `bugs/BUG-018-save-settings-race.md`
+**Tickets:** `ROADMAP.md §11 (BUG-0XX)`, `ROADMAP.md §11 (BUG-0XX)`
 
 ## Outcome
 

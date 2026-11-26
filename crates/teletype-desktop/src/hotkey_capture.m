@@ -24,6 +24,12 @@ static BOOL g_waitingForKey = NO;
 // modifier that is still held. Without this, releasing Option mid-combo
 // (before "1" lands) reads as "nothing held" and commits the stale "Alt".
 static NSMutableSet *g_heldModifiers = nil;
+// Where a confirmed binding goes. Rust installs this on every capture start
+// (see commands/settings.rs `teletype_hotkey_captured_result`); it replaces the
+// old fixed /tmp result file, which was world-writable and therefore an
+// injection primitive. Left installed across stop: the confirm path calls
+// stop before returning, and clearing it there would drop the result.
+static void (*g_resultHandler)(const char *) = NULL;
 
 // Forward declaration.
 void teletype_stop_hotkey_capture(void);
@@ -141,10 +147,7 @@ static void teletypeKeyMonitor(NSEvent *event) {
     if (event.type == NSEventTypeKeyDown) {
         if (event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter) {
             if (g_currentHotkey.length > 0) {
-                [g_currentHotkey writeToFile:@"/tmp/teletype_hotkey_result.txt"
-                                 atomically:YES
-                                 encoding:NSUTF8StringEncoding
-                                    error:nil];
+                if (g_resultHandler) g_resultHandler([g_currentHotkey UTF8String]);
             }
             teletype_stop_hotkey_capture();
             return;
@@ -160,10 +163,7 @@ static void teletypeKeyMonitor(NSEvent *event) {
         if (hotkey) {
             g_currentHotkey = hotkey;
             [g_display setStringValue:hotkey];
-            [g_currentHotkey writeToFile:@"/tmp/teletype_hotkey_result.txt"
-                             atomically:YES
-                             encoding:NSUTF8StringEncoding
-                                error:nil];
+            if (g_resultHandler) g_resultHandler([g_currentHotkey UTF8String]);
             teletype_stop_hotkey_capture();
         }
         return;
@@ -224,10 +224,7 @@ static void teletypeKeyMonitor(NSEvent *event) {
             }
         }
         if (bareModifier) {
-            [g_currentHotkey writeToFile:@"/tmp/teletype_hotkey_result.txt"
-                             atomically:YES
-                             encoding:NSUTF8StringEncoding
-                                error:nil];
+            if (g_resultHandler) g_resultHandler([g_currentHotkey UTF8String]);
             teletype_stop_hotkey_capture();
             return;
         }
@@ -238,7 +235,8 @@ static void teletypeKeyMonitor(NSEvent *event) {
 }
 
 // Start the capture panel. Must be called from the main thread.
-void teletype_start_hotkey_capture(void) {
+void teletype_start_hotkey_capture(void (*handler)(const char *)) {
+    g_resultHandler = handler;
     teletype_stop_hotkey_capture();
 
     g_currentHotkey = @"";

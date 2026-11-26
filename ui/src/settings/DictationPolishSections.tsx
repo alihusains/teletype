@@ -397,21 +397,6 @@ export function LivePreviewSection(props: SectionProps) {
           onChange={(v) => onChange({ livePreviewEnabled: v })}
         />
       </Row>
-      <Row
-        label={`Keep the model in memory for ${settings.modelUnloadDelaySecs}s after a take`}
-        hint={settings.modelUnloadDelaySecs === 0 ? "The model unloads as soon as possible." : undefined}
-      >
-        <Explainer text="How long the speech model stays resident after a take. Longer keeps the next dictation fast but holds memory; 0 unloads it as soon as possible and the next take pays a reload delay." />
-        <TextInput
-          label="Model unload delay in seconds"
-          value={String(settings.modelUnloadDelaySecs)}
-          onChange={(v) => {
-            const secs = Math.round(Number(v));
-            if (Number.isFinite(secs) && secs >= 0) onChange({ modelUnloadDelaySecs: secs });
-          }}
-          width={90}
-        />
-      </Row>
       <Row label="Speech engine" hint="Read from the shared runtime status; the Models screen is where it is prepared.">
         <Chip tone={tone}>
           {speech

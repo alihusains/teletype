@@ -2,7 +2,7 @@
 
 **Status:** closed (verified 2026-10-01)
 **Filed:** 2026-09-28 by productivity monitor
-**Tickets:** `bugs/BUG-002-spoken-emoji-punctuation-toggles-absent.md`, `bugs/BUG-003-unload-model-timer-noop.md`, `bugs/BUG-008-language-picker-8-vs-99.md`, `bugs/BUG-011-live-preview-hold-mode.md`
+**Tickets:** `ROADMAP.md §11 (BUG-0XX)`, `ROADMAP.md §11 (BUG-0XX)`, `ROADMAP.md §11 (BUG-008)`, `ROADMAP.md §11 (BUG-0XX)`
 
 ## Outcome (all four resolved in code)
 

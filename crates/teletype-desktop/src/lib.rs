@@ -1581,6 +1581,40 @@ pub fn run() {
         // diagnostic a user gets.
         .expect("error while building Teletype")
         .run(|app_handle, event| {
+            // Clicking the Dock icon (or re-opening the app from Finder) with
+            // no visible window is macOS asking the app to show itself. Closing
+            // the main window only hides it (see `on_window_event` below) and
+            // leaves the app running in the tray, so without this branch that
+            // click did exactly nothing: the app looked wedged behind a hidden
+            // window and Force Quit was the only way out. The single-instance
+            // plugin covers "launch the app again"; this covers "click the
+            // icon of the app that is already running".
+            if let tauri::RunEvent::Reopen { .. } = &event {
+                log_entry(
+                    LogLevel::Info,
+                    "dock icon clicked; raising the main window".to_string(),
+                );
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                // The click is also the user coming back to the app, which is
+                // the one moment worth repairing a hotkey that died while the
+                // window was hidden: the liveness watcher gives up after one
+                // recovery per dead episode, so a tap macOS disabled and the
+                // watcher could not restore stayed dead until a restart.
+                let state = app_handle.state::<AppState>();
+                let binding = permission_watch::configured_hotkey(&state);
+                if hotkey_liveness::hotkey_live(&binding) == Some(false) {
+                    log_entry(
+                        LogLevel::Info,
+                        format!("hotkey {binding} is not live; re-registering it"),
+                    );
+                    let _ = permission_watch::reregister_hotkey_now(app_handle);
+                }
+            }
+
             // Reap the local llama-server child on a clean quit. AppState is
             // torn down by Tauri's runtime after this hook, and its Drop is
             // not guaranteed to run in time to kill the 2.7 GB model process,

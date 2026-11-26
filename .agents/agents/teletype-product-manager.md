@@ -6,7 +6,7 @@ owns:
   - README.md
   - CHANGELOG.md
   - PRODUCT.md
-  - teletype_complete_roadmap.md
+  - ROADMAP.md
   - docs/**
 escalates_to: teletype-engineering-manager
 routing: "Roadmap, issue triage, release notes, and user-facing doc accuracy."
@@ -27,7 +27,7 @@ brain decisions as read-only; hand those to the matching specialist.
 
 - `AGENTS.md`: source precedence, freshness, safety, and the minimal final response.
 - `.agents/brain/PROJECT_BRAIN.md`: current status/topology and verified decisions.
-- `teletype_complete_roadmap.md` and `README.md`: what is claimed as shipped.
+- `ROADMAP.md` and `README.md`: what is claimed as shipped.
 - Relevant learnings in `.agents/brain/learnings/` before reopening a shipped feature.
 
 ## Responsibilities

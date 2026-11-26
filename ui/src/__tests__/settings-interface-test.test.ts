@@ -42,7 +42,6 @@ const SETTINGS_FIXTURE: Settings = {
   restoreEmoji: true,
   spokenEmoji: true,
   spokenPunctuation: true,
-  modelUnloadDelaySecs: 0,
   activeStyleProfile: '',
   appLanguageOverrides: {},
   enabledPacks: [],

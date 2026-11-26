@@ -173,7 +173,7 @@ fn settings_v0_2_0_loads() {
     assert_eq!(s.selected_llm_model, "qwen2.5-3b");
     assert!(!s.spoken_emoji);
     assert!(s.spoken_punctuation);
-    assert_eq!(s.model_unload_delay_secs, 30);
+    // `modelUnloadDelaySecs` was dropped in D052; the legacy key is ignored.
     assert_eq!(s.enabled_packs, vec!["tech".to_string()]);
     assert_eq!(s.theme.as_id(), "dark");
     // Fields added after v0.2.0 take defaults.
@@ -234,7 +234,6 @@ fn settings_round_trip_v0_2_0() {
     assert_eq!(s2.hotkey, "fn");
     assert_eq!(s2.selected_llm_model, "qwen2.5-3b");
     assert!(!s2.spoken_emoji);
-    assert_eq!(s2.model_unload_delay_secs, 30);
     assert_eq!(s2.enabled_packs, vec!["tech".to_string()]);
     assert_eq!(s2.theme.as_id(), "dark");
 }

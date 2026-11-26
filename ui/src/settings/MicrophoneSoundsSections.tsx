@@ -28,13 +28,23 @@ export interface InputDevice {
 }
 
 
+// The model is never unloaded automatically (D052), so the only axis left is
+// *when* it is loaded: at app launch, at the first hotkey press, or only when
+// a take is transcribed. The old 10s/30s/60s "keep it warm for N seconds"
+// choices are gone; legacy configs that still carry one read as "On first
+// press" and are rewritten to `30` on the next change.
 const WARM_ENGINE_POLICIES: { value: string; label: string; title: string }[] = [
-  { value: "off", label: "Off", title: "Release the engine right after each take" },
-  { value: "10", label: "10s", title: "Keep the engine warm for 10 seconds" },
-  { value: "30", label: "30s", title: "Keep the engine warm for 30 seconds" },
-  { value: "60", label: "60s", title: "Keep the engine warm for 60 seconds" },
-  { value: "always", label: "Always", title: "Keep the engine warm at all times" },
+  { value: "off", label: "Only when I dictate", title: "Load the model when a take is transcribed" },
+  { value: "30", label: "On first press", title: "Load on the first hotkey press, then keep it loaded" },
+  { value: "always", label: "At launch", title: "Load it when the app starts and keep it loaded" },
 ];
+
+/** The segmented-control value for the stored policy: the three legacy
+ * retention windows all mean "load on the first press" now. */
+export function warmPolicyChoice(policy: string): string {
+  if (policy === "off" || policy === "always") return policy;
+  return "30";
+}
 
 // The macOS system sounds this app knows how to play. The list is fixed, but
 // an older config may name a sound that is no longer offered, so the current
@@ -80,10 +90,10 @@ export function MicrophoneSection(props: {
         />
       </Row>
       <Row label="Pre-warm the engine">
-        <Explainer text="Keeping the speech engine warm means the first word lands sooner, at the cost of memory and battery while it stays loaded." />
+        <Explainer text="Keeping the speech engine warm means the first word lands sooner. It is loaded once and stays loaded until you switch or delete the model, so this only picks when the loading happens." />
         <Segmented
           label="Pre-warm the engine"
-          value={settings.warmEnginePolicy}
+          value={warmPolicyChoice(settings.warmEnginePolicy)}
           options={WARM_ENGINE_POLICIES}
           onChange={(v) => onChange({ warmEnginePolicy: v })}
         />

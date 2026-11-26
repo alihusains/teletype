@@ -2,7 +2,7 @@
 
 **Status:** planned (structural — do once, prevents recurrence)
 **Filed:** 2026-09-28 by productivity monitor
-**Ticket:** `bugs/BUG-019-no-ci-contract-for-features-and-settings.md`
+**Ticket:** `ROADMAP.md §11 (BUG-0XX)`
 
 ## Problem
 

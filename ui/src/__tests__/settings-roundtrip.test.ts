@@ -51,7 +51,7 @@ describe('settings round-trip', () => {
       'matchStrictness','dictionaryEnabled','pillStyle','appIcon','transcriptsDir','vadAutoStop',
       'vadSilenceMs','enableDeveloperTab','sendCrashReports','polishGateEnabled','polishGateThresholdWords',
       'polishMaxChangePercent',
-      'restoreEmoji','spokenEmoji','spokenPunctuation','modelUnloadDelaySecs','activeStyleProfile',
+      'restoreEmoji','spokenEmoji','spokenPunctuation','activeStyleProfile',
       'appLanguageOverrides','enabledPacks','selectedLlmProvider','theme','reduceMotion',
       'polishRules','listStyle','quickAddHotkey',
     ]

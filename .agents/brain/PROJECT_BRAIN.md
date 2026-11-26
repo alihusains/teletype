@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.22 head=c81bf44 updated=2026-11-24 -->
+<!-- brain-freshness: version=v0.2.22 head=8746c1c updated=2026-11-25 -->
 
 This file is the durable working memory for this project.
 
@@ -25,6 +25,62 @@ Feature-rich and working on macOS. **Do not describe the product as "at parity
 with Wispr Flow"**: the honest position is measured per-axis, and the platform,
 language, and streaming-preview gaps are real. `usp.md` §3/§4 is the current
 verified competitive sheet.
+
+**Update 2026-11-25 (docs consolidation):** all scattered root-level roadmap,
+plan, audit, and bug-fix files were consolidated into a single `ROADMAP.md`
+and deleted. Removed: `Teletype Agent Plan  Beat Wispr Flow.md`,
+`Teletype Agent Plan  NeuDecide Addendum.md`, `Teletype Refactoring and
+Feature Roadmap.md`, `teletype_complete_roadmap.md`, `mobile-app-plan.md`,
+`PROGRESS.md`, `checkpoint.md`, `BRIDGE-PROGRESS.md`,
+`polish-feature-update.md`, `ponytail.md`, `agvity.md`, `humanqa.md`,
+`design-changes.md`, `voice-command-testing-library.md`, `windows-testing.md`,
+`Super-wispr-DESIGN.md`, `LettersDESIGN.md`, `ticket/amie-style-reference.md`,
+and the entire `bugs/` directory (BUG-001 through BUG-020 + README).
+`ROADMAP.md` is now the single forward-looking plan document. The project
+brain remains the source for verified decisions and learnings; `ROADMAP.md`
+references it. References in `README.md`, `PRODUCT.md`, `plans/README.md`,
+`.agents/agents/teletype-product-manager.md`, and 4 `tasks/` files were
+updated to point at `ROADMAP.md`.
+
+**Update 2026-11-25 (reported freeze/shutdown bug):** the reported "minimize → hotkey
+stops → the app never comes to the foreground → Force Quit" chain has two
+causes. (1) The window: `CloseRequested` only hides `main`, and the app had no
+`RunEvent::Reopen` handler, so the Dock-icon click was dropped and the window
+could never come back (L100/G014) — now handled, and it also re-registers a
+dead hotkey. (2) The hotkey/freeze: v0.2.21 shipped L095's unbounded tap
+teardown (fixed by `2978641`, contained in `v0.2.22`) and the idle-unload race
+that lets `tick()` free a model under a live take (plans/009, fixed in this
+batch). Both fixes are in this worktree; only the window fix is new code here.
+
+**Cold-press visibility (2026-11-25):** a press that finds the speech model
+not loaded (fresh launch, a model switch, or a failed earlier load) now shows
+`PillState::Warming` at the press and starts the load *before* the mic open,
+instead of painting the recording pill and flipping to "Getting model ready…"
+only once capture was live. That ordering made a cold take read as a dead
+hotkey: a flat waveform and no explanation while the press was in fact working.
+The rule is `dictation::press_warms_visibly(tier, ready)` — announce only when
+the policy loads on press and the model is not resident; the `off` policy
+deliberately defers its load to the release, so it keeps the recording pill
+first. The automatic unload that made this common is retired (D052).
+
+**Update 2026-11-25 (plans/ batch 2 landed uncommitted on `main` @ `8746c1c`):**
+the `plans/` folder (improve-skill audit, 001-013) is now fully implemented.
+Batch 1 (001-007) lives on seven unmerged `advisor/*` branches; batch 2
+(008-013) was applied to this worktree on 2026-11-25: setup docs now state
+Rust 1.90 / Node 24 / `tauri-cli 2.12.0 --locked` with an `engines.node`
+range in `ui/package.json`; `SpeechModelManager::tick` holds the `active`
+guard across `unload()`; a DFN3 setup failure (detection worker or stream
+rebuild) now sends a mic error through `ready_tx` instead of running a
+hook-less stream that silently starves VAD/silent-tail/mid-take commits; the
+macOS hotkey panel hands the binding to Rust through the
+`teletype_hotkey_captured_result` C callback instead of the world-writable
+`/tmp/teletype_hotkey_result.txt`; the Settings permissions screen refreshes
+on focus/visibility only (no 2 s poll) and `get_permissions` probes on
+`spawn_blocking`; and `scripts/check-artifact-pins.sh` now also pins the
+llama.cpp Windows release tag (`b12200`) across build script, `release.yml`
+and notices. Verified: `cargo test --workspace` 0 failures,
+`cd ui && npm test` 622 passed, `tsc --noEmit` clean,
+`cargo fmt --all -- --check` clean, pin check positive + two negative runs.
 
 **Update 2026-11-19 (current state — read this before the historical blocks below):**
 `main` @ `66fe309`, tracking `origin/main`; latest tag **v0.2.19** (2026-11-11),
@@ -162,14 +218,16 @@ tree; task files `tasks/honesty-block.md`, `tasks/deferred-settings-ui-misc.md`,
 Verdicts:
 - BUG-002 (spoken emoji/punctuation toggles) — **fixed**: `transforms/spoken_emoji.rs`
   + `autotext/system.rs`, both wired via `pipeline.rs`.
-- BUG-003 (unload-model timer) — **fixed and hardened**: `end_dictation(delay)`
+- BUG-003 (unload-model timer) — **fixed, hardened, then retired**: `end_dictation(delay)`
   arms the deadline on session end; a 5 s tick thread in `lib.rs` drives
   `SpeechModelManager::tick()` for both speech managers. 2026-10-01: the
   launch-time warm-up path now disarms a pending deadline
   (`end_dictation(None)`) before loading, so a warm-up cannot be undone by the
   tick thread; new end-to-end test
   `end_dictation_arms_unload_that_tick_fires_on_a_real_provider` in
-  `teletype-inference/src/manager.rs`.
+  `teletype-inference/src/manager.rs`. 2026-11-25: the automatic unload itself
+  is retired (D052) — every take end passes `None`, so nothing ever arms that
+  deadline; the model is freed only by a manual model switch or delete.
 - BUG-013/014/015/016 (lifecycle) — **all fixed** (commit `d34f6d0` + T1.1
   streaming + P1-A `llm_loading` gate + `.part`→verify→rename downloads).
 - BUG-017/018 (fillerCounts, save race) — **fixed** (`d34f6d0`).
@@ -436,7 +494,7 @@ no recommendation may change until it is recorded.
 | `ui/` | React frontend | `src/App.tsx`, `src/pill.tsx`, `src/screens/` (13 screens) |
 | `docs/` | Architecture reference | `architecture.md` |
 | `scripts/` | llama-server build | `build-llama-server.sh` |
-| Root docs | Plans and status | `README.md` (public README), `PRODUCT.md`, `usp.md` (competitive sheet), `checkpoint.md` (historical status), `teletype_complete_roadmap.md`. `roadmap.md`, `prompt.md` and `T2.1-plan.md` are **gitignored, local-only** — absent from a fresh clone |
+| Root docs | Plans and status | `README.md` (public README), `PRODUCT.md`, `usp.md` (competitive sheet), `ROADMAP.md` (consolidated roadmap + plans + bug records, 2026-11-25). `roadmap.md`, `prompt.md` and `T2.1-plan.md` are **gitignored, local-only** — absent from a fresh clone |
 | `docs/` roadmaps | Platform roadmaps (2026-09-26) | `roadmap-windows.md` (Windows port plan + measured learnings from the reference), `roadmap-macos.md` (macOS completion/parity/hardening plan) |
 | `.agents/brain/` | This brain + learnings | `PROJECT_BRAIN.md`, `learnings/LEARNING_TEMPLATE.md` |
 
@@ -648,7 +706,7 @@ static single-ggml rebuild (rejected for now).
 **Reason:**
 EW uses the same subprocess architecture; it is the stable path.
 
-**Evidence / source:** `checkpoint.md` "Linker error" section; `roadmap.md`
+**Evidence / source:** `checkpoint.md` (now `ROADMAP.md` §14) "Linker error" section; `roadmap.md`
 P0.1; `crates/teletype-inference/src/server.rs`.
 
 ### Decision D003
@@ -1197,7 +1255,7 @@ EG-1 — dual-licensed with usage terms that can no longer be verified after the
 
 **Evidence:** `1ebd339` (P3.9); gate-3 rg proofs from that commit: `eg-1` zero references in code/UI; no EG-1 entry in the catalog JSON.
 
-**Note:** This is legal hygiene, not a model upgrade. A command-decision model (NeuDecide, Apache-2.0) is a separate queue gated behind the plan's gate 2 — see the NeuDecide addendum and `PROGRESS.md` on `feat/beat-wispr`.
+**Note:** This is legal hygiene, not a model upgrade. A command-decision model (NeuDecide, Apache-2.0) is a separate queue gated behind the plan's gate 2 — see the NeuDecide addendum and `PROGRESS.md` (now `ROADMAP.md` §2) on `feat/beat-wispr`.
 
 ### Decision D017
 
@@ -1205,7 +1263,7 @@ EG-1 — dual-licensed with usage terms that can no longer be verified after the
 
 **Date:** 2026-11-01
 
-**Status:** accepted (in progress — gates/phases per `PROGRESS.md` on `feat/beat-wispr`)
+**Status:** accepted (in progress — gates/phases per `PROGRESS.md` (now `ROADMAP.md` §2) on `feat/beat-wispr`)
 
 **Decision:**
 1. The root planning docs (`Teletype Agent Plan Beat Wispr Flow.md` + `Teletype Agent Plan NeuDecide Addendum.md`, desk-checked 2026-11-01) are the plan of record through gate 0–7: strict gates, baseline-ways-before-claims ("сваячьные считы со ссылки после изменений" = baseline measurements re-verified post-change), never break delivery.
@@ -1213,7 +1271,7 @@ EG-1 — dual-licensed with usage terms that can no longer be verified after the
 3. Plan work is executed on branch `feat/beat-wispr` (checked out from `main` HEAD per the plan's strict rule). Do not land plan items on `refactor` or `main`.
 4. NeuDecide (55.5M ONNX command decider, Apache-2.0) is queued behind gate 2: hybrid decider — tool from audio, arguments from transcript; re-host to either HuggingFace or a public CAGOS location (plan addendum).
 
-**Evidence:** root plan docs (desk-checked 2026-11-01); `fcae04b` (P4.1/P4.2, segmenter 9/9 + committer 9/9 green); `1ebd339` (P3.9); `PROGRESS.md` (gate state: gate 0 5/5 P0 done, one baseline row outstanding; G1–G2 drained; P3 7/9; P5.1/P5.3 done).
+**Evidence:** root plan docs (now `ROADMAP.md`, desk-checked 2026-11-01); `fcae04b` (P4.1/P4.2, segmenter 9/9 + committer 9/9 green); `1ebd339` (P3.9); `PROGRESS.md` (now `ROADMAP.md` §2; gate state: gate 0 5/5 P0 done, one baseline row outstanding; G1–G2 drained; P3 7/9; P5.1/P5.3 done).
 
 
 ### Decision D018
@@ -2731,7 +2789,7 @@ When model mirroring is implemented, `models/manifest.json` in this repo will be
 Same repo (rejected in favor of the existing `teletype-models` repo precedent); rolling `models-latest` with clobber (rejected: breaks pinning/reproducibility); runtime manifest fetch (rejected: catalogs are `&'static` and this adds a startup dependency); include all models (rejected: license and 2 GiB limits).
 
 **Evidence / source:**
-GitHub Releases docs: 1,000 assets/release, <2 GiB per asset, no total bandwidth cap. Existing NeuDecide release precedent in `alihusains/teletype-models`. Roadmap `teletype_complete_roadmap.md` §29A.
+GitHub Releases docs: 1,000 assets/release, <2 GiB per asset, no total bandwidth cap. Existing NeuDecide release precedent in `alihusains/teletype-models`. Roadmap `ROADMAP.md` §4 (formerly `teletype_complete_roadmap.md` §29A).
 
 ### Decision D050
 
@@ -2769,19 +2827,39 @@ No reporting (rejected: v0.2.21's freeze was invisible in the field, and `crash.
 **Evidence / source:**
 Verified end to end 2026-11-22: an error line from the built binary produced `TELETYPE-1`, a panic produced `TELETYPE-3` with `release teletype@0.2.21`, `environment production`, OS `macOS 26.6.2`, device `Mac14,6`. Three smoke issues remain in the project (the handoff token can resolve but not delete them). `docs/architecture.md` §Security and privacy updated. Open: dSYM upload in `release.yml` needs `SENTRY_AUTH_TOKEN` before production stack traces are readable.
 
+### Decision D052
+
+**Title:** The speech model is never unloaded automatically; only a model switch or delete frees it
+
+**Date:** 2026-11-25
+
+**Status:** accepted (implemented in the main working tree, uncommitted)
+
+**Decision:**
+Every take end hands the speech managers `None`, so no unload deadline is ever armed and the idle tick therefore never finds one to fire. `dictation::take_end_unload_delay()` is the single source of that `None` and `release_take_session()` the single call site family; `idle_unload_delay_for`, `warm_window_secs` and `Session::idle_unload_delay` are deleted. `Settings.model_unload_delay_secs` and its Settings row are deleted outright: both gates (`settings_reachability`, `ipc_contract` contract_07/09) reject a persisted setting with no reader, and a legacy settings file's key is simply ignored on load (`tests/migration.rs`). `warm_engine_policy` now only chooses *when* the model loads: `off` loads it when a take is transcribed, the legacy `10`/`30`/`60` windows load it on the first hotkey press, `always` loads it at launch. The UI offers those three ("Only when I dictate" / "On first press" / "At launch") and writes `30` for "On first press". The only unloads left are manual: switching the selected speech model and `delete_speech_model`.
+
+**Context:**
+The first take after the idle unload paid a full model reload while the pill showed a recording animation, which is indistinguishable from a dead hotkey — the symptom the owner reported after v0.2.21. The owner's rule: never unload at all costs until the user does it manually in the app.
+
+**Alternatives considered:**
+Keep the retention windows and only fix the pill (rejected by the owner: the reload should not happen at all); hide the settings but keep the timer (rejected: the reported bug returns on any config that still carries a window); add a memory-pressure unload (rejected: same symptom, no evidence it is needed).
+
+**Evidence / source:**
+`cargo test -p teletype-desktop --lib` 648 passed (adds `a_finished_take_never_arms_an_unload`), `cd ui && npm test` 624 passed, `tsc --noEmit` clean. `crates/teletype-desktop/src/dictation.rs` (`take_end_unload_delay`, `release_take_session`, `press_warms_visibly`), `crates/teletype-desktop/src/commands.rs` (field dropped from `Settings`/`SettingsPatch`, `ui/src/screens/SettingsScreen.tsx` and the fixtures), `ui/src/settings/{MicrophoneSoundsSections,DictationPolishSections}.tsx`, `ui/src/test/warmEnginePolicy.test.ts`. Supersedes the unload half of BUG-003; `SpeechModelManager::{begin_dictation,end_dictation,tick}` stay (every take still marks the session, and plans/009's `active` guard still applies).
+
 ## 8. Known constraints
 
 Record constraints that future agents must know.
 
 | Constraint | Why it exists | Evidence / source |
 |---|---|---|
-| Never link llama.cpp in-process | ggml duplicate symbols vs whisper.cpp | `checkpoint.md`, D002 |
+| Never link llama.cpp in-process | ggml duplicate symbols vs whisper.cpp | `ROADMAP.md` §14 (formerly `checkpoint.md`), D002 |
 | `llama-server` must be one self-contained binary (static, `LLAMA_OPENSSL=OFF`) | `tauri.conf.json` bundles that single file: a shared build needs ~10 sibling dylibs via an absolute `/tmp` LC_RPATH, and the default link pulls Homebrew `libssl` | G009, L004, `scripts/build-llama-server.sh` |
 | Never re-host or bundle publisher model weights | EG-1 Community Model License 1.0 clause 2 (the `eg-1` entry itself was removed in P3.9, 2026-10-15) | `roadmap.md` license analysis; commit `1ebd339` |
 | S1-mini attribution: "S1-mini by Superwhisper" | Apache-2.0 naming term | `roadmap.md` |
 | ~13 MB release binary, no bundled model assets | Performance/privacy non-negotiable | `roadmap.md` section 0 |
 | `teletype-core` stays platform-free | Cross-platform boundary; tested via mocks | `docs/architecture.md` |
-| English-first; Parakeet is English-only, `"auto"` resolves to `"en"` | Model capability; prevents mis-transcription | `checkpoint.md` language guard |
+| English-first; Parakeet is English-only, `"auto"` resolves to `"en"` | Model capability; prevents mis-transcription | `ROADMAP.md` §14 (formerly `checkpoint.md`) language guard |
 | macOS 14+, Rust 1.88+, Node 18+, CMake required | Build/toolchain floor | `README.md` (the old `README-github.md` is gone) |
 | Windows platform layer stubbed | UIA/OCR, injection, hotkey, tray not implemented | `README.md` Status |
 | No telemetry / analytics ever on by default | Product stance + EW contrast | `roadmap.md`, D003 |
@@ -3080,6 +3158,25 @@ uploading, check asset basenames for duplicates. Give the second architecture
 distinct asset names (`Teletype-x86_64.app.tar.gz`) rather than renaming the
 existing ones, so the primary platform's release does not change.
 
+### Gotcha G014
+
+**A tray app that hides its main window on close must handle
+`tauri::RunEvent::Reopen`, or clicking the Dock icon does nothing at all.**
+
+**Why:** `on_window_event` turns `CloseRequested` on the `main` window into
+`prevent_close()` + `hide()`, so the app keeps running with no visible window.
+macOS then reports the Dock-icon click as `applicationShouldHandleReopen` →
+Tauri `Reopen`, and with no branch for it the event is dropped. The app is
+healthy but refuses to show itself, which reads to a user exactly like a hang:
+"the app never comes to the foreground". `single_instance` does not cover this —
+it fires on a second launch, not on clicking a running app's icon.
+
+**How to apply:** every hide-instead-of-close path needs a `Reopen` branch that
+`unminimize()`s, `show()`s and `set_focus()`es the window (the same sequence the
+single-instance handler uses). Treat it as the user's manual recovery moment and
+repair anything the automatic watchers rate-limit — the reopen handler now
+re-registers a hotkey whose liveness sample says `Some(false)`. See L100.
+
 ---
 
 ## 10. Verified learnings
@@ -3171,6 +3268,7 @@ Keep only the most important summaries and links to detailed learnings.
 | L098 | **The pill's "click-through, no room for a button" comment is stale; the result-card plumbing already supports an interactive learned-word pill.** `overlay.rs::show_result`/`dismiss_result` already flip `set_ignore_cursor_events` and `resize_to` sizes the window from a frontend measurement; `set_pill_size` carries a card id that gates the pending show and late dismiss. `dictionary.rs::LearnedChange` already distinguishes added vs. updated, and `LearnedOffer.matches` accepts the `offer:<id>` sentinel for any offer. The learned word is saved but only appears as a tray Undo item and a main-window toast; the plan is `docs/learned-word-pill-plan.md`. | desktop/overlay, dictation edit-watch, ui/pill | verified (source read at HEAD 49ad13b) | `learnings/2026-11-23-learned-pill-overlay-plumbing-already-exists.md` |
 
 | L099 | **Polish formatting is a code layer, not a prompt promise.** Small models ignore generic capitalization advice (L059) and card-locked cleanup prompts cannot be reprompted, so transforms/capitalization.rs and transforms/agreement.rs run at the engine exit for accepted Polish results: sentence-start capitals after .?!, ellipsis, newlines and quotes (protecting abbreviations/initials/decimals/domains), plus a closed set of unambiguous subject-verb fixes (she don't -> she doesn't, I has -> I have). The 2B/0.8B prompts now name tense/agreement with inline examples; fallback stays byte-for-byte. All bindings moved into one Shortcuts section inside Settings, with read-only links elsewhere. | polish / transforms / settings | candidate (unit + integration tests, no live model A/B yet) | learnings/2026-11-24-polish-formatting-is-a-code-layer.md |
+| L100 | **A tray app that hides its window on close must handle `tauri::RunEvent::Reopen`, or the Dock icon does nothing.** `CloseRequested` on `main` is `prevent_close()` + `hide()`, so the app keeps running with no window; macOS reports the Dock-icon click as `Reopen`, and with no branch for it the click was dropped — the app looked hung ("never comes to the foreground") while being perfectly healthy. `single_instance` only fires on a *second launch*. Fix: `Reopen` unminimizes/shows/focuses `main` and, when `hotkey_liveness::hotkey_live(&configured_hotkey)` is `Some(false)`, calls `permission_watch::reregister_hotkey_now`, so returning to the app also repairs a hotkey the watcher rate-limits to one recovery per episode. Context: the reported pre-release (v0.2.21) also carries L095's main-thread freeze, whose fix is contained in `v0.2.22` only. | desktop / lib.rs windows + run hook | verified (code read, compiles, 649 lib tests; Dock click not exercised) | `learnings/2026-11-25-hidden-window-dock-click-did-nothing.md` |
 
 ---
 
@@ -3185,7 +3283,7 @@ Questions that affect future implementation.
 | Q003 | Default provider priority chain when Apple Intelligence and local server both exist (order + UI copy)? | Roadmap P1.4 / open decision #3 | user | open |
 | Q004 | Windows: which seam lands first given "equal priority" (hotkey, injection, tray, mic)? | D005 says equal priority but no Windows plan exists yet | user | open |
 | Q006 | "Detected <Lang>. Lock it?" chip after auto-detect (EW's LanguageChipView pattern)? | Follow-up to the 2026-09-25 language picker work; needs detected-language signal from ASR (P2-35) | user | open |
-| Q005 | Repo hygiene: multiple root docs compete for "current plan" (`PROGRESS.md`, `checkpoint.md`, `teletype_complete_roadmap.md`, plus the local-only `roadmap.md`), and stray untracked files exist | Confusing for contributors and agents | user | open (resolved 2026-11-19 for the README half: the public README is root `README.md`; `README-github.md` does not exist) |
+| Q005 | Repo hygiene: multiple root docs compete for "current plan" (`PROGRESS.md`, `checkpoint.md`, `teletype_complete_roadmap.md`, plus the local-only `roadmap.md`), and stray untracked files exist | Confusing for contributors and agents | user | **resolved 2026-11-25**: all scattered root docs consolidated into `ROADMAP.md`; `PROGRESS.md`, `checkpoint.md`, `teletype_complete_roadmap.md`, `mobile-app-plan.md`, `ponytail.md`, `agvity.md`, `humanqa.md`, `design-changes.md`, `voice-command-testing-library.md`, `windows-testing.md`, `BRIDGE-PROGRESS.md`, `polish-feature-update.md`, both style-reference files, and `bugs/` (20 files) deleted. The local-only `roadmap.md` is still gitignored and absent from a fresh clone |
 
 Agents may answer an open question from reliable evidence.
 When evidence is insufficient, ask the user rather than inventing an answer.
@@ -3207,7 +3305,7 @@ Track important external sources that shaped the project.
 | LiveKit Agents UI (`github.com/livekit/components-js`, `packages/shadcn`, Apache-2.0) | Dot-matrix grid visualizer ported as the `dotGrid` pill style. Component is plain React+CSS (no WebGL); the LiveKit coupling is only `useMultibandTrackVolume`/`useAgent` wrappers, and the official `volumeBands` prop is the clean injection seam. Aura/Wave visualizers ARE WebGL shaders and are not cheap ports | 2026-09-26 | Vendored with attribution in `ui/src/pill.tsx` |
 | `github.com/jaredpalmer/kev` (Apache-2.0) + `logicrw/awesome-jev-projects` + pinggy.io JEV-alternatives benchmark (2026-09-23) | Jev = TypeSafe's closed "System One" decision model: state + typed questions (Choice/Score/Noul) → probability per option in one parallel pass, no token generation, 50-100ms hosted. Open clones (Laya 421M BERT, Kev 0.8-27B Qwen+LoRA, SemIf frozen-logit wrapper, NanoJev 0.6B, jevlike trainer) reproduce the interface, NOT zero-shot accuracy: independent jabr 49-task benchmark = Jev 0.966 vs best-open 0.704. Kev-0.8B MLX on Apple Silicon: 47ms warm / 77ms fresh per multi-question request. Teletype fit: NOT a drop-in for polish (text generation, wrong job); plausible use = fast intent classifier (polish vs raw insertion), context-app detection, transform routing. Blocked on: Python sidecar vs Rust-only + llama-server D002 precedent, 13MB binary + no-bundled-weights constraint, zero-shot accuracy gap | 2026-09-26 | Research only, no code written; user asked "useful or not" before any implementation |
 | `github.com/yijunyu/jev-rs` (Apache-2.0/MIT) + `jev-sdk` crate (docs.rs) | Rust-native Jev-class engine: reads next-token logprobs from any llama-server GGUF (Qwen3-4B: 75ms p50 warm, zero output tokens), wire-compatible `POST /v1/systemone`, `jev ask`/`serve`/`mcp`/`eval`/`calibrate`. Accuracy on dev_tasks: 0.71 overall (choice 0.92, noul 0.64, score 0.56) — same 0.70 open-class ceiling. Reuses the llama-server Teletype ALREADY bundles (D002 subprocess, no new runtime, no Python). `jev-sdk` = hosted-TypeSafe-only client (network, violates D003). Fit: strictly better than Python Kev for a future agent layer (same accuracy, Rust, no new sidecar), but still not useful for current deterministic pipeline | 2026-09-26 | Follow-up to Kev research; no code written |
-| Root planning docs: `Teletype Agent Plan Beat Wispr Flow.md` + `Teletype Agent Plan NeuDecide Addendum.md` (desk-checked 2026-11-01) + `PROGRESS.md` on `feat/beat-wispr` | Governing plan: gates 0–7, P0.1–P7.1, baseline-ways rule, never-break-delivery rule, NeuDecide hybrid decider shape (tool from audio, arguments from transcript, Apache-2.0) | 2026-11-01 | Plan of record (Decision D017); executes on `feat/beat-wispr`; state = that branch's `PROGRESS.md` |
+| Root planning docs: `ROADMAP.md` (consolidated 2026-11-25 from `Teletype Agent Plan Beat Wispr Flow.md` + `Teletype Agent Plan NeuDecide Addendum.md` + `teletype_complete_roadmap.md` + `PROGRESS.md` + others) | Governing plan: gates 0–7, P0.1–P7.1, baseline-ways rule, never-break-delivery rule, NeuDecide hybrid decider shape (tool from audio, arguments from transcript, Apache-2.0), refactoring roadmap, long-term agent plan, bug-fix records (BUG-001–020), QA audits | 2026-11-25 | Plan of record (Decision D017); executes on `feat/beat-wispr`; state = that branch's `PROGRESS.md` (now §2 of `ROADMAP.md`) |
 | `huggingface.co/AuroraAI-Research/AuroraASR-1M` (published 2026-10-18, Apache-2.0; 0 downloads at check) | Sub-1M (949,073-param) weight-shared Conformer-CTC dictation: 4 unique Conformer-lite blocks ×2 passes, d_model=128, 256-piece BPE, greedy CTC, no LM; trained on LibriSpeech-960h only, English-only, 16 kHz; **no punctuation/casing in output**. Self-reported WER (greedy): test-clean 11.43 / test-other 26.50 — within ~0.5 of Femto-ASR (2.39M, 10.95/25.36), far above Citrinet-256 (10M; 3.8/9.8), Moonshine Tiny (27M; 4.58 clean), Whisper tiny.en (39M; 5.6/14.6). Speed claims (unverified by us): RTF 0.0023 = 436× real-time on 1 CPU core; 3.81 MB FP32 / 1.06 MB INT8, claims near-lossless to INT8. Verdict 2026-10-21: admirable extreme-minimal model, but NOT a replacement for Parakeet TDT 0.6B v3 as our primary ASR — higher WER (parakeet class beats it by roughly 1/3 on clean and ~5× on test-other), no punctuation, read-speech-only training with no noise augmentation, no production track record. Plausible only as a cheap pre-screen/embedded path or an `evals/` baseline for tiny models | 2026-10-21 (HF API + model card; numbers self-reported) | Research only, no code written; user asked "is this a good ASR" before any implementation |
 
 ---
@@ -3219,14 +3317,14 @@ Record explicit user decisions that are likely to matter later.
 | Date | Decision | Context |
 |---|---|---|
 | 2026-09-22 | Personal open-source project, never commercial | Brain initialization |
-| 2026-09-22 | `roadmap.md` is plan of record; `checkpoint.md` is historical | Brain initialization |
+| 2026-09-22 | `ROADMAP.md` is plan of record (consolidated 2026-11-25 from scattered root docs); the project brain is the source for verified decisions | Brain initialization; docs consolidation 2026-11-25 |
 | 2026-09-22 | Windows is equal priority with macOS | Brain initialization |
 | 2026-09-22 | Uncommitted P0 batch needs review/verification before commit | Brain initialization |
 | 2026-09-22 | Approved three-part transform fix: provider rehydration at startup, surfacing the silent pipeline fallback, EW-derived generic prompt rules + builtin dictionary seed ("yes please") | Transform quality pass |
 | 2026-09-22 | Spoken enumerations must render as points: "first, second, third" narration and colon-announced lists ("Bring the following ...: apple, grapes, banana and onion") each become `- ` bullet lines, matching the EW website "Spoken lists" demo | User request, dictation + screenshot |
 | 2026-09-23 | List format fixed to match EW exactly: lead-in line ending `:`, one `- ` item per line, capitalized, trailing period (their runtime prompt examples; judge treats punctuation as an allowed variant). Inline one-line hyphen runs from EG-1 are a bug fixed deterministically, not left to the model. EW clone kept persistent at `enviouswispr/` and gitignored | User, after live dictation produced a one-line hyphen run |
 | 2026-09-25 | Port EW's Transcription-tab settings in this order: (1) language auto-detect + full picker, (2) stop-on-silence VAD + pause-duration slider, (3) spoken emoji + spoken punctuation toggles, (4) engine picker cards + tabbed Settings (Transcription/AI Polish/General), (5) unload-model-after timer. Skip streaming ASR and live preview (P2) | User, after EW vs Teletype settings gap analysis |
-| 2026-09-28 | QA audit: 19 verified bugs filed in `bugs/` (see `bugs/README.md`). Headline: a class of EW-parity features advertised in this brain / README had no engine path — items (3) and (5) of the EW settings port above (spoken emoji/punctuation toggles = BUG-002, unload-model-after timer = BUG-003) and the live autotext toggle (BUG-010) were advertised but absent or dead. Fixed 2026-09-28: BUG-001 (personalization mishearing judge + count-1 injection gate + in-place edit diff), BUG-004 (ITN second→2nd noun guard), BUG-005 (splitter partial-echo duplication), BUG-006 (AX allowlist URL bars/search fields), BUG-007 (select_model kill-before-spawn), BUG-008 (full whisper.cpp language table, UI label derived from list length), BUG-009+010 (dead toggles now live-apply on save), BUG-011 (interim preview in Hold mode), BUG-012 (personalization nav), BUG-019 (`contract_06` in ipc_contract.rs: every persisted setting must have a production caller). Remaining: BUG-002+003 build-or-remove (the honesty block — needs a product decision), BUG-013..018 deferred (task files in tasks/). Do not treat items (3)/(5) of the EW port as done until BUG-002/003 close. | QA audit, `bugs/` tickets, `tasks/` |
+| 2026-09-28 | QA audit: 19 verified bugs filed in `bugs/` (now consolidated in `ROADMAP.md` §11). Headline: a class of EW-parity features advertised in this brain / README had no engine path — items (3) and (5) of the EW settings port above (spoken emoji/punctuation toggles = BUG-002, unload-model-after timer = BUG-003) and the live autotext toggle (BUG-010) were advertised but absent or dead. Fixed 2026-09-28: BUG-001 (personalization mishearing judge + count-1 injection gate + in-place edit diff), BUG-004 (ITN second→2nd noun guard), BUG-005 (splitter partial-echo duplication), BUG-006 (AX allowlist URL bars/search fields), BUG-007 (select_model kill-before-spawn), BUG-008 (full whisper.cpp language table, UI label derived from list length), BUG-009+010 (dead toggles now live-apply on save), BUG-011 (interim preview in Hold mode), BUG-012 (personalization nav), BUG-019 (`contract_06` in ipc_contract.rs: every persisted setting must have a production caller). Remaining: BUG-002+003 build-or-remove (the honesty block — needs a product decision), BUG-013..018 deferred (task files in tasks/). Do not treat items (3)/(5) of the EW port as done until BUG-002/003 close. | QA audit, `bugs/` tickets (now `ROADMAP.md` §11), `tasks/` |
 | 2026-09-25 | Language setting: `"auto"` now passes through to Whisper (auto-detect); Parakeet ignores the language arg in its wrapper. Settings picker is model-aware (Auto + the selected model's language list) | Item (1) of the EW settings port; `effective_language` in `dictation.rs`, `SettingsScreen.tsx`, `SpeechModelStatus.languages` |
 | 2026-09-25 | Pill style picker with 4 choices: Teletype (default, original), Classic Capsule, Level Rail, Reading Well (ported from EW). `pill_style` setting (default `"default"`). Reading Well's live-preview well is chrome-only until streaming ASR (P2-29) | Item (pill port) of the EW settings port; `pill.tsx` (ClassicPill/LevelRailPill/ReadingWellPill + RainbowLips/RainbowMeter/RainbowHairline), `SettingsScreen.tsx`, `Settings.pill_style` in `commands.rs` |
 | 2026-09-25 | VAD auto-stop: pure-Rust `silero-vad-pure` engine (no ONNX), stop policy in `teletype-core::vad` (fire only on silence after speech, default 800 ms, leading silence never stops). Settings `vad_auto_stop` (default off) + `vad_silence_ms` slider (300..2000). Active ONLY in hands-free hold mode (double-tap start): plain hold stops on key release and push-to-talk stops on the second tap, so both would preempt VAD. Capture thread feeds an `Arc<Mutex<Option<VadDetector>>>` slot via `Recording::start_with_vad`; on `UtteranceComplete` the slot is dropped (one-shot) and `Event::VadFired { session }` stops the take; session check is the second gate. VAD engine init failure falls back to manual stop. Latency gate: test asserts < 10 ms per 32 ms chunk (roadmap P2.2). **Sample-rate fix (2026-09-26):** the detector once hardcoded 16 kHz when converting silent chunks to wall-clock time, but the capture stream feeds the device's native rate (commonly 48 kHz on Mac), so an 800 ms pause took ~2.4 s of real silence to fire ("1+ second pause not working"). `VadDetector::set_sample_rate` + `Recording::start_with_vad_rate` now publish the device rate (stored before the first frame, no race) and the frame callback latches it; regression test `silence_timing_uses_actual_feed_rate_not_16k` | Item (2) of the EW settings port; `vad.rs` (`set_sample_rate`/`silence_elapsed`), `audio/mod.rs` (`start_with_vad_rate`, rate published pre-play), `dictation.rs` (`vad_enabled_for`/`start_with_vad`/`VadFired` + rate slot), `Settings.vad_auto_stop`/`vad_silence_ms` in `commands.rs`, `SettingsScreen.tsx` |
@@ -3266,8 +3364,9 @@ The brain must describe the checkout it sits in, not a historical snapshot.
 - If a task changed no durable knowledge, say so explicitly in the final report
   ("no brain change needed"). Do not manufacture entries, and do not leave a
   known-stale section standing because it was not in the diff.
-- Recorded IDs are unique: D001–D043 plus D044 (Notetaker) and D045 (fetched
-  model weights). A duplicate ID or a
+- Recorded IDs are unique: D001–D043 plus D044 (Notetaker), D045 (fetched
+  model weights), D046–D052 (Sentry, no-unload rule, and later decisions).
+  A duplicate ID or a
   reference to a decision that does not match its block is a defect to fix on
   sight (see the D011/D016/D017/D020 corrections made 2026-11-19).
 
@@ -3294,6 +3393,7 @@ Do not add:
 ---
 
 | 2026-11-01 | `ali-agent-health` audit (6 checks) + `to-tickets` for the Beat-Wispr plan: registry 8/8 ACTIVE; all learning files status-tailed; fixed duplicate section number (`## 10. QA audit` → unnumbered); fixed stale `typing_windows.rs` path (now `typing/` since `8f86c5c`); added current-work topology (3-branch + plan authority), Decisions **D016** (EG-1 removal, `1ebd339`) and **D017** (commit-while-you-go streaming, `fcae04b`, plan of record) — IDs corrected 2026-11-19 against the actual decision blocks; learning **L032** (QA battery practice), planning-docs source row; added ADR-013/ADR-014 files (local-only — see drift notes). Left for Ali: (a) brain is mostly gitignored (`.gitignore: .agents/*`) and the two tracked lineages (main `caa90f4`, refactor `ae98488`) will conflict on merge — prefer the refactor lineage and salvage from there; (b) ADR-013/014 and most learnings are untracked locally — track or resign if they must survive between checkouts; (c) an older, uncommitted brain revision (v0.2.5-era: "State here?" 31-item list, QA-battery bug list) existed in a prior working tree and was never committed anywhere in git — durable items from it have been re-verified and re-recorded above (L023); the rest is treated as lost. |
+| 2026-11-25 | Docs consolidation: 37 scattered root-level files (roadmaps, plans, audits, bug records, style refs) merged into `ROADMAP.md` and deleted. Brain updated: freshness marker → `8746c1c`; §5 repo map root-docs row → `ROADMAP.md`; §11 Q005 → resolved; §12 planning-docs source row → `ROADMAP.md`; §13 plan-of-record row → `ROADMAP.md`; §13 QA-audit row → `ROADMAP.md` §11; §14 decision-ID range → D001–D052. References in `README.md`, `PRODUCT.md`, `plans/README.md`, `.agents/agents/teletype-product-manager.md`, and 4 `tasks/` files updated to point at `ROADMAP.md`. Untracked learning `2026-11-25-hidden-window-dock-click-did-nothing.md` (L100) still needs to be committed or resigned. |
 
 ## 15. Future company brain hook
 

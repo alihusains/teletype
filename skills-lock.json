@@ -1,12 +1,19 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "brag": {
       "source": "latent-spaces/brag",
       "sourceType": "github",
       "skillPath": "skills/brag/SKILL.md",
-      "computedHash": "917eba27222a174bd05088df28a155c8e43a28be611d3694d409790adcc082d0",
+      "computedHash": "6eefb4ac1485fd9834ea42c70a789bcc532cb6cf17f9f82925be8cdc681b0d75",
       "installMode": "copy"
+    },
+    "improve": {
+      "source": "shadcn/improve",
+      "commit": "cac56e1ebd3c279aa9153616cfeac7b174ab90f9",
+      "sourceType": "github",
+      "skillPath": "skills/improve/SKILL.md",
+      "computedHash": "9e8fe9ea4f9a0e4155801d1624e38ca23798467bb88b447efaa5120f7b1fe802"
     }
   }
 }

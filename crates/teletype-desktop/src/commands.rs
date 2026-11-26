@@ -706,8 +706,6 @@ pub struct Settings {
     /// words; custom AutoText is unaffected (BUG-002).
     #[serde(default = "default_true")]
     pub spoken_punctuation: bool,
-    #[serde(default)]
-    pub model_unload_delay_secs: u64,
     /// Ids of enabled vocabulary packs ("tech", "medical", "legal", "brands",
     /// "names"). Off by default; each pack is toggled independently.
     #[serde(default)]
@@ -746,7 +744,10 @@ pub struct Settings {
     pub smart_insertion: bool,
     /// When to load the speech engine ahead of the hotkey press, as a policy
     /// string from `"off"`, `"10"`, `"30"`, `"60"`, `"always"`. Warming trades
-    /// battery and memory for a faster first word.
+    /// battery and memory for a faster first word. The numeric values are
+    /// legacy retention windows: with automatic unloading gone (D052) they all
+    /// mean "load on the first press and stay resident", and the UI writes
+    /// `"30"` for that choice.
     #[serde(default = "default_warm_engine_policy")]
     pub warm_engine_policy: WarmEnginePolicy,
     /// Dictionary match strictness: one of `loose` | `standard` | `strict`
@@ -937,7 +938,6 @@ pub struct SettingsPatch {
     pub restore_emoji: Option<bool>,
     pub spoken_emoji: Option<bool>,
     pub spoken_punctuation: Option<bool>,
-    pub model_unload_delay_secs: Option<u64>,
     pub enabled_packs: Option<Vec<String>>,
     pub theme: Option<UiTheme>,
     pub reduce_motion: Option<bool>,
@@ -1017,7 +1017,6 @@ impl SettingsPatch {
         apply!(restore_emoji);
         apply!(spoken_emoji);
         apply!(spoken_punctuation);
-        apply!(model_unload_delay_secs);
         apply!(enabled_packs);
         apply!(theme);
         apply!(reduce_motion);
@@ -1428,7 +1427,6 @@ impl Default for Settings {
             restore_emoji: true,
             spoken_emoji: default_true(),
             spoken_punctuation: default_true(),
-            model_unload_delay_secs: 0,
             enabled_packs: Vec::new(),
             theme: default_theme(),
             reduce_motion: false,

@@ -303,7 +303,7 @@ jobs:
           restore-keys: |
             cargo-target-macos-${{ runner.arch }}-
       - name: Install tauri-cli
-        # Pin to a tauri-cli that builds on the pinned Rust 1.88 toolchain.
+        # Pin to a tauri-cli that builds on the pinned Rust 1.90 toolchain.
         # tauri-cli must match the tauri crate version in Cargo.lock.
         run: |
           if ! cargo tauri --version 2>/dev/null | grep -q "2.12.0"; then
@@ -828,6 +828,7 @@ jobs:
         # the llama.cpp pin moves. scripts/check-artifact-pins.sh reads
         # this line, so keep the commit in sync with the release tag.
         # llama.cpp pin: c19043f67e52f1f1e00d797246e19643bb2f168e (release b12200)
+        # llama.cpp release tag: b12200
         #
         # The app calls the server over 127.0.0.1 HTTP, so no TLS is needed.
         run: |

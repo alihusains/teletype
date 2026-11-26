@@ -10,22 +10,22 @@ const REQUIRED_SETTINGS_FIELDS: (keyof Settings)[] = [
   'matchStrictness', 'dictionaryEnabled', 'pillStyle', 'appIcon', 'transcriptsDir',
   'vadAutoStop', 'vadSilenceMs', 'enableDeveloperTab', 'sendCrashReports', 'polishGateEnabled',
   'polishGateThresholdWords', 'polishMaxChangePercent', 'restoreEmoji', 'spokenEmoji', 'spokenPunctuation',
-  'modelUnloadDelaySecs', 'activeStyleProfile', 'appLanguageOverrides', 'enabledPacks',
+  'activeStyleProfile', 'appLanguageOverrides', 'enabledPacks',
   'selectedLlmProvider', 'theme', 'reduceMotion', 'polishRules', 'listStyle', 'quickAddHotkey',
 ]
 
 describe('Settings shape', () => {
-  it('has exactly 49 fields', () => {
-    expect(REQUIRED_SETTINGS_FIELDS.length).toBe(49)
+  it('has exactly 48 fields', () => {
+    expect(REQUIRED_SETTINGS_FIELDS.length).toBe(48)
   })
 
   it('all fields are unique', () => {
-    expect(new Set(REQUIRED_SETTINGS_FIELDS).size).toBe(49)
+    expect(new Set(REQUIRED_SETTINGS_FIELDS).size).toBe(48)
   })
 
-  it('fixture with all 49 fields serializes correctly', () => {
+  it('fixture with all 48 fields serializes correctly', () => {
     const fixture = Object.fromEntries(REQUIRED_SETTINGS_FIELDS.map((k) => [k, k.includes('Enabled') || k.startsWith('restore') || k.startsWith('keep') || k.startsWith('show') || k.startsWith('has') || k === 'removeFillerWords' || k === 'alwaysShowPill' || k === 'livePreviewEnabled' || k === 'smartInsertion' || k === 'playRecordingSounds' || k === 'dictionaryEnabled' || k === 'vadAutoStop' || k === 'enableDeveloperTab' || k === 'sendCrashReports' || k === 'polishGateEnabled' || k === 'spokenEmoji' || k === 'restoreEmoji' || k === 'spokenPunctuation' || k === 'reduceMotion' ? false : typeof k === 'string' && (k.endsWith('Ms') || k.endsWith('Secs') || k === 'polishGateThresholdWords' || k === 'polishMaxChangePercent' ? 0 : Array.isArray([]) ? [] : typeof k)])) as Record<string, unknown>
-    expect(Object.keys(fixture).length).toBe(49)
+    expect(Object.keys(fixture).length).toBe(48)
     const json = JSON.stringify(fixture)
     expect(JSON.parse(json)).toEqual(fixture)
   })
@@ -72,7 +72,6 @@ describe('Settings shape', () => {
       restoreEmoji: true,
       spokenEmoji: false,
       spokenPunctuation: true,
-      modelUnloadDelaySecs: 30,
       activeStyleProfile: 'formal',
       appLanguageOverrides: { fr: 'en' },
       enabledPacks: ['pack-a'],
@@ -118,7 +117,7 @@ describe('Settings shape', () => {
       vadAutoStop: false, vadSilenceMs: 0, enableDeveloperTab: false,
       sendCrashReports: true, polishGateEnabled: false,
       polishGateThresholdWords: 0, polishMaxChangePercent: 0, restoreEmoji: false, spokenEmoji: false, spokenPunctuation: false,
-      modelUnloadDelaySecs: 0, activeStyleProfile: '', appLanguageOverrides: {}, enabledPacks: [],
+      activeStyleProfile: '', appLanguageOverrides: {}, enabledPacks: [],
       selectedLlmProvider: '', theme: '', reduceMotion: false, polishRules: {}, listStyle: '', quickAddHotkey: '',
       noiseReductionEnabled: true, commandHotkey: 'Ctrl+Option+Space', commandWakePhrase: true, pendingNotice: null,
       polishWholeTextAtEnd: false, polishSkipWhenClean: false, instantStart: 'off', preferBuiltinMicWithBt: true,

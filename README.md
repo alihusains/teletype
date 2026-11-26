@@ -117,10 +117,10 @@ Beyond speed, the impact is control:
   `continue-on-error`, so it can never block an Apple Silicon release. If you
   have an Intel Mac, it is worth trying; if you are deciding whether to buy
   one, do not buy it for Teletype.
-- **Windows 10/11** — see [Windows testing](windows-testing.md) for what is and
+- **Windows 10/11** — see [ROADMAP.md §9](ROADMAP.md) for what is and
   is not verified. Treat it as untested.
-- **Rust 1.88+**
-- **Node.js 18+** (for the UI build)
+- **Rust 1.90+**
+- **Node.js 24** (CI's pin; 22.22.2+ or 24.15+ also works for the UI build)
 - **CMake** and a C/C++ toolchain (`xcode-select --install` on macOS) — used
   to build the speech engines
 
@@ -128,7 +128,7 @@ Beyond speed, the impact is control:
 
 ```bash
 # 1. Install the Tauri CLI (if you haven't already)
-cargo install tauri-cli --version "^2"
+cargo install tauri-cli --version "2.12.0" --locked
 
 # 2. Build the UI
 cd ui && npm install && npm run build && cd ..
@@ -142,6 +142,10 @@ To build a distributable bundle:
 ```bash
 cargo tauri build
 ```
+
+The Tauri CLI is pinned to 2.12.0 because it must match the `tauri` crate
+version in `Cargo.lock`; bump the two together (a CLI/crate skew once produced
+divergent Windows and macOS builds).
 
 > The first `cargo build` downloads and compiles whisper.cpp v1.9.4 (the
 > Parakeet engine). This is slow once; subsequent builds are incremental.

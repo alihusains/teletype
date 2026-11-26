@@ -2,7 +2,7 @@
 
 **Status:** closed (all four verified fixed, 2026-10-01)
 **Filed:** 2026-09-28 by productivity monitor
-**Tickets:** `bugs/BUG-013-orphan-llama-server-on-exit.md`, `bugs/BUG-014-chat-stream-partial-on-server-death.md`, `bugs/BUG-015-provider-race-ensure-vs-select.md`, `bugs/BUG-016-download-no-sha-corrupt-resume.md`
+**Tickets:** `ROADMAP.md §11 (BUG-0XX)`, `ROADMAP.md §11 (BUG-0XX)`, `ROADMAP.md §11 (BUG-0XX)`, `ROADMAP.md §11 (BUG-0XX)`
 
 ## Outcome (verified against the current tree)
 
