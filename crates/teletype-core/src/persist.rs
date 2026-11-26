@@ -246,7 +246,20 @@ fn create_fts_tables(conn: &mut Connection) -> Result<(), String> {
 }
 
 /// Inserts one row into the FTS index. Called from write_history.
+///
+/// Deletes any existing FTS row for the same `history_id` first, because
+/// `INSERT OR REPLACE` in the history table can change the rowid. Without
+/// this, a replaced row leaves an orphaned FTS entry that matches searches
+/// but has no corresponding history row (BUG-1).
 fn fts_insert(conn: &Connection, id: &str, text: &str, raw_text: &str) {
+    // Remove any stale FTS entry for this history_id (handles rowid change
+    // from INSERT OR REPLACE).
+    let _ = conn.execute(
+        "INSERT INTO history_fts(history_fts, rowid, text, raw_text, history_id)
+         SELECT 'delete', rowid, text, raw_text, history_id
+         FROM history_fts WHERE history_id = ?1",
+        params![id],
+    );
     let _ = conn.execute(
         "INSERT INTO history_fts(rowid, text, raw_text, history_id)
          VALUES (
@@ -258,7 +271,21 @@ fn fts_insert(conn: &Connection, id: &str, text: &str, raw_text: &str) {
 }
 
 /// Removes one row from the FTS index. Called from remove_history.
+///
+/// Looks up the FTS row by `history_id` rather than by the history table's
+/// rowid, because `INSERT OR REPLACE` can have changed the rowid since the
+/// FTS entry was written (BUG-2).
 fn fts_delete(conn: &Connection, id: &str, text: &str, raw_text: &str) {
+    // Delete by history_id: find the FTS row(s) matching this id and delete
+    // them using their own FTS rowid and content.
+    let _ = conn.execute(
+        "INSERT INTO history_fts(history_fts, rowid, text, raw_text, history_id)
+         SELECT 'delete', rowid, text, raw_text, history_id
+         FROM history_fts WHERE history_id = ?1",
+        params![id],
+    );
+    // Fallback: also try the old rowid lookup in case the FTS row was
+    // written before the fix that deletes by history_id.
     let _ = conn.execute(
         "INSERT INTO history_fts(history_fts, rowid, text, raw_text, history_id)
          VALUES ('delete',

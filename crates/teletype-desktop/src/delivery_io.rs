@@ -463,6 +463,12 @@ mod windows {
         }
 
         fn snapshot(&self) -> Option<ClipboardSnapshot> {
+            // If arboard is not yet initialized, we cannot read the
+            // clipboard. Returning None tells the core cascade to skip
+            // the restore entirely (never clear what we cannot put back).
+            // Returning Some(empty) would cause restore to overwrite the
+            // user's clipboard with an empty string (BUG-3: data loss).
+            //
             // arboard can read the current text; capture it so restore can
             // put it back. We cannot capture non-text items (images, files)
             // with arboard, so the snapshot is text-only. This is a known
@@ -472,10 +478,7 @@ mod windows {
                 .arboard
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let text = guard
-                .as_ref()
-                .and_then(|c| c.get_text().ok())
-                .unwrap_or_default();
+            let text = guard.as_ref()?.get_text().ok()?;
             Some(ClipboardSnapshot {
                 items: vec![text],
                 change_count: None,
