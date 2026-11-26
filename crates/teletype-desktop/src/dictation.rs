@@ -3607,7 +3607,9 @@ impl Session {
             std::sync::Arc::new(crate::clipboard::MacClipboardGuard::new()),
             keep_text,
         );
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "windows")]
+        let io = crate::delivery_io::windows_io(keep_text);
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let io = crate::delivery_io::macos_io(std::sync::Arc::new(()), keep_text);
         let policy = DeliveryPolicy::builtin();
         let outcome = delivery::deliver(&text, app_id.as_deref(), &policy, &io);
@@ -8446,7 +8448,9 @@ impl Session {
                 std::sync::Arc::new(crate::clipboard::MacClipboardGuard::new()),
                 settings.keep_text_on_clipboard,
             );
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "windows")]
+            let io = crate::delivery_io::windows_io(settings.keep_text_on_clipboard);
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let io = crate::delivery_io::macos_io(
                 std::sync::Arc::new(()),
                 settings.keep_text_on_clipboard,

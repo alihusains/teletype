@@ -349,26 +349,242 @@ mod macos {
 }
 
 // ---------------------------------------------------------------------------
-// Non-macOS stub (compile-safe; all operations error)
+// Windows adapters
 // ---------------------------------------------------------------------------
 
-#[cfg(not(target_os = "macos"))]
-mod fallback {
+#[cfg(target_os = "windows")]
+mod windows {
     use super::*;
-    use teletype_core::delivery::{FieldReader, Typer};
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
 
-    pub struct StubField;
-    impl FieldReader for StubField {
-        fn selected_text(&self) -> Option<String> {
-            None
-        }
-        fn is_secure_field(&self) -> bool {
-            false
-        }
-        fn set_selected_text(&self, _text: &str) -> Result<(), String> {
-            Err("delivery not supported on this platform".into())
+    /// Types text character-by-character via enigo (SendInput on Windows).
+    pub struct EnigoTyper {
+        enigo: Mutex<Option<Enigo>>,
+    }
+
+    impl std::fmt::Debug for EnigoTyper {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("EnigoTyper").finish_non_exhaustive()
         }
     }
+
+    impl EnigoTyper {
+        pub fn new() -> Self {
+            Self {
+                enigo: Mutex::new(None),
+            }
+        }
+    }
+
+    impl Default for EnigoTyper {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl Typer for EnigoTyper {
+        fn type_text(&self, text: &str) -> Result<(), String> {
+            if text.chars().count() > MAX_TYPED_CHARS {
+                return Err(format!(
+                    "text is {} chars; typed fallback capped at {MAX_TYPED_CHARS}",
+                    text.chars().count()
+                ));
+            }
+            if text.is_empty() {
+                return Ok(());
+            }
+            let mut guard = self
+                .enigo
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if guard.is_none() {
+                *guard = Some(
+                    Enigo::new(&EnigoSettings::default())
+                        .map_err(|e| format!("enigo unavailable: {e}"))?,
+                );
+            }
+            let enigo = guard
+                .as_mut()
+                .ok_or_else(|| "enigo unavailable: not initialized".to_string())?;
+            enigo
+                .fast_text(text)
+                .map(|_| ())
+                .map_err(|e| format!("type failed: {e}"))
+        }
+    }
+
+    /// Clipboard adapter: arboard for set_text/snapshot/restore.
+    /// Windows has no change_count equivalent to macOS NSPasteboard;
+    /// GetClipboardSequenceNumber is available but arboard does not expose
+    /// it, so change_count returns None (restore is unconditional, the
+    /// pre-guard behaviour).
+    pub struct ArboardClipboard {
+        arboard: Mutex<Option<arboard::Clipboard>>,
+        keep_text: bool,
+        last_text: Mutex<String>,
+    }
+
+    impl std::fmt::Debug for ArboardClipboard {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ArboardClipboard").finish_non_exhaustive()
+        }
+    }
+
+    impl ArboardClipboard {
+        pub fn new(keep_text: bool) -> Self {
+            Self {
+                arboard: Mutex::new(None),
+                keep_text,
+                last_text: Mutex::new(String::new()),
+            }
+        }
+    }
+
+    impl ClipboardIo for ArboardClipboard {
+        fn set_text(&self, text: &str) -> Result<(), String> {
+            *self
+                .last_text
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = text.to_string();
+            let mut guard = self
+                .arboard
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if guard.is_none() {
+                *guard = Some(
+                    arboard::Clipboard::new().map_err(|e| format!("clipboard unavailable: {e}"))?,
+                );
+            }
+            guard
+                .as_mut()
+                .ok_or_else(|| "clipboard not initialized".to_string())?
+                .set_text(text.to_string())
+                .map_err(|e| format!("clipboard set_text: {e}"))
+        }
+
+        fn snapshot(&self) -> Option<ClipboardSnapshot> {
+            // arboard can read the current text; capture it so restore can
+            // put it back. We cannot capture non-text items (images, files)
+            // with arboard, so the snapshot is text-only. This is a known
+            // limitation: a user's copied image will be lost. The change
+            // count is None, so the restore guard restores unconditionally.
+            let guard = self
+                .arboard
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let text = guard
+                .as_ref()
+                .and_then(|c| c.get_text().ok())
+                .unwrap_or_default();
+            Some(ClipboardSnapshot {
+                items: vec![text],
+                change_count: None,
+            })
+        }
+
+        fn restore(&self, snapshot: &ClipboardSnapshot) {
+            let text = std::mem::take(
+                &mut *self
+                    .last_text
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            let restore_text = if self.keep_text && !text.is_empty() {
+                // Preserve the dictation: user's text + dictation.
+                if snapshot.items.is_empty() {
+                    text
+                } else {
+                    format!("{}\n{}", snapshot.items.join("\n"), text)
+                }
+            } else {
+                snapshot.items.join("\n")
+            };
+            let mut guard = self
+                .arboard
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if guard.is_none() {
+                if let Ok(c) = arboard::Clipboard::new() {
+                    *guard = Some(c);
+                }
+            }
+            if let Some(c) = guard.as_mut() {
+                let _ = c.set_text(restore_text);
+            }
+        }
+
+        fn change_count(&self) -> Option<u64> {
+            // Windows GetClipboardSequenceNumber is not exposed by arboard.
+            // Returning None means the restore guard restores unconditionally
+            // (the pre-guard behaviour), which is safe.
+            None
+        }
+    }
+
+    /// Fires Ctrl+V via enigo (SendInput on Windows).
+    pub fn paste_key(enigo: &Mutex<Option<Enigo>>) -> bool {
+        let mut guard = enigo
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.is_none() {
+            match Enigo::new(&EnigoSettings::default()) {
+                Ok(e) => *guard = Some(e),
+                Err(e) => {
+                    tracing::warn!("[delivery] paste_key: enigo unavailable: {e}");
+                    return false;
+                }
+            }
+        }
+        let Some(enigo) = guard.as_mut() else {
+            tracing::warn!("[delivery] paste_key: enigo not initialized");
+            return false;
+        };
+        // Ctrl+V: Control + 'V' (keycode 47 on Windows, enigo uses Key::Other).
+        let result = (|| {
+            enigo.key(Key::Control, Direction::Press)?;
+            enigo.key(Key::Other(47), Direction::Press)?;
+            std::thread::sleep(PASTE_KEY_HOLD);
+            let r = enigo.key(Key::Other(47), Direction::Release);
+            enigo.key(Key::Control, Direction::Release)?;
+            r
+        })();
+        match result {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("[delivery] paste_key failed: {e}");
+                false
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Non-macOS stub FieldReader (shared by Windows and other platforms).
+// ---------------------------------------------------------------------------
+
+/// A field reader that reports no accessibility support. Used on Windows
+/// (UI Automation is a separate, larger effort) and on other platforms.
+pub struct StubField;
+impl FieldReader for StubField {
+    fn selected_text(&self) -> Option<String> {
+        None
+    }
+    fn is_secure_field(&self) -> bool {
+        false
+    }
+    fn set_selected_text(&self, _text: &str) -> Result<(), String> {
+        Err("delivery not supported on this platform".into())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Other-platform stubs (compile-safe; all operations error)
+// ---------------------------------------------------------------------------
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+mod fallback {
+    use super::*;
+    use teletype_core::delivery::Typer;
 
     pub struct StubTyper;
     impl Typer for StubTyper {
@@ -424,15 +640,27 @@ pub fn macos_io(
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn macos_io(_clipboard_guard: Arc<()>, _keep_text: bool) -> DeliveryIo {
     DeliveryIo {
-        field: Box::new(fallback::StubField),
+        field: Box::new(StubField),
         typer: Box::new(fallback::StubTyper),
         clipboard: Box::new(fallback::StubClipboard),
         paste_key: Box::new(|| false),
-        // No accessibility permission model on this platform: the trait
-        // default is `true`, which is the right answer here.
+        accessibility_trusted: Box::new(|| true),
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn windows_io(keep_text: bool) -> DeliveryIo {
+    use windows::*;
+    let enigo = Arc::new(Mutex::new(None::<Enigo>));
+    let enigo_paste = enigo.clone();
+    DeliveryIo {
+        field: Box::new(StubField),
+        typer: Box::new(EnigoTyper::new()),
+        clipboard: Box::new(ArboardClipboard::new(keep_text)),
+        paste_key: Box::new(move || paste_key(&enigo_paste)),
         accessibility_trusted: Box::new(|| true),
     }
 }
