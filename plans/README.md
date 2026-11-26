@@ -36,9 +36,9 @@ deferred — see the rejected/deferred list below.
 | 016 | Gate the devtools_toggle command at compile time (debug-only) | P1 | S | — | DONE (already implemented; verified debug + release builds) |
 | 017 | Pin @tauri-apps/cli to match cargo tauri-cli 2.12.0 | P2 | S | 015 | DONE (2026-11-26; exact-pinned to 2.12.0, 624 UI tests pass) |
 | 018 | Replace raw eprintln! in production audio error callbacks with tracing | P2 | S | — | DONE (2026-11-26; 92 audio tests pass, clippy clean) |
-| 019 | Add SQLite FTS5 full-text search to dictation history | P1 | M | — | TODO |
-| 020 | Show per-stage inference latency in the Developer tab | P2 | M | — | TODO |
-| 021 | Windows hotkey and text-injection seam | P2 | L | — | TODO |
+| 019 | Add SQLite FTS5 full-text search to dictation history | P1 | M | — | DONE (2026-11-26; 1413 core + 649 desktop + 624 UI tests pass) |
+| 020 | Show per-stage inference latency in the Developer tab | P2 | M | — | DONE (2026-11-26; last-dictation timing panel in Developer tab) |
+| 021 | Windows hotkey and text-injection seam | P2 | L | — | DONE (2026-11-26; enigo + arboard Windows DeliveryIo; Windows cross-compile unverified) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
