@@ -36,6 +36,9 @@ deferred — see the rejected/deferred list below.
 | 016 | Gate the devtools_toggle command at compile time (debug-only) | P1 | S | — | DONE (already implemented; verified debug + release builds) |
 | 017 | Pin @tauri-apps/cli to match cargo tauri-cli 2.12.0 | P2 | S | 015 | DONE (2026-11-26; exact-pinned to 2.12.0, 624 UI tests pass) |
 | 018 | Replace raw eprintln! in production audio error callbacks with tracing | P2 | S | — | DONE (2026-11-26; 92 audio tests pass, clippy clean) |
+| 019 | Add SQLite FTS5 full-text search to dictation history | P1 | M | — | TODO |
+| 020 | Show per-stage inference latency in the Developer tab | P2 | M | — | TODO |
+| 021 | Windows hotkey and text-injection seam | P2 | L | — | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (one-line reason) | REJECTED (one-line rationale).
 
@@ -53,6 +56,15 @@ section) or apply both in one commit to avoid merge conflicts. 017 depends
 on 015 (shares the pin-check script). 016 and 018 are independent of the
 others. 014 touches `THIRD-PARTY-NOTICES.txt` and the two `build.rs` files;
 016 touches `commands/system.rs`; 018 touches `audio/mod.rs` — all disjoint.
+
+Batch 4 (plans 019-021, 2026-11-26 direction items): 019 touches
+`persist.rs`, `history.rs`, and `InsightsScreen.tsx`. 020 touches
+`dictation.rs` and `DeveloperScreen.tsx`. 021 touches `delivery.rs` and
+`dictation.rs` — it overlaps with 020 on `dictation.rs`, so run 020 first
+or coordinate the `dictation.rs` changes. 019 is independent of the other
+two. 021 is the highest-risk plan (Windows FFI, cannot be tested on macOS);
+the trait extraction (step 1) can be done and tested on macOS, but the
+Windows implementation requires a Windows machine.
 
 ## Dependency notes
 
