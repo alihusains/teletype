@@ -239,3 +239,76 @@ for pair in "${plugin_pairs[@]}"; do
 done
 
 [[ "$plugin_failed" -eq 0 ]] || exit 1
+
+# --- Vendored C/C++ engine pins: build.rs vs THIRD-PARTY-NOTICES.txt -------
+#
+# Three C/C++ codebases are compiled into the binary from pinned commits:
+#   whisper.cpp   (parakeet-sys/build.rs,     WHISPER_TAG)
+#   parakeet.cpp  (parakeet-cpp-sys/build.rs, PARAKEET_COMMIT)
+#   ggml          (parakeet-cpp-sys/build.rs, GGML_COMMIT)
+#
+# Each pin must appear in BOTH the build script and THIRD-PARTY-NOTICES.txt.
+# If a pin moves in the build script but not the notices, the shipped binary
+# disagrees with the license attribution (a legal risk for a distributed app).
+#
+# Env overrides:
+#   PARAKEET_SYS_BUILD=...    (default crates/parakeet-sys/build.rs)
+#   PARAKEET_CPP_BUILD=...    (default crates/parakeet-cpp-sys/build.rs)
+
+PARAKEET_SYS_BUILD="${PARAKEET_SYS_BUILD:-$ROOT/crates/parakeet-sys/build.rs}"
+PARAKEET_CPP_BUILD="${PARAKEET_CPP_BUILD:-$ROOT/crates/parakeet-cpp-sys/build.rs}"
+
+for f in "$PARAKEET_SYS_BUILD" "$PARAKEET_CPP_BUILD"; do
+  [[ -f "$f" ]] || fail "bad usage: build script not found: $f"
+done
+
+engine_failed=0
+
+# 1. whisper.cpp tag: WHISPER_TAG in parakeet-sys/build.rs vs notices header.
+whisper_tag="$(grep -oE 'WHISPER_TAG: &str = "[^"]+"' "$PARAKEET_SYS_BUILD" | sed -E 's/.*"([^"]+)"$/\1/' | head -n 1 || true)"
+whisper_notices="$(grep -oE 'whisper\.cpp [v0-9]+\.[0-9]+\.[0-9]+' "$NOTICES" | sed -E 's/^whisper\.cpp //' | head -n 1 || true)"
+if [[ -z "$whisper_tag" ]]; then
+  fail "no WHISPER_TAG found in $PARAKEET_SYS_BUILD"
+elif [[ -z "$whisper_notices" ]]; then
+  echo "FAIL: whisper.cpp pin $whisper_tag not found in $NOTICES" >&2
+  engine_failed=1
+elif [[ "$whisper_tag" == "$whisper_notices" ]]; then
+  echo "OK: whisper.cpp pin $whisper_tag consistent (build.rs, notices)"
+else
+  echo "FAIL: whisper.cpp pin drift: build.rs=$whisper_tag notices=$whisper_notices" >&2
+  engine_failed=1
+fi
+
+# 2. parakeet.cpp commit: PARAKEET_COMMIT in parakeet-cpp-sys/build.rs vs notices.
+parakeet_commit="$(grep -oE 'PARAKEET_COMMIT: &str = "[0-9a-f]{40}"' "$PARAKEET_CPP_BUILD" | sed -E 's/.*"([0-9a-f]{40})"$/\1/' | head -n 1 || true)"
+parakeet_prefix="${parakeet_commit:0:8}"
+parakeet_notices="$(grep -oE 'parakeet\.cpp [0-9a-f]{8}' "$NOTICES" | sed -E 's/^parakeet\.cpp //' | head -n 1 || true)"
+if [[ -z "$parakeet_commit" ]]; then
+  fail "no PARAKEET_COMMIT found in $PARAKEET_CPP_BUILD"
+elif [[ -z "$parakeet_notices" ]]; then
+  echo "FAIL: parakeet.cpp pin $parakeet_prefix not found in $NOTICES" >&2
+  engine_failed=1
+elif [[ "$parakeet_prefix" == "$parakeet_notices" ]]; then
+  echo "OK: parakeet.cpp pin $parakeet_prefix consistent (build.rs, notices)"
+else
+  echo "FAIL: parakeet.cpp pin drift: build.rs=$parakeet_prefix notices=$parakeet_notices" >&2
+  engine_failed=1
+fi
+
+# 3. ggml commit: GGML_COMMIT in parakeet-cpp-sys/build.rs vs notices.
+ggml_commit="$(grep -oE 'GGML_COMMIT: &str = "[0-9a-f]{40}"' "$PARAKEET_CPP_BUILD" | sed -E 's/.*"([0-9a-f]{40})"$/\1/' | head -n 1 || true)"
+ggml_prefix="${ggml_commit:0:8}"
+ggml_notices="$(grep -oE '^=== ggml [0-9a-f]{8}' "$NOTICES" | sed -E 's/^=== ggml //' | head -n 1 || true)"
+if [[ -z "$ggml_commit" ]]; then
+  fail "no GGML_COMMIT found in $PARAKEET_CPP_BUILD"
+elif [[ -z "$ggml_notices" ]]; then
+  echo "FAIL: ggml pin $ggml_prefix not found in $NOTICES" >&2
+  engine_failed=1
+elif [[ "$ggml_prefix" == "$ggml_notices" ]]; then
+  echo "OK: ggml pin $ggml_prefix consistent (build.rs, notices)"
+else
+  echo "FAIL: ggml pin drift: build.rs=$ggml_prefix notices=$ggml_notices" >&2
+  engine_failed=1
+fi
+
+[[ "$engine_failed" -eq 0 ]] || exit 1
