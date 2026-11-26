@@ -75,6 +75,47 @@ pub async fn list_dictation_history(
         .collect())
 }
 
+/// Full-text search over dictation history using SQLite FTS5. Returns
+/// matching entries ranked by relevance, capped at 50. If FTS5 is
+/// unavailable (the bundled SQLite build lacks it), falls back to a
+/// simple substring scan over the in-memory snapshot.
+#[tauri::command]
+pub async fn search_dictation_history(
+    state: State<'_, AppState>,
+    query: String,
+) -> CommandResult<Vec<HistoryEntry>> {
+    let recordings_dir = &state.recordings_dir;
+    // Try the FTS5 index first (covers the full database, not just the
+    // 1000-row in-memory snapshot).
+    let fts_results = teletype_core::persist::read_history_search(&state.config_dir, &query, 50);
+    let entries: Vec<teletype_core::history::DictationEntry> = match fts_results {
+        Ok(results) => results,
+        Err(_) => {
+            // FTS5 unavailable: fall back to a case-insensitive substring
+            // scan over the in-memory snapshot.
+            let history = state.history.get();
+            let q = query.to_lowercase();
+            history
+                .entries
+                .iter()
+                .filter(|e| {
+                    e.text.to_lowercase().contains(&q)
+                        || e.raw_text
+                            .as_ref()
+                            .is_some_and(|r| r.to_lowercase().contains(&q))
+                })
+                .cloned()
+                .take(50)
+                .collect()
+        }
+    };
+    Ok(entries
+        .into_iter()
+        .filter(|e| !e.text.trim().is_empty())
+        .map(|e| entry_to_view(&e, recordings_dir))
+        .collect())
+}
+
 /// Finds an entry by id: the in-memory snapshot first, then the database
 /// for an entry older than the snapshot's 1000 rows.
 fn find_entry(

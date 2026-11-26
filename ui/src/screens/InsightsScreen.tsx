@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Icon, type IconName } from "../components/Icon";
 import { LatencyPanel, type LatencySummary } from "../components/LatencyPanel";
@@ -2455,6 +2455,13 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
   // panel always shows the most recent takes, so it is fetched once and on
   // each dictation completion, not per range).
   const [latency, setLatency] = useState<LatencySummary | null>(null);
+  // FTS5 history search.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<
+    Array<{ id: string; createdAt: number; text: string; appName: string; wordCount: number }>
+  >([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   // Fetch the language-coach setting once on mount.
   useEffect(() => {
@@ -2534,6 +2541,40 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
   const customMax = toInputDate(Date.now());
   const windowLabel = rangeWindowLabel(range);
 
+  // Debounced FTS5 search.
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const doSearch = useCallback((q: string) => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    const trimmed = q.trim();
+    if (!trimmed) {
+      setSearchResults([]);
+      setSearchError(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    searchTimer.current = setTimeout(() => {
+      invoke<Array<{ id: string; createdAt: number; text: string; appName: string; wordCount: number }>>(
+        "search_dictation_history",
+        { query: trimmed },
+      )
+        .then((results) => {
+          setSearchResults(results);
+          setSearchError(null);
+          setSearching(false);
+        })
+        .catch((e) => {
+          setSearchError(errorMessage(e));
+          setSearchResults([]);
+          setSearching(false);
+        });
+    }, 300);
+  }, []);
+  const onSearchChange = (value: string) => {
+    setSearchQuery(value);
+    doSearch(value);
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%", minWidth: 0, overflowX: "clip" }}>
       {/* Header: title left, the window control right. */}
@@ -2545,6 +2586,70 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
           </p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, minWidth: 0, maxWidth: "100%" }}>
+          {/* History search bar */}
+          <div style={{ display: "flex", gap: 6, width: "100%", maxWidth: 400, minWidth: 200 }}>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search dictations…"
+              aria-label="Search dictation history"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                color: "var(--text)",
+                fontSize: 13,
+                outline: "none",
+              }}
+            />
+          </div>
+          {searching && <span style={{ fontSize: 11, color: "var(--muted)" }}>Searching…</span>}
+          {searchError && <span style={{ fontSize: 11, color: "var(--error, #c44)" }}>{searchError}</span>}
+          {searchResults.length > 0 && (
+            <div
+              role="list"
+              aria-label="Search results"
+              style={{
+                width: "100%",
+                maxWidth: 400,
+                maxHeight: 200,
+                overflowY: "auto",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                background: "var(--surface)",
+                boxShadow: "var(--shadow-1)",
+              }}
+            >
+              {searchResults.map((r) => (
+                <div
+                  key={r.id}
+                  role="listitem"
+                  style={{
+                    padding: "8px 10px",
+                    borderBottom: "1px solid var(--border)",
+                    fontSize: 12,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <div style={{ color: "var(--muted)", fontSize: 10, marginBottom: 2 }}>
+                    {new Date(r.createdAt).toLocaleString()}
+                    {r.appName ? ` · ${r.appName}` : ""}
+                    {" · "}{r.wordCount} words
+                  </div>
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {searchQuery.trim() && !searching && searchResults.length === 0 && !searchError && (
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>No matches</span>
+          )}
           <div
             role="group"
             aria-label="Time range"

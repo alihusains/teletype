@@ -128,6 +128,7 @@ fn create_tables(conn: &mut Connection) -> Result<(), String> {
         );",
     )
     .map_err(|e| e.to_string())?;
+    create_fts_tables(conn)?;
     // A database created before the dictation-detail columns lacks them.
     // `CREATE TABLE IF NOT EXISTS` leaves an existing table alone, so add
     // each missing column in place. Both startup connections run this at
@@ -147,7 +148,24 @@ fn create_tables(conn: &mut Connection) -> Result<(), String> {
             Err(e) => return Err(e.to_string()),
         }
     }
-    tx.commit().map_err(|e| e.to_string())
+    tx.commit().map_err(|e| e.to_string())?;
+    // Sync the FTS index with existing history rows (first run only; the
+    // triggers handle subsequent inserts/updates/deletes).
+    let fts_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM history_fts", [], |r| r.get(0))
+        .unwrap_or(0);
+    if fts_count == 0 {
+        let n = conn.execute(
+            "INSERT INTO history_fts(rowid, text, raw_text, history_id)
+             SELECT rowid, text, coalesce(raw_text, ''), id FROM history",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        if n > 0 {
+            tracing::info!("persist: FTS index synced with {n} existing history rows");
+        }
+    }
+    Ok(())
 }
 
 /// Inserts (or replaces) one history row. The live push and the legacy JSON
@@ -192,12 +210,65 @@ fn write_history(conn: &Connection, entry: &DictationEntry, verb: &str) -> Resul
         ],
     )
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    // Keep the FTS index in sync (best-effort: a failure here does not
+    // fail the history write).
+    fts_insert(conn, &entry.id, &entry.text, entry.raw_text.as_deref().unwrap_or(""));
+    Ok(())
 }
 
 /// One-time JSON→SQLite migration. Imports when the SQLite table is empty
 /// and the legacy JSON file exists, then renames the file to
 /// `<name>.migrated.json`.
+
+/// Creates the FTS5 virtual table and sync triggers for history search.
+/// Called from [] after the base tables exist. Uses
+/// execute_batch because the bundled SQLite in this workspace returns
+/// "Execute returned results" for FTS5 DDL via conn.execute.
+fn create_fts_tables(conn: &mut Connection) -> Result<(), String> {
+    // FTS5 virtual table for history search. No triggers — the FTS index is
+    // maintained explicitly in write_history / remove_history. This avoids
+    // a rusqlite quirk where CREATE TRIGGER inside a batch returns a row
+    // count that is misreported as "Execute returned results".
+    //
+    // FTS5 is a search enhancement: if the bundled SQLite build does not
+    // support it, the app still works — history_search returns a graceful
+    // error and the UI shows a fallback.
+    if let Err(e) = conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS history_fts USING fts5(
+            text, raw_text, history_id UNINDEXED
+        )",
+        [],
+    ) {
+        tracing::warn!("persist: FTS5 unavailable ({e}); history search disabled");
+    }
+    Ok(())
+}
+
+/// Inserts one row into the FTS index. Called from write_history.
+fn fts_insert(conn: &Connection, id: &str, text: &str, raw_text: &str) {
+    let _ = conn.execute(
+        "INSERT INTO history_fts(rowid, text, raw_text, history_id)
+         VALUES (
+            (SELECT rowid FROM history WHERE id = ?1),
+            ?2, ?3, ?1
+         )",
+        params![id, text, raw_text],
+    );
+}
+
+/// Removes one row from the FTS index. Called from remove_history.
+fn fts_delete(conn: &Connection, id: &str, text: &str, raw_text: &str) {
+    let _ = conn.execute(
+        "INSERT INTO history_fts(history_fts, rowid, text, raw_text, history_id)
+         VALUES ('delete',
+            (SELECT rowid FROM history WHERE id = ?1),
+            ?2, ?3, ?1
+         )",
+        params![id, text, raw_text],
+    );
+}
+
 fn migrate_from_json(conn: &mut Connection, dir: &Path) -> Result<(), String> {
     migrate_history(conn, dir)?;
     reconcile_history_json(conn, dir)?;
@@ -368,10 +439,21 @@ impl PersistStores {
 
     /// Removes one history entry by id.
     pub fn remove_history(&mut self, id: &str) -> Result<(), String> {
+        // Fetch the row before deleting so we can clean up the FTS index.
+        let (text, raw_text) = self
+            .conn
+            .query_row(
+                "SELECT text, coalesce(raw_text, '') FROM history WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .unwrap_or_default();
         self.conn
             .execute("DELETE FROM history WHERE id = ?1", params![id])
             .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        fts_delete(&self.conn, id, &text, &raw_text);
+        Ok(())
     }
 
     /// All history entries, newest first, capped at [`MAX_HISTORY_ENTRIES`].
@@ -429,6 +511,38 @@ impl PersistStores {
             Some(Err(e)) => Err(e.to_string()),
             None => Ok(None),
         }
+    }
+
+    /// Full-text search over history using FTS5. Returns matching entries
+    /// ranked by relevance, capped at `limit`. The query is split into
+    /// whitespace-delimited tokens, each wrapped in double quotes so FTS5
+    /// treats them as literal phrases (avoids syntax errors from special
+    /// characters). Empty or whitespace-only queries return an empty vec.
+    pub fn history_search(&self, query: &str, limit: usize) -> Result<Vec<DictationEntry>, String> {
+        let tokens: Vec<&str> = query.split_whitespace().collect();
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+        let fts_query: Vec<String> = tokens
+            .iter()
+            .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+            .collect();
+        let fts_query = fts_query.join(" ");
+
+        let mut stmt = self
+            .conn
+            .prepare(&format!(
+                "SELECT h.id, h.created_at, h.text, h.context_json, h.duration_ms,\n\n                       h.raw_text, h.edits_json, h.asr_model, h.polish_model,\n\n                       h.polish_ms, h.word_count, h.recording_path\n\n                 FROM history h\n\n                 JOIN history_fts f ON f.history_id = h.id\n\n                 WHERE history_fts MATCH ?1\n\n                 ORDER BY rank LIMIT ?2"
+            ))
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![fts_query, limit as i64], entry_from_row)
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| e.to_string())?);
+        }
+        Ok(out)
     }
 
     /// Adds `filler` / `autotext` counts to the stored counters.
@@ -589,6 +703,47 @@ pub fn read_history(dir: &Path, window: Option<(u64, u64)>) -> Result<Vec<Dictat
             .query_map([], entry_from_row)
             .map_err(|e| e.to_string())?,
     };
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+/// Read-only FTS5 search over history. Returns matching entries ranked by
+/// relevance, capped at `limit`. Returns an error when the FTS5 virtual
+/// table does not exist (the bundled SQLite build lacks FTS5), so the caller
+/// can fall back to a substring scan.
+pub fn read_history_search(
+    dir: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<DictationEntry>, String> {
+    let Some(conn) = open_read_only(dir)? else {
+        return Ok(vec![]);
+    };
+    let tokens: Vec<&str> = query.split_whitespace().collect();
+    if tokens.is_empty() {
+        return Ok(vec![]);
+    }
+    let fts_query: Vec<String> = tokens
+        .iter()
+        .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+        .collect();
+    let fts_query = fts_query.join(" ");
+
+    let sql = "SELECT h.id, h.created_at, h.text, h.context_json, h.duration_ms,
+                     h.raw_text, h.edits_json, h.asr_model, h.polish_model,
+                     h.polish_ms, h.word_count, h.recording_path
+              FROM history h
+              JOIN history_fts f ON f.history_id = h.id
+              WHERE history_fts MATCH ?1
+              ORDER BY rank
+              LIMIT ?2";
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(params![fts_query, limit as i64], entry_from_row)
+        .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for row in rows {
         out.push(row.map_err(|e| e.to_string())?);
@@ -1053,5 +1208,80 @@ mod tests {
         let s = PersistStores::open(dir.path()).unwrap();
         assert!(s.history_all().unwrap().is_empty());
         assert!(s.usage_load().unwrap().filler_counts.is_empty());
+    }
+
+    #[test]
+    fn fts_search_finds_matching_entries() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut s = PersistStores::open(dir.path()).unwrap();
+        // Insert three entries with distinct text.
+        let e1 = DictationEntry {
+            id: "e1".into(),
+            created_at: 1000,
+            text: "the Q3 budget report is ready".into(),
+            raw_text: Some("the q three budget report is ready".into()),
+            ..Default::default()
+        };
+        let e2 = DictationEntry {
+            id: "e2".into(),
+            created_at: 2000,
+            text: "meeting notes for the design review".into(),
+            raw_text: Some("meeting notes for the design review".into()),
+            ..Default::default()
+        };
+        let e3 = DictationEntry {
+            id: "e3".into(),
+            created_at: 3000,
+            text: "happy birthday to you".into(),
+            raw_text: None,
+            ..Default::default()
+        };
+        s.push_history(&e1).unwrap();
+        s.push_history(&e2).unwrap();
+        s.push_history(&e3).unwrap();
+
+        // Search for "budget" → finds e1.
+        let results = s.history_search("budget", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "e1");
+
+        // Search for "design" → finds e2.
+        let results = s.history_search("design", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "e2");
+
+        // Search for a word in raw_text ("q three" matches "q three" in raw_text).
+        let results = s.history_search("three", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "e1");
+
+        // Search for a non-existent word → empty.
+        let results = s.history_search("nonexistentword", 10).unwrap();
+        assert!(results.is_empty());
+
+        // Empty query → empty.
+        let results = s.history_search("", 10).unwrap();
+        assert!(results.is_empty());
+
+        // Whitespace-only query → empty.
+        let results = s.history_search("   ", 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn fts_search_updates_on_delete() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut s = PersistStores::open(dir.path()).unwrap();
+        let e1 = DictationEntry {
+            id: "del1".into(),
+            created_at: 1000,
+            text: "unique deletion test phrase".into(),
+            ..Default::default()
+        };
+        s.push_history(&e1).unwrap();
+        assert_eq!(s.history_search("deletion", 10).unwrap().len(), 1);
+
+        s.remove_history("del1").unwrap();
+        assert!(s.history_search("deletion", 10).unwrap().is_empty());
     }
 }

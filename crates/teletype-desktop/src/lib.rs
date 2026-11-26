@@ -1486,6 +1486,7 @@ pub fn run() {
             commands::crash::dismiss_crash_notice,
             // Dictation history
             commands::list_dictation_history,
+            commands::search_dictation_history,
             commands::delete_dictation_entry,
             // Insights
             commands::get_insights,
