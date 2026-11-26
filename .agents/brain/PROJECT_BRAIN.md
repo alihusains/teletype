@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.22 head=8746c1c updated=2026-11-25 -->
+<!-- brain-freshness: version=v0.2.22 head=11a2dc7 updated=2026-11-26 -->
 
 This file is the durable working memory for this project.
 
@@ -62,6 +62,25 @@ The rule is `dictation::press_warms_visibly(tier, ready)` — announce only when
 the policy loads on press and the model is not resident; the `off` policy
 deliberately defers its load to the release, so it keeps the recording pill
 first. The automatic unload that made this common is retired (D052).
+
+**Update 2026-11-26 (plans 001–021 all DONE, 17 commits on main):**
+All 21 plans from the improve-skill audit are implemented and on `main`
+@ `11a2dc7`. Batch 1 (001–007) cherry-picked from `advisor/*` branches.
+Batch 2 (008–013) was already on main's worktree. Batch 3 (014–018):
+engine pins (whisper.cpp/parakeet.cpp/ggml) added to THIRD-PARTY-NOTICES.txt
+and `check-artifact-pins.sh` (now 11 checks); `tauri-plugin-updater` aligned
+to 2.13.3 with a JS/Rust plugin version check for all 5 pairs;
+`@tauri-apps/cli` exact-pinned to 2.12.0; production `eprintln!` in audio
+stream callbacks replaced with `tracing::warn!`. Batch 4 (019–021):
+SQLite FTS5 full-text search for dictation history (search bar in Insights,
+explicit FTS index sync — no triggers due to a rusqlite quirk; **use
+`bundled` not `bundled-full`** — the latter breaks FTS5 DDL);
+last-dictation timing panel in Developer tab (Mic/Polish/Words/models);
+Windows `DeliveryIo` seam (enigo SendInput for typing + Ctrl+V, arboard for
+clipboard text-only snapshot/restore; `FieldReader` is a stub — UIA is a
+separate effort). Windows cross-compile not verified (no target on dev
+machine). Verified: 1413 core + 649 desktop + 624 UI tests pass, tsc clean,
+11/11 pin checks green.
 
 **Update 2026-11-25 (plans/ batch 2 landed uncommitted on `main` @ `8746c1c`):**
 the `plans/` folder (improve-skill audit, 001-013) is now fully implemented.
@@ -3394,6 +3413,7 @@ Do not add:
 
 | 2026-11-01 | `ali-agent-health` audit (6 checks) + `to-tickets` for the Beat-Wispr plan: registry 8/8 ACTIVE; all learning files status-tailed; fixed duplicate section number (`## 10. QA audit` → unnumbered); fixed stale `typing_windows.rs` path (now `typing/` since `8f86c5c`); added current-work topology (3-branch + plan authority), Decisions **D016** (EG-1 removal, `1ebd339`) and **D017** (commit-while-you-go streaming, `fcae04b`, plan of record) — IDs corrected 2026-11-19 against the actual decision blocks; learning **L032** (QA battery practice), planning-docs source row; added ADR-013/ADR-014 files (local-only — see drift notes). Left for Ali: (a) brain is mostly gitignored (`.gitignore: .agents/*`) and the two tracked lineages (main `caa90f4`, refactor `ae98488`) will conflict on merge — prefer the refactor lineage and salvage from there; (b) ADR-013/014 and most learnings are untracked locally — track or resign if they must survive between checkouts; (c) an older, uncommitted brain revision (v0.2.5-era: "State here?" 31-item list, QA-battery bug list) existed in a prior working tree and was never committed anywhere in git — durable items from it have been re-verified and re-recorded above (L023); the rest is treated as lost. |
 | 2026-11-25 | Docs consolidation: 37 scattered root-level files (roadmaps, plans, audits, bug records, style refs) merged into `ROADMAP.md` and deleted. Brain updated: freshness marker → `8746c1c`; §5 repo map root-docs row → `ROADMAP.md`; §11 Q005 → resolved; §12 planning-docs source row → `ROADMAP.md`; §13 plan-of-record row → `ROADMAP.md`; §13 QA-audit row → `ROADMAP.md` §11; §14 decision-ID range → D001–D052. References in `README.md`, `PRODUCT.md`, `plans/README.md`, `.agents/agents/teletype-product-manager.md`, and 4 `tasks/` files updated to point at `ROADMAP.md`. Untracked learning `2026-11-25-hidden-window-dock-click-did-nothing.md` (L100) still needs to be committed or resigned. |
+| 2026-11-26 | Plans 001–021 all DONE (17 commits on main @ `11a2dc7`). Cherry-picked batch 1 (001–007) from `advisor/*` branches. Batch 3 (014–018): engine pins in notices + pin check (11 checks), updater aligned to 2.13.3 + plugin version check, `@tauri-apps/cli` exact-pinned, `eprintln!` → `tracing` in audio callbacks. Batch 4 (019–021): FTS5 history search (use `bundled` not `bundled-full` — the latter breaks FTS5 DDL), last-dictation timing panel in Developer tab, Windows `DeliveryIo` seam (enigo + arboard; cross-compile unverified). Freshness marker → `11a2dc7`. |
 
 ## 15. Future company brain hook
 
