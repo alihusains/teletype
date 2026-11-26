@@ -116,6 +116,48 @@ pub async fn search_dictation_history(
         .collect())
 }
 
+/// Timing breakdown of the most recent dictation, for the Developer tab.
+/// Reads the last history entry: `duration_ms` (mic open time), `polish_ms`
+/// (LLM polish wall time). ASR/ITN/delivery timings are not yet stored per
+/// entry; they are logged via `log_entry` and will be added to the history
+/// schema in a future plan.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastDictationTimings {
+    pub id: String,
+    pub created_at: u64,
+    pub text_preview: String,
+    pub duration_ms: Option<u64>,
+    pub polish_ms: Option<u64>,
+    pub word_count: u32,
+    pub asr_model: Option<String>,
+    pub polish_model: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_last_dictation_timings(
+    state: State<'_, AppState>,
+) -> CommandResult<Option<LastDictationTimings>> {
+    let history = state.history.get();
+    let entry = history
+        .entries
+        .iter()
+        .find(|e| !e.text.trim().is_empty())
+        .cloned();
+    Ok(entry.map(|e| LastDictationTimings {
+        id: e.id,
+        created_at: e.created_at,
+        text_preview: e.text.chars().take(80).collect(),
+        duration_ms: e.duration_ms,
+        polish_ms: e.polish_ms,
+        word_count: e
+            .word_count
+            .unwrap_or_else(|| e.text.split_whitespace().count() as u32),
+        asr_model: e.asr_model,
+        polish_model: e.polish_model,
+    }))
+}
+
 /// Finds an entry by id: the in-memory snapshot first, then the database
 /// for an entry older than the snapshot's 1000 rows.
 fn find_entry(

@@ -1487,6 +1487,7 @@ pub fn run() {
             // Dictation history
             commands::list_dictation_history,
             commands::search_dictation_history,
+            commands::get_last_dictation_timings,
             commands::delete_dictation_entry,
             // Insights
             commands::get_insights,

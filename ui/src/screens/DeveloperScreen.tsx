@@ -39,6 +39,17 @@ interface S1Control {
   context: string;
 }
 
+interface LastDictationTimings {
+  id: string;
+  createdAt: number;
+  textPreview: string;
+  durationMs: number | null;
+  polishMs: number | null;
+  wordCount: number;
+  asrModel: string | null;
+  polishModel: string | null;
+}
+
 // The 8 wire tokens the S1-mini model card trains on (mirrors as_wire()
 // in teletype-core/src/transforms/prompt.rs). The readout shows which one
 // is active per axis so a garbled S1 output can be traced to a stale or
@@ -61,6 +72,7 @@ export default function DeveloperScreen() {
   const [s1, setS1] = useState<S1Control | null>(null);
   const [activeModel, setActiveModel] = useState<string>("");
   const [filter, setFilter] = useState<"all" | "info" | "warn" | "error">("all");
+  const [lastTimings, setLastTimings] = useState<LastDictationTimings | null>(null);
   const preRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
   // Display-only timestamps: LogEntry has no time field, so capture the wall
@@ -95,6 +107,11 @@ export default function DeveloperScreen() {
       invoke<LogEntry[]>("get_logs")
         .then((next) => {
           if (!cancelled) setLines(next);
+        })
+        .catch(() => {});
+      invoke<LastDictationTimings | null>("get_last_dictation_timings")
+        .then((t) => {
+          if (!cancelled) setLastTimings(t);
         })
         .catch(() => {});
     };
@@ -199,6 +216,64 @@ export default function DeveloperScreen() {
               {" "}
             </span>
           ))}
+        </div>
+      )}
+      {/* Last dictation timing breakdown */}
+      {lastTimings && (
+        <div
+          style={{
+            marginBottom: 12,
+            padding: "8px 12px",
+            background: "#0f1115",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            fontSize: 12,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            color: "#d1d5db",
+          }}
+        >
+          <div style={{ color: "#8b93a1", marginBottom: 4 }}>Last dictation</div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <span>
+              <span style={{ color: "#8b93a1" }}>Mic: </span>
+              {lastTimings.durationMs != null ? (
+                <span style={{ color: durationColor(lastTimings.durationMs) }}>
+                  {lastTimings.durationMs} ms
+                </span>
+              ) : (
+                "—"
+              )}
+            </span>
+            <span>
+              <span style={{ color: "#8b93a1" }}>Polish: </span>
+              {lastTimings.polishMs != null ? (
+                <span style={{ color: durationColor(lastTimings.polishMs) }}>
+                  {lastTimings.polishMs} ms
+                </span>
+              ) : (
+                "—"
+              )}
+            </span>
+            <span>
+              <span style={{ color: "#8b93a1" }}>Words: </span>
+              {lastTimings.wordCount}
+            </span>
+            {lastTimings.asrModel && (
+              <span>
+                <span style={{ color: "#8b93a1" }}>ASR: </span>
+                {lastTimings.asrModel}
+              </span>
+            )}
+            {lastTimings.polishModel && (
+              <span>
+                <span style={{ color: "#8b93a1" }}>Polish model: </span>
+                {lastTimings.polishModel}
+              </span>
+            )}
+          </div>
+          <div style={{ color: "#6b7280", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {lastTimings.textPreview}
+          </div>
         </div>
       )}
       <div
