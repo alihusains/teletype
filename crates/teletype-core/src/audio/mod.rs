@@ -470,6 +470,15 @@ impl Drop for Recording {
 /// two holders through every call without removing a parameter, so the
 /// allow is deliberate rather than a workaround. If an eleventh arrives,
 /// group instead of bumping this.
+/// User-facing reason for a failed noise-reduction capture start. Both DFN3
+/// setup failures go through this so the pill names the setting the user can
+/// actually turn off instead of reporting a generic microphone failure.
+fn dfn3_start_error(reason: &str) -> String {
+    format!(
+        "Couldn't start the microphone with noise reduction ({reason}); try turning noise reduction off"
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_capture(
     device_id: &str,
@@ -673,7 +682,13 @@ fn run_capture(
             .spawn(move || run_detection_worker(slot, frame_rx, w_level, w_on_frame))
             .ok();
         if worker.is_none() {
-            tracing::warn!("dfn3 detection worker spawn failed");
+            // Without the worker the rebuilt stream's frames go nowhere, so
+            // the take would record audio with no on_frame callback at all:
+            // no VAD auto-stop, no silent-tail cut, no mid-take commits, no
+            // recovery spool, while the UI shows a normal recording. Fail the
+            // capture instead — the pill has a mic-failure state for this.
+            let _ = ready_tx.send(Err(dfn3_start_error("detection worker did not start")));
+            return;
         }
         let w_cb: FrameCb = Some(Box::new(move |mono: &[f32]| {
             // A full queue means the worker is behind (DFN3 inference
@@ -687,7 +702,7 @@ fn run_capture(
         // a mid-take failure in the DFN3 split pipeline is seen too.
         let err_flag = device_error.clone();
         let err_fn: Box<dyn Fn(cpal::Error) + Send + 'static> = Box::new(move |err| {
-            eprintln!("[audio] stream error: {err}");
+            tracing::warn!("[audio] stream error: {err}");
             err_flag.store(true, Ordering::SeqCst);
         });
         let buf_clone2 = Arc::clone(&buffer);
@@ -768,7 +783,13 @@ fn run_capture(
         match rebuilt {
             Some(s) => stream = s,
             None => {
-                tracing::warn!("dfn3: could not rebuild the input stream");
+                // Same reasoning as the worker-spawn branch above: keeping
+                // the hook-less first stream would record a take the pipeline
+                // can never end or commit.
+                let _ = ready_tx.send(Err(dfn3_start_error(
+                    "the audio stream could not be rebuilt",
+                )));
+                return;
             }
         }
     }
@@ -1265,7 +1286,7 @@ impl MicFrontEnd {
         let level: Lvl = Arc::new(AtomicU32::new(NO_LEVEL));
 
         let err_fn: Box<dyn Fn(cpal::Error) + Send + 'static> =
-            Box::new(move |err| eprintln!("[audio] prewarm stream error: {err}"));
+            Box::new(move |err| tracing::warn!("[audio] prewarm stream error: {err}"));
 
         let mut stream = match format {
             SampleFormat::I8 => build_frontend_stream::<i8>(
@@ -1370,7 +1391,7 @@ impl MicFrontEnd {
             // Rebuild the stream with the callback's frame sink replaced by
             // the channel send (the pre-roll ring keeps RAW mono).
             let err_fn: Box<dyn Fn(cpal::Error) + Send + 'static> =
-                Box::new(move |err| eprintln!("[audio] prewarm stream error: {err}"));
+                Box::new(move |err| tracing::warn!("[audio] prewarm stream error: {err}"));
             let rebuilt = match format {
                 SampleFormat::I8 => build_frontend_stream::<i8>(
                     &device,
@@ -1770,6 +1791,13 @@ impl MicPrewarm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dfn3_start_error_names_the_setting() {
+        let msg = dfn3_start_error("detection worker did not start");
+        assert!(msg.contains("noise reduction"), "{msg}");
+        assert!(msg.contains("detection worker did not start"), "{msg}");
+    }
 
     #[test]
     fn resample_same_rate_is_identity() {
