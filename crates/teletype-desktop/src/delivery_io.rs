@@ -506,11 +506,11 @@ mod windows {
             // with arboard, so the snapshot is text-only. This is a known
             // limitation: a user's copied image will be lost. The change
             // count is None, so the restore guard restores unconditionally.
-            let guard = self
+            let mut guard = self
                 .arboard
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let text = guard.as_ref()?.get_text().ok()?;
+            let text = guard.as_mut()?.get_text().ok()?;
             let part = ClipboardPart {
                 uti: ClipboardSnapshot::TEXT.to_string(),
                 data: text.into_bytes(),
