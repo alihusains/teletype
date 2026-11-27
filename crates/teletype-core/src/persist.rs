@@ -155,12 +155,13 @@ fn create_tables(conn: &mut Connection) -> Result<(), String> {
         .query_row("SELECT COUNT(*) FROM history_fts", [], |r| r.get(0))
         .unwrap_or(0);
     if fts_count == 0 {
-        let n = conn.execute(
-            "INSERT INTO history_fts(rowid, text, raw_text, history_id)
+        let n = conn
+            .execute(
+                "INSERT INTO history_fts(rowid, text, raw_text, history_id)
              SELECT rowid, text, coalesce(raw_text, ''), id FROM history",
-            [],
-        )
-        .map_err(|e| e.to_string())?;
+                [],
+            )
+            .map_err(|e| e.to_string())?;
         if n > 0 {
             tracing::info!("persist: FTS index synced with {n} existing history rows");
         }
@@ -213,16 +214,17 @@ fn write_history(conn: &Connection, entry: &DictationEntry, verb: &str) -> Resul
     .map_err(|e| e.to_string())?;
     // Keep the FTS index in sync (best-effort: a failure here does not
     // fail the history write).
-    fts_insert(conn, &entry.id, &entry.text, entry.raw_text.as_deref().unwrap_or(""));
+    fts_insert(
+        conn,
+        &entry.id,
+        &entry.text,
+        entry.raw_text.as_deref().unwrap_or(""),
+    );
     Ok(())
 }
 
-/// One-time JSON→SQLite migration. Imports when the SQLite table is empty
-/// and the legacy JSON file exists, then renames the file to
-/// `<name>.migrated.json`.
-
-/// Creates the FTS5 virtual table and sync triggers for history search.
-/// Called from [] after the base tables exist. Uses
+/// Creates the FTS5 virtual table for history search.
+/// Called during store initialization after the base tables exist. Uses
 /// execute_batch because the bundled SQLite in this workspace returns
 /// "Execute returned results" for FTS5 DDL via conn.execute.
 fn create_fts_tables(conn: &mut Connection) -> Result<(), String> {
@@ -296,6 +298,7 @@ fn fts_delete(conn: &Connection, id: &str, text: &str, raw_text: &str) {
     );
 }
 
+/// Imports the legacy JSON stores and renames each successfully migrated file.
 fn migrate_from_json(conn: &mut Connection, dir: &Path) -> Result<(), String> {
     migrate_history(conn, dir)?;
     reconcile_history_json(conn, dir)?;
@@ -558,9 +561,15 @@ impl PersistStores {
 
         let mut stmt = self
             .conn
-            .prepare(&format!(
-                "SELECT h.id, h.created_at, h.text, h.context_json, h.duration_ms,\n\n                       h.raw_text, h.edits_json, h.asr_model, h.polish_model,\n\n                       h.polish_ms, h.word_count, h.recording_path\n\n                 FROM history h\n\n                 JOIN history_fts f ON f.history_id = h.id\n\n                 WHERE history_fts MATCH ?1\n\n                 ORDER BY rank LIMIT ?2"
-            ))
+            .prepare(
+                "SELECT h.id, h.created_at, h.text, h.context_json, h.duration_ms,\n\
+                 h.raw_text, h.edits_json, h.asr_model, h.polish_model,\n\
+                 h.polish_ms, h.word_count, h.recording_path\n\
+                 FROM history h\n\
+                 JOIN history_fts f ON f.history_id = h.id\n\
+                 WHERE history_fts MATCH ?1\n\
+                 ORDER BY rank LIMIT ?2",
+            )
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map(params![fts_query, limit as i64], entry_from_row)

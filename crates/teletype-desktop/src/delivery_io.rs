@@ -21,6 +21,8 @@ use std::sync::Mutex;
 use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
 
 use teletype_core::delivery::{ClipboardIo, DeliveryIo, FieldReader, Typer};
+#[cfg(target_os = "windows")]
+use teletype_core::injector::ClipboardPart;
 use teletype_core::injector::ClipboardSnapshot;
 
 /// The typed fallback is only worth it for shortish text; beyond this the
@@ -509,8 +511,13 @@ mod windows {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let text = guard.as_ref()?.get_text().ok()?;
+            let part = ClipboardPart {
+                uti: ClipboardSnapshot::TEXT.to_string(),
+                data: text.into_bytes(),
+            };
             Some(ClipboardSnapshot {
-                items: vec![text],
+                parts: vec![part.clone()],
+                items: vec![vec![part]],
                 change_count: None,
             })
         }
@@ -524,13 +531,14 @@ mod windows {
             );
             let restore_text = if self.keep_text && !text.is_empty() {
                 // Preserve the dictation: user's text + dictation.
-                if snapshot.items.is_empty() {
+                let previous = snapshot_text(snapshot);
+                if previous.is_empty() {
                     text
                 } else {
-                    format!("{}\n{}", snapshot.items.join("\n"), text)
+                    format!("{previous}\n{text}")
                 }
             } else {
-                snapshot.items.join("\n")
+                snapshot_text(snapshot)
             };
             let mut guard = self
                 .arboard
@@ -553,7 +561,7 @@ mod windows {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner),
             );
-            let restore_text = snapshot.items.join("\n");
+            let restore_text = snapshot_text(snapshot);
             let mut guard = self
                 .arboard
                 .lock()
@@ -563,6 +571,7 @@ mod windows {
                     *guard = Some(clipboard);
                 }
             }
+
             if let Some(clipboard) = guard.as_mut() {
                 if let Err(error) = clipboard.set_text(restore_text) {
                     tracing::warn!("[delivery] original clipboard restore failed: {error}");
@@ -576,6 +585,22 @@ mod windows {
             // (the pre-guard behaviour), which is safe.
             None
         }
+    }
+
+    fn snapshot_text(snapshot: &ClipboardSnapshot) -> String {
+        snapshot
+            .items
+            .iter()
+            .flat_map(|item| item.iter())
+            .filter(|part| part.uti == ClipboardSnapshot::TEXT)
+            .map(|part| String::from_utf8_lossy(&part.data).into_owned())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    pub fn paste_key_action() -> impl Fn() -> bool + Send + Sync + 'static {
+        let enigo = Arc::new(Mutex::new(None));
+        move || paste_key(&enigo)
     }
 
     /// Fires Ctrl+V via enigo (SendInput on Windows).
@@ -720,13 +745,11 @@ pub fn macos_io(_clipboard_guard: Arc<()>, _keep_text: bool) -> DeliveryIo {
 #[cfg(target_os = "windows")]
 pub fn windows_io(keep_text: bool) -> DeliveryIo {
     use windows::*;
-    let enigo = Arc::new(Mutex::new(None::<Enigo>));
-    let enigo_paste = enigo.clone();
     DeliveryIo {
         field: Box::new(StubField),
         typer: Box::new(EnigoTyper::new()),
         clipboard: Box::new(ArboardClipboard::new(keep_text)),
-        paste_key: Box::new(move || paste_key(&enigo_paste)),
+        paste_key: Box::new(paste_key_action()),
         accessibility_trusted: Box::new(|| true),
     }
 }

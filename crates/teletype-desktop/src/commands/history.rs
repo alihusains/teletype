@@ -104,8 +104,8 @@ pub async fn search_dictation_history(
                             .as_ref()
                             .is_some_and(|r| r.to_lowercase().contains(&q))
                 })
-                .cloned()
                 .take(50)
+                .cloned()
                 .collect()
         }
     };

@@ -1593,6 +1593,7 @@ pub fn run() {
             // window and Force Quit was the only way out. The single-instance
             // plugin covers "launch the app again"; this covers "click the
             // icon of the app that is already running".
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = &event {
                 log_entry(
                     LogLevel::Info,

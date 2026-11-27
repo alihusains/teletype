@@ -263,14 +263,9 @@ mod tests {
         }
     }
 
-    /// A burst of messages sent before `shutdown` must all be on disk by the
-    /// time it returns.
-    ///
-    /// This test used to poll for up to 10 s waiting for the writer to catch
-    /// up, which passed on an idle machine and timed out on a loaded CI box
-    /// (the drain itself takes ~15 ms). `shutdown` is now a barrier: it joins
-    /// the writer thread, so the data is durable when it returns and there is
-    /// nothing left to wait for.
+    /// A burst spanning multiple batches must be durable before a queued,
+    /// acknowledged mutation returns. Shutdown has a bounded wait, so it is
+    /// not a barrier for an arbitrarily large backlog on a loaded machine.
     #[test]
     fn coalescing_lands_all_messages() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -287,6 +282,7 @@ mod tests {
             },
             BTreeMap::new(),
         );
+        handle.history_remove("__coalescing_barrier__").unwrap();
         handle.shutdown();
         let s = PersistStores::open(dir.path()).unwrap();
         assert_eq!(
