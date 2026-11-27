@@ -151,6 +151,18 @@ a non-writable-control repro; unit tests alone did not catch the regression.
 Still not live-verified: no real dictation into a browser web area has been
 performed since the fix.
 
+## 2026-11-27 update: revalidate the target at the injection seam
+
+The earlier same-app/window gate still left a gap: focus could move after the
+gate while ASR or polish was running, before the delivery cascade fired its
+paste key or fallback write. `FieldReader::target_is_current` now checks the
+recorded target immediately before paste, typed injection and AX set-value.
+If the target changed after a clipboard write, the normal paste route restores
+the snapshot only if the clipboard still has Teletype's write; the optimistic
+route restores the original snapshot on refusal under the same change-count
+guard. Regressions cover a switch after the precheck, during optimistic paste,
+and before typed/set-value fallback. Live app switching has not been tested.
+
 ## Promotion
 
 Candidate, re-opened and fixed on 2026-10-23 (guard unit-tested, live

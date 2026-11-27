@@ -41,6 +41,70 @@ impl MacClipboardGuard {
     pub fn new() -> Self {
         Self
     }
+
+    pub fn change_count(&self) -> Option<u64> {
+        let _g = teletype_core::injector::pasteboard_lock();
+        current_change_count_unlocked()
+    }
+
+    pub fn set_text_and_change_count(&self, text: &str) -> Result<Option<u64>, String> {
+        let _g = teletype_core::injector::pasteboard_lock();
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| format!("clipboard unavailable: {e}"))?;
+        clipboard
+            .set_text(text.to_string())
+            .map_err(|e| format!("clipboard set failed: {e}"))?;
+        Ok(current_change_count_unlocked())
+    }
+
+    pub fn restore_if_unchanged(
+        &self,
+        expected_change_count: Option<u64>,
+        snapshot: Option<&ClipboardSnapshot>,
+        fallback_text: Option<&str>,
+    ) -> bool {
+        let _g = teletype_core::injector::pasteboard_lock();
+        restore_if_count_unchanged(
+            expected_change_count,
+            current_change_count_unlocked(),
+            || {
+                if let Some(snapshot) = snapshot {
+                    restore_snapshot_unlocked(snapshot, None);
+                } else if let Some(text) = fallback_text {
+                    match arboard::Clipboard::new() {
+                        Ok(mut clipboard) => {
+                            if let Err(e) = clipboard.set_text(text.to_string()) {
+                                warn!("[clipboard] text fallback restore failed: {e}");
+                            }
+                        }
+                        Err(e) => warn!("[clipboard] text fallback restore failed: {e}"),
+                    }
+                }
+            },
+        )
+    }
+}
+
+fn current_change_count_unlocked() -> Option<u64> {
+    // SAFETY: `generalPasteboard` and its `changeCount` property are documented
+    // AppKit APIs; the caller serializes access with the process-wide lock.
+    unsafe {
+        let pb: &AnyObject = msg_send![objc2::class!(NSPasteboard), generalPasteboard];
+        let count: usize = msg_send![pb, changeCount];
+        Some(count as u64)
+    }
+}
+
+fn restore_if_count_unchanged(
+    expected: Option<u64>,
+    current: Option<u64>,
+    restore: impl FnOnce(),
+) -> bool {
+    if expected.is_some_and(|expected| current.is_some_and(|current| current != expected)) {
+        return false;
+    }
+    restore();
+    true
 }
 
 impl ClipboardGuard for MacClipboardGuard {
@@ -128,51 +192,41 @@ impl ClipboardGuard for MacClipboardGuard {
     /// keeps pasting the previous clipboard text" happened.
     fn restore(&self, snapshot: &ClipboardSnapshot, extra: Option<&str>) {
         let _g = teletype_core::injector::pasteboard_lock();
-        let items_to_write = snapshot.restored_with(extra);
-        if items_to_write.is_empty() {
-            // Nothing to restore and nothing to add: leave the clipboard
-            // exactly as it is. Calling `clearContents` here is the bug this
-            // whole module exists to remove.
-            debug!("[clipboard] nothing to restore; leaving the clipboard alone");
+        restore_snapshot_unlocked(snapshot, extra);
+    }
+}
+
+fn restore_snapshot_unlocked(snapshot: &ClipboardSnapshot, extra: Option<&str>) {
+    let items_to_write = snapshot.restored_with(extra);
+    if items_to_write.is_empty() {
+        debug!("[clipboard] nothing to restore; leaving the clipboard alone");
+        return;
+    }
+    // SAFETY: every selector is a documented NSPasteboard /
+    // NSPasteboardItem member. Callers hold the process-wide pasteboard lock.
+    unsafe {
+        let pb: &AnyObject = msg_send![objc2::class!(NSPasteboard), generalPasteboard];
+        let mut items: Vec<Retained<AnyObject>> = Vec::new();
+        for item in &items_to_write {
+            if let Some(nsi) = make_pasteboard_item(item) {
+                items.push(nsi);
+            }
+        }
+        if items.is_empty() {
+            debug!("[clipboard] every item lost its representations; clipboard left as is");
             return;
         }
-        // SAFETY: as in `snapshot`, every selector is a documented
-        // NSPasteboard / NSPasteboardItem member. `clearContents` and
-        // `writeObjects:` are the documented way to replace the contents, and
-        // we only ever run this with a snapshot we ourselves took.
-        unsafe {
-            let pb: &AnyObject = msg_send![objc2::class!(NSPasteboard), generalPasteboard];
-
-            // Keep the `Retained` items alive until after `writeObjects:` runs.
-            // Storing only the raw pointers would dangle: each `Retained` is
-            // dropped at the end of its loop iteration, releasing the
-            // NSPasteboardItem, and the later `arrayWithObjects:` would retain
-            // freed memory (SIGSEGV in objc_retain).
-            let mut items: Vec<Retained<AnyObject>> = Vec::new();
-            for item in &items_to_write {
-                if let Some(nsi) = make_pasteboard_item(item) {
-                    items.push(nsi);
-                }
-            }
-            if items.is_empty() {
-                debug!("[clipboard] every item lost its representations; clipboard left as is");
-                return;
-            }
-
-            // Raw pointers valid for the lifetime of `items` (kept alive above).
-            let objects: Vec<*const AnyObject> = items.iter().map(Retained::as_ptr).collect();
-
-            let _: isize = msg_send![pb, clearContents];
-            let arr: *mut AnyObject = msg_send![objc2::class!(NSArray), arrayWithObjects:objects
-                .as_ptr(), count: objects.len()];
-            if arr.is_null() {
-                warn!("[clipboard] could not build the item array; clipboard left as is");
-                return;
-            }
-            let ok: bool = msg_send![pb, writeObjects: arr];
-            if !ok {
-                warn!("[clipboard] the pasteboard refused our write; clipboard left as is");
-            }
+        let objects: Vec<*const AnyObject> = items.iter().map(Retained::as_ptr).collect();
+        let _: isize = msg_send![pb, clearContents];
+        let arr: *mut AnyObject = msg_send![objc2::class!(NSArray), arrayWithObjects:objects
+            .as_ptr(), count: objects.len()];
+        if arr.is_null() {
+            warn!("[clipboard] could not build the item array; clipboard left as is");
+            return;
+        }
+        let ok: bool = msg_send![pb, writeObjects: arr];
+        if !ok {
+            warn!("[clipboard] the pasteboard refused our write; clipboard left as is");
         }
     }
 }
@@ -279,5 +333,26 @@ mod tests {
         ]);
         assert_eq!(snap.items[0].len(), 2, "both flavours captured");
         assert_eq!(snap.first_text().as_deref(), Some("a.pdf"));
+    }
+
+    #[test]
+    fn guarded_restore_skips_a_clipboard_changed_after_our_write() {
+        let mut restored = false;
+        assert!(!restore_if_count_unchanged(Some(4), Some(5), || {
+            restored = true;
+        }));
+        assert!(!restored, "a concurrent copy must not be overwritten");
+    }
+
+    #[test]
+    fn guarded_restore_runs_when_the_count_matches_or_is_unavailable() {
+        let mut restored = 0;
+        assert!(restore_if_count_unchanged(Some(4), Some(4), || {
+            restored += 1;
+        }));
+        assert!(restore_if_count_unchanged(None, Some(5), || {
+            restored += 1;
+        }));
+        assert_eq!(restored, 2);
     }
 }

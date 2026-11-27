@@ -411,10 +411,8 @@ pub async fn set_app_icon(
     state: State<'_, AppState>,
     id: String,
 ) -> CommandResult<()> {
-    let mut settings = state.settings();
     let icon: AppIcon = id.parse()?;
-    settings.app_icon = icon;
-    state.replace_settings(settings)?;
+    state.update_settings_with(|settings| settings.app_icon = icon)?;
     apply_app_icon(&app, icon.as_id());
     // The sidebar icon + checkmark read from settings; tell every webview to
     // refetch so the change is visible in-session, not only after a restart.
@@ -431,9 +429,7 @@ pub async fn set_theme(
     theme: String,
 ) -> CommandResult<()> {
     let theme: UiTheme = theme.parse()?;
-    let mut settings = state.settings();
-    settings.theme = theme;
-    state.replace_settings(settings)?;
+    state.update_settings_with(|settings| settings.theme = theme)?;
     let _ = app.emit("settings-changed", &());
     Ok(())
 }
@@ -446,9 +442,7 @@ pub async fn set_reduce_motion(
     state: State<'_, AppState>,
     enabled: bool,
 ) -> CommandResult<()> {
-    let mut settings = state.settings();
-    settings.reduce_motion = enabled;
-    state.replace_settings(settings)?;
+    state.update_settings_with(|settings| settings.reduce_motion = enabled)?;
     let _ = app.emit("settings-changed", &());
     Ok(())
 }
@@ -822,6 +816,41 @@ mod tests {
 
         // And it persisted, not just in-memory.
         assert_eq!(state.settings().app_icon, AppIcon::Purple);
+    }
+
+    #[test]
+    fn concurrent_single_field_updates_preserve_both_changes() {
+        let state = std::sync::Arc::new(crate::AppState::for_tests());
+        let first_update_started = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+        let first_state = state.clone();
+        let first_barrier = first_update_started.clone();
+        let first = std::thread::spawn(move || {
+            first_state
+                .update_settings_with(|settings| {
+                    settings.theme = UiTheme::Dark;
+                    first_barrier.wait();
+                })
+                .unwrap();
+        });
+
+        let second_state = state.clone();
+        let second_barrier = first_update_started;
+        let second = std::thread::spawn(move || {
+            second_barrier.wait();
+            second_state
+                .update_settings_with(|settings| {
+                    settings.reduce_motion = true;
+                })
+                .unwrap();
+        });
+
+        first.join().unwrap();
+        second.join().unwrap();
+
+        let settings = state.settings();
+        assert_eq!(settings.theme, UiTheme::Dark);
+        assert!(settings.reduce_motion);
     }
 
     #[test]

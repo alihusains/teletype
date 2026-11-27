@@ -4,7 +4,7 @@ Teletype currently ships **unsigned** builds: macOS installers are downloadable
 from the release page, but in-app updates are off because no signing key is
 configured. Releases write an empty-platform updater manifest on purpose
 (`.github/workflows/release.yml`, `ALLOW_NO_UPDATER=true`), which is the posture
-for the v0.2.22 line. Signed/notarized builds and self-updates become available
+for the v0.2.23 line. Signed/notarized builds and self-updates become available
 once a Developer ID certificate and updater signing key exist; the rest of this
 document describes that future state and the one-time setup it requires.
 
@@ -108,7 +108,7 @@ spctl --assess --type execute --verbose \
 Then push a tag and watch the run:
 
 ```bash
-git tag v0.2.22 && git push origin v0.2.22
+git tag v0.2.23 && git push origin v0.2.23
 ```
 
 In the Release page, confirm the installers are present:

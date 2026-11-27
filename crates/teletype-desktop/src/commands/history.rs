@@ -185,11 +185,17 @@ fn recording_file(state: &AppState, id: &str) -> CommandResult<std::path::PathBu
 
 #[tauri::command]
 pub async fn delete_dictation_entry(state: State<'_, AppState>, id: String) -> CommandResult<()> {
-    let entry = find_entry(&state, &id).ok().flatten();
-    // In-memory removal for immediate reads; the disk write goes through the
-    // persistence actor (A4).
+    let entry = find_entry(&state, &id)?;
+    let persist = state.persist.clone();
+    let remove_id = id.clone();
+    tauri::async_runtime::spawn_blocking(move || persist.history_remove(&remove_id))
+        .await
+        .map_err(|e| CommandError::internal(format!("Could not delete the history entry: {e}")))?
+        .map_err(|e| CommandError::internal(format!("Could not delete the history entry: {e}")))?;
+
+    // The row is removed from memory only after SQLite acknowledges the
+    // durable delete, so a failed write cannot report a successful deletion.
     state.history.update_snapshot(|h| h.remove(&id));
-    state.persist.history_remove(&id);
     // The row is gone either way; a recording that will not delete is
     // logged, not reported, so the user's delete still succeeds.
     if let Some(stored) = entry.and_then(|e| e.recording_path) {

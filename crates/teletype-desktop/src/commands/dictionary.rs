@@ -173,14 +173,14 @@ pub async fn set_pack_enabled(
     if teletype_core::vocab::find(&id).is_none() {
         return Err(CommandError::not_found("Unknown vocabulary pack"));
     }
-    let mut settings = state.settings();
-    let present = settings.enabled_packs.contains(&id);
-    if enabled && !present {
-        settings.enabled_packs.push(id);
-    } else if !enabled && present {
-        settings.enabled_packs.retain(|x| x != &id);
-    }
-    state.replace_settings(settings)?;
+    state.update_settings_with(|settings| {
+        let present = settings.enabled_packs.contains(&id);
+        if enabled && !present {
+            settings.enabled_packs.push(id);
+        } else if !enabled && present {
+            settings.enabled_packs.retain(|x| x != &id);
+        }
+    })?;
     Ok(())
 }
 

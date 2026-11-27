@@ -284,10 +284,10 @@ async fn select_apple_intelligence(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .replace(provider);
 
-    let mut settings = state.settings();
-    settings.selected_llm_model = "apple-intelligence".into();
-    settings.selected_llm_provider = "apple-intelligence".into();
-    state.replace_settings(settings)?;
+    state.update_settings_with(|settings| {
+        settings.selected_llm_model = "apple-intelligence".into();
+        settings.selected_llm_provider = "apple-intelligence".into();
+    })?;
     crate::log_entry(
         crate::LogLevel::Success,
         "Apple Intelligence selected as the active model".to_string(),
@@ -389,10 +389,10 @@ pub async fn select_model(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .replace(Arc::new(provider));
 
-    let mut settings = state.settings();
-    settings.selected_llm_model = id.clone();
-    settings.selected_llm_provider = "local-server".into();
-    state.replace_settings(settings)?;
+    state.update_settings_with(|settings| {
+        settings.selected_llm_model = id.clone();
+        settings.selected_llm_provider = "local-server".into();
+    })?;
     tracing::info!(model = %id, "llama-server provider ready");
     // The transform model changed (and the old engine is being stopped in the
     // background): tell the readiness panel now instead of on its next 5 s poll.
@@ -471,10 +471,10 @@ pub async fn delete_model(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
-        let mut settings = state.settings();
-        settings.selected_llm_model = String::new();
-        settings.selected_llm_provider = String::new();
-        state.replace_settings(settings)?;
+        state.update_settings_with(|settings| {
+            settings.selected_llm_model = String::new();
+            settings.selected_llm_provider = String::new();
+        })?;
     }
 
     let models_dir = state.models_dir.clone();
@@ -523,9 +523,9 @@ pub async fn delete_speech_model(
         // Unload the engine slot that serves this model so its files are not
         // held open by a live provider.
         unload_speech_slot_for(&state, entry);
-        let mut settings = state.settings();
-        settings.selected_speech_model = crate::commands::default_speech_model_id().into();
-        state.replace_settings(settings)?;
+        state.update_settings_with(|settings| {
+            settings.selected_speech_model = crate::commands::default_speech_model_id().into();
+        })?;
     }
 
     let models_dir = state.models_dir.clone();
@@ -835,9 +835,9 @@ pub async fn select_openai_provider(state: State<'_, AppState>) -> CommandResult
         teletype_inference::OpenAiCompatConfig::new(base_url, api_key, model),
     );
 
-    let mut settings = state.settings();
-    settings.selected_llm_provider = "openai-compat".into();
-    state.replace_settings(settings)?;
+    state.update_settings_with(|settings| {
+        settings.selected_llm_provider = "openai-compat".into();
+    })?;
 
     let old = state
         .inference
@@ -1805,9 +1805,9 @@ pub async fn select_speech_model(state: State<'_, AppState>, id: String) -> Comm
             entry.name
         )));
     }
-    let mut settings = state.settings();
-    settings.selected_speech_model = id;
-    state.replace_settings(settings)
+    state
+        .update_settings_with(|settings| settings.selected_speech_model = id)
+        .map(|_| ())
 }
 
 /// Hex SHA-256 of a file, streamed so a 1.2 GB model is never held in memory.

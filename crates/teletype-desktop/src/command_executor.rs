@@ -1633,9 +1633,9 @@ pub const TYPE_TEXT_MAX_CHARS: usize = 5000;
 ///
 /// Compared before and after the clipboard set / keystroke to catch the
 /// case where the user (or another app) switched focus between the
-/// initial check and the paste. When both sides have a `title`, the
-/// titles must match; when both are `None`, app-only identity is allowed
-/// (the result string says so).
+/// initial check and the paste. Titles must match when present on both
+/// sides; app-only identity is allowed only when neither capture could read
+/// a title.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowIdentity {
     pub app_id: String,
@@ -1646,9 +1646,8 @@ pub struct WindowIdentity {
 ///
 /// - app ids must match when both are non-empty;
 /// - titles must match when both are `Some`;
-/// - when both titles are `None`, app-only identity is allowed (returns
-///   `true` when the app ids agree, or when both app ids are empty —
-///   the caller is responsible for the "identity unavailable" variant).
+/// - when both titles are `None`, app-only identity is allowed;
+/// - a title disappearing between captures is a mismatch.
 pub fn same_window(a: &WindowIdentity, b: &WindowIdentity) -> bool {
     // App ids: must match when both are non-empty.
     if !a.app_id.is_empty() && !b.app_id.is_empty() && a.app_id != b.app_id {
@@ -1657,7 +1656,8 @@ pub fn same_window(a: &WindowIdentity, b: &WindowIdentity) -> bool {
     // Titles: must match when both are Some.
     match (&a.title, &b.title) {
         (Some(ta), Some(tb)) => ta == tb,
-        _ => true,
+        (None, None) => true,
+        _ => false,
     }
 }
 
@@ -1727,6 +1727,16 @@ fn execute_type_text(cmd: &CommandAction, ctx: &ApplicationContext) -> Result<St
         // (UTI) and writes the same structure back.
         let clipboard_guard = crate::clipboard::MacClipboardGuard::new();
         let clipboard_snapshot = clipboard_guard.snapshot();
+        let initial_change_count = clipboard_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.change_count);
+        if initial_change_count.is_some_and(|expected| {
+            clipboard_guard
+                .change_count()
+                .is_some_and(|current| current != expected)
+        }) {
+            return Err("type_text: clipboard changed before the paste; nothing was typed".into());
+        }
         // Text-only fallback for the rare case the full snapshot fails: at
         // least put the user's text back.
         let prev_text = if clipboard_snapshot.is_none() {
@@ -1737,22 +1747,22 @@ fn execute_type_text(cmd: &CommandAction, ctx: &ApplicationContext) -> Result<St
         } else {
             None
         };
-        let restore_clipboard = || match &clipboard_snapshot {
-            // No `extra`: this text is a command's payload, not a dictation,
-            // so the user's clipboard goes back exactly as it was rather than
-            // growing an item.
-            Some(snapshot) => clipboard_guard.restore(snapshot, None),
-            None => restore_previous_text(prev_text.as_deref()),
-        };
 
         // Set the clipboard to the text we want to paste.
-        {
-            let _pasteboard = teletype_core::injector::pasteboard_lock();
-            let mut clip = arboard::Clipboard::new()
-                .map_err(|e| format!("type_text: clipboard unavailable: {e}"))?;
-            clip.set_text(text.clone())
-                .map_err(|e| format!("type_text: clipboard set failed: {e}"))?;
-        }
+        let written_change_count = clipboard_guard
+            .set_text_and_change_count(&text)
+            .map_err(|error| format!("type_text: {error}"))?;
+        let restore_clipboard = || {
+            if !clipboard_guard.restore_if_unchanged(
+                written_change_count,
+                clipboard_snapshot.as_ref(),
+                prev_text.as_deref(),
+            ) {
+                tracing::debug!(
+                    "[commands] type_text: clipboard changed during paste; skipping restore"
+                );
+            }
+        };
 
         // Small settle so the pasteboard is fully written before the
         // keystroke (matches the delivery_io pacing).
@@ -1763,9 +1773,17 @@ fn execute_type_text(cmd: &CommandAction, ctx: &ApplicationContext) -> Result<St
         // since the pre-check.
         let post = capture_window_identity(ctx);
         if !same_window(&pre, &post) {
-            // Restore the clipboard best-effort before returning.
+            // Restore only if the clipboard still contains our temporary text.
             restore_clipboard();
             return Err("target window changed; nothing was typed".into());
+        }
+
+        if written_change_count.is_some_and(|expected| {
+            clipboard_guard
+                .change_count()
+                .is_some_and(|current| current != expected)
+        }) {
+            return Err("type_text: clipboard changed before the paste; nothing was typed".into());
         }
 
         // Re-check the secure-field flag immediately before the keystroke:
@@ -1828,10 +1846,7 @@ fn execute_type_text(cmd: &CommandAction, ctx: &ApplicationContext) -> Result<St
         let verified = match (&pre.title, &post.title) {
             (Some(_), Some(_)) => "window verified".to_string(),
             (None, None) => "verified (app only, no window title)".to_string(),
-            // One side lost its title between the two captures. `same_window`
-            // allows it, but the title was only compared once, so this is not
-            // a full window verification.
-            _ => "verified (app only, window title read once)".to_string(),
+            _ => "window identity unavailable".to_string(),
         };
         Ok(format!(
             "pasted {} characters into {app_name} ({verified})",
@@ -1843,28 +1858,6 @@ fn execute_type_text(cmd: &CommandAction, ctx: &ApplicationContext) -> Result<St
     {
         let _ = (ctx, text);
         Err("type_text not supported on this platform".into())
-    }
-}
-
-/// Best-effort restore of a previous clipboard *text*, used only when the
-/// full pasteboard snapshot is unavailable. Logs (does not error) on
-/// failure — the type itself already happened, so an un-restored clipboard
-/// is a much smaller problem than a missed paste.
-#[cfg(target_os = "macos")]
-fn restore_previous_text(prev: Option<&str>) {
-    let Some(prev) = prev else {
-        return;
-    };
-    let _pasteboard = teletype_core::injector::pasteboard_lock();
-    match arboard::Clipboard::new() {
-        Ok(mut c) => {
-            if let Err(e) = c.set_text(prev.to_string()) {
-                tracing::warn!("[commands] type_text: clipboard restore failed: {e}");
-            }
-        }
-        Err(e) => {
-            tracing::warn!("[commands] type_text: clipboard restore failed: {e}");
-        }
     }
 }
 
@@ -2416,11 +2409,7 @@ mod tests {
     }
 
     #[test]
-    fn same_window_one_title_some_other_none_is_allowed() {
-        // Mixed: one side has a title, the other doesn't. The rule only
-        // compares when both are Some, so this is allowed; the type_text
-        // result string reports it as partial ("window title read once")
-        // rather than a full window verification.
+    fn same_window_rejects_a_missing_title_on_one_side() {
         let a = WindowIdentity {
             app_id: "com.a".into(),
             title: Some("Doc".into()),
@@ -2429,7 +2418,7 @@ mod tests {
             app_id: "com.a".into(),
             title: None,
         };
-        assert!(same_window(&a, &b));
+        assert!(!same_window(&a, &b));
     }
 
     // ------------------------------------------------------------------

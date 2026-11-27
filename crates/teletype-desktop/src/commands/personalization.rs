@@ -662,14 +662,14 @@ pub async fn set_app_language_override(
     if key.is_empty() {
         return Err(CommandError::user("app key must not be empty"));
     }
-    let mut settings = state.settings();
     let lang = lang.trim().to_string();
-    if lang.is_empty() {
-        settings.app_language_overrides.remove(&key);
-    } else {
-        settings.app_language_overrides.insert(key, lang);
-    }
-    state.replace_settings(settings)?;
+    state.update_settings_with(|settings| {
+        if lang.is_empty() {
+            settings.app_language_overrides.remove(&key);
+        } else {
+            settings.app_language_overrides.insert(key, lang);
+        }
+    })?;
     Ok(())
 }
 
@@ -716,9 +716,7 @@ pub async fn delete_style_profile(state: State<'_, AppState>, id: String) -> Com
     store.remove(&id)?;
     // If the deleted profile was active, clear the selection.
     if settings_active_style_is(&state, &id) {
-        let mut settings = state.settings();
-        settings.active_style_profile = String::new();
-        state.replace_settings(settings)?;
+        state.update_settings_with(|settings| settings.active_style_profile.clear())?;
     } else {
         state.styles.update(|s| *s = store)?;
     }
@@ -738,9 +736,9 @@ pub async fn set_active_style_profile(state: State<'_, AppState>, id: String) ->
             return Err(CommandError::not_found("Profile not found"));
         }
     }
-    let mut settings = state.settings();
-    settings.active_style_profile = id;
-    state.replace_settings(settings)
+    state
+        .update_settings_with(|settings| settings.active_style_profile = id)
+        .map(|_| ())
 }
 
 #[tauri::command]

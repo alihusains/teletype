@@ -40,7 +40,10 @@ pub enum PersistMsg {
     /// Appends a completed dictation to the history store.
     History(Box<DictationEntry>),
     /// Removes one history entry by id.
-    HistoryRemove(String),
+    HistoryRemove {
+        id: String,
+        ack: mpsc::Sender<Result<(), String>>,
+    },
     /// Forgets every entry's recording file name (after "Delete all
     /// recordings" emptied the folder).
     HistoryClearRecordings,
@@ -70,8 +73,17 @@ impl PersistHandle {
         let _ = self.tx.send(PersistMsg::History(Box::new(entry)));
     }
 
-    pub fn history_remove(&self, id: &str) {
-        let _ = self.tx.send(PersistMsg::HistoryRemove(id.to_string()));
+    pub fn history_remove(&self, id: &str) -> Result<(), String> {
+        let (ack, result) = mpsc::channel();
+        self.tx
+            .send(PersistMsg::HistoryRemove {
+                id: id.to_string(),
+                ack,
+            })
+            .map_err(|_| "persistence actor stopped before history removal".to_string())?;
+        result.recv().map_err(|_| {
+            "persistence actor stopped without confirming history removal".to_string()
+        })?
     }
 
     pub fn history_clear_recordings(&self) {
@@ -206,10 +218,12 @@ fn apply(stores: &mut PersistStores, batch: &mut Vec<PersistMsg>) -> bool {
                     tracing::warn!("persist: history push failed: {e}");
                 }
             }
-            PersistMsg::HistoryRemove(id) => {
-                if let Err(e) = stores.remove_history(&id) {
+            PersistMsg::HistoryRemove { id, ack } => {
+                let result = stores.remove_history(&id).map_err(|e| e.to_string());
+                if let Err(e) = &result {
                     tracing::warn!("persist: history remove failed: {e}");
                 }
+                let _ = ack.send(result);
             }
             PersistMsg::HistoryClearRecordings => {
                 if let Err(e) = stores.clear_recording_paths() {
@@ -360,7 +374,7 @@ mod tests {
             },
             BTreeMap::new(),
         );
-        handle.history_remove("drop");
+        handle.history_remove("drop").unwrap();
         handle.usage_reset();
         handle.shutdown();
         // Same barrier as above: nothing to poll for once `shutdown` returned.
@@ -373,5 +387,21 @@ mod tests {
             stats.filler_counts.is_empty(),
             "usage_reset must clear the counters"
         );
+    }
+
+    #[test]
+    fn history_remove_returns_only_after_the_row_is_durable() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let handle = spawn(dir.path());
+        handle.history(entry("remove-me", 1));
+
+        handle.history_remove("remove-me").unwrap();
+
+        let stores = PersistStores::open(dir.path()).unwrap();
+        assert!(
+            stores.history_all().unwrap().is_empty(),
+            "a successful remove acknowledgment means SQLite no longer has the row"
+        );
+        handle.shutdown();
     }
 }

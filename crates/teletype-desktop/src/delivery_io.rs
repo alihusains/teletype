@@ -72,10 +72,13 @@ pub fn clipboard_retention(keep_text: bool, text: &str) -> Option<&str> {
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
+    use teletype_core::delivery::{resolve_delivery, Delivery, RecordTarget};
     use teletype_core::injector::ClipboardGuard;
 
     /// Reads the focused field via the accessibility tree (ax_text).
-    pub struct AxFieldReader;
+    pub struct AxFieldReader {
+        pub(super) record_target: Option<RecordTarget>,
+    }
 
     impl FieldReader for AxFieldReader {
         fn selected_text(&self) -> Option<String> {
@@ -92,6 +95,23 @@ mod macos {
 
         fn is_url_field(&self) -> bool {
             crate::ax_text::is_url_field()
+        }
+
+        fn target_is_current(&self) -> bool {
+            let Some(recorded) = &self.record_target else {
+                return true;
+            };
+            let platform = crate::platform::create();
+            let current = platform.active_application();
+            resolve_delivery(
+                recorded,
+                current
+                    .as_ref()
+                    .map(|app| app.application_id.as_str())
+                    .unwrap_or(""),
+                platform.active_pid(),
+                platform.focused_window_frame(),
+            ) == Delivery::Proceed
         }
 
         fn set_selected_text(&self, text: &str) -> Result<(), String> {
@@ -283,6 +303,16 @@ mod macos {
             // decides whether the dictation is appended as one more.
             self.guard
                 .restore(snapshot, clipboard_retention(self.keep_text, &text));
+        }
+
+        fn restore_original(&self, snapshot: &ClipboardSnapshot) {
+            let _ = std::mem::take(
+                &mut *self
+                    .last_text
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            self.guard.restore(snapshot, None);
         }
 
         fn change_count(&self) -> Option<u64> {
@@ -516,6 +546,30 @@ mod windows {
             }
         }
 
+        fn restore_original(&self, snapshot: &ClipboardSnapshot) {
+            let _ = std::mem::take(
+                &mut *self
+                    .last_text
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            let restore_text = snapshot.items.join("\n");
+            let mut guard = self
+                .arboard
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if guard.is_none() {
+                if let Ok(clipboard) = arboard::Clipboard::new() {
+                    *guard = Some(clipboard);
+                }
+            }
+            if let Some(clipboard) = guard.as_mut() {
+                if let Err(error) = clipboard.set_text(restore_text) {
+                    tracing::warn!("[delivery] original clipboard restore failed: {error}");
+                }
+            }
+        }
+
         fn change_count(&self) -> Option<u64> {
             // Windows GetClipboardSequenceNumber is not exposed by arboard.
             // Returning None means the restore guard restores unconditionally
@@ -629,11 +683,20 @@ pub fn macos_io(
     clipboard_guard: Arc<crate::clipboard::MacClipboardGuard>,
     keep_text: bool,
 ) -> DeliveryIo {
+    macos_io_with_target(clipboard_guard, keep_text, None)
+}
+
+#[cfg(target_os = "macos")]
+pub fn macos_io_with_target(
+    clipboard_guard: Arc<crate::clipboard::MacClipboardGuard>,
+    keep_text: bool,
+    record_target: Option<teletype_core::delivery::RecordTarget>,
+) -> DeliveryIo {
     use macos::*;
     let enigo = Arc::new(Mutex::new(None::<Enigo>));
     let enigo_paste = enigo.clone();
     DeliveryIo {
-        field: Box::new(AxFieldReader),
+        field: Box::new(AxFieldReader { record_target }),
         typer: Box::new(EnigoTyper::new()),
         clipboard: Box::new(GuardClipboard::new(clipboard_guard, keep_text)),
         paste_key: Box::new(move || paste_key(&enigo_paste)),

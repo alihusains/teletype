@@ -79,6 +79,18 @@ loss of history for the session.
   the coalescing window; the join barrier is the mechanism, demonstrated by the
   tests now asserting directly instead of polling.
 
+## 2026-11-27 update: per-entry deletion also needs an acknowledgment
+
+The shutdown barrier does not make every persistence operation synchronous.
+`history_remove` was still fire-and-forget, while its command removed the row
+from memory and deleted its recording immediately. The actor now returns the
+SQLite result through an acknowledgment channel; the command waits for it on a
+blocking worker and only then updates memory and removes the recording. It has
+no timeout: returning an error while a queued delete can still commit would
+leave the UI and database disagreeing. `history_remove_returns_only_after_the_row_is_durable`
+checks the database as soon as the call succeeds. Persistence errors now stop
+the command before in-memory/file cleanup.
+
 ## Reusable lesson
 
 An async writer that owns the last piece of user data needs a join signal, not a

@@ -407,11 +407,11 @@ pub fn record_calibration(
             )
         })
         .unwrap_or_default();
-    let mut settings = state.settings();
-    settings.polish_profile = chosen;
-    settings.polish_app_profiles = sensible_app_defaults();
-    state.replace_settings(settings)?;
-    Ok(state.settings())
+    let (settings, _) = state.update_settings_with(|settings| {
+        settings.polish_profile = chosen;
+        settings.polish_app_profiles = sensible_app_defaults();
+    })?;
+    Ok(settings)
 }
 
 #[cfg(test)]

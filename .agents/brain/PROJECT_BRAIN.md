@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.22 head=11a2dc7 updated=2026-11-26 -->
+<!-- brain-freshness: version=v0.2.22 head=08fb3dd updated=2026-11-27 -->
 
 This file is the durable working memory for this project.
 
@@ -81,6 +81,16 @@ clipboard text-only snapshot/restore; `FieldReader` is a stub — UIA is a
 separate effort). Windows cross-compile not verified (no target on dev
 machine). Verified: 1413 core + 649 desktop + 624 UI tests pass, tsc clean,
 11/11 pin checks green.
+
+**Update 2026-11-27 (critical bug fixes, prepared for v0.2.23):** reviewed and
+fixed the reported take lifecycle, settings lost-update, wrong-window delivery, clipboard
+overwrite, and history deletion races. The delivery cascade now revalidates the
+recorded target immediately before paste/type/AX writes; clipboard restoration
+compares against Teletype's post-write change count; per-entry history removal
+waits for SQLite acknowledgment before memory/recording cleanup; settings
+writers mutate the latest locked snapshot. Regression tests and full core and
+desktop library suites pass. Release is prepared as v0.2.23; the user explicitly
+approved the unsigned public pre-release channel because signing keys are absent.
 
 **Update 2026-11-25 (plans/ batch 2 landed uncommitted on `main` @ `8746c1c`):**
 the `plans/` folder (improve-skill audit, 001-013) is now fully implemented.
@@ -295,8 +305,12 @@ App boots clean into running state (LLM s1-mini warm in ≈0.53 s; no crash repo
 
 ---
 
-**Current work topology (2026-11-19):** one worktree, `main` @ `66fe309`
-(tracking `origin/main`); **no** local `refactor`, `feat/beat-wispr`, or release
+**Current work topology (2026-11-27):** this checkout is `main` @ `08fb3dd`,
+one commit ahead of `origin/main` @ `b22fa2b`. Seven `advisor/*` worktrees
+(`advisor/001-clipboard-restore` through `advisor/007-stale-docs`) live under
+`.local/share/opencode/worktree/cb8e2e`; four `omp/*` worktrees
+(`backtrack`, `diff-card`, `polish-retention`, `zero-edit`) live under
+`teletype-wt`, all at `e1fd01f`. No `refactor`, `feat/beat-wispr`, or release
 worktrees remain. The 2026-10-19 multi-branch topology below is historical
 provenance only — do not act on it as current state.
 
@@ -2866,6 +2880,38 @@ Keep the retention windows and only fix the pill (rejected by the owner: the rel
 **Evidence / source:**
 `cargo test -p teletype-desktop --lib` 648 passed (adds `a_finished_take_never_arms_an_unload`), `cd ui && npm test` 624 passed, `tsc --noEmit` clean. `crates/teletype-desktop/src/dictation.rs` (`take_end_unload_delay`, `release_take_session`, `press_warms_visibly`), `crates/teletype-desktop/src/commands.rs` (field dropped from `Settings`/`SettingsPatch`, `ui/src/screens/SettingsScreen.tsx` and the fixtures), `ui/src/settings/{MicrophoneSoundsSections,DictationPolishSections}.tsx`, `ui/src/test/warmEnginePolicy.test.ts`. Supersedes the unload half of BUG-003; `SpeechModelManager::{begin_dictation,end_dictation,tick}` stay (every take still marks the session, and plans/009's `active` guard still applies).
 
+### Decision D053
+
+**Title:** Revalidate the recorded target immediately before injection
+
+**Date:** 2026-11-27
+
+**Status:** accepted (implemented in the main working tree, uncommitted)
+
+**Decision:**
+Keep the existing delivery-time gate and its one activation attempt, but also
+recheck the take's recorded app/window immediately before each actual paste,
+typed injection, or accessibility write. A proven mismatch refuses delivery;
+unreadable identity remains non-blocking, matching `resolve_delivery`.
+
+**Context:**
+The ASR/polish pipeline leaves time for focus to change after the earlier gate.
+Checking only before the slow pipeline does not prevent the final keystroke or
+AX write from reaching a different app/window.
+
+**Alternatives considered:**
+Rely on the earlier gate (rejected: leaves a race window); reactivate the
+recorded app at the last moment (rejected: it can override a deliberate user
+switch); refuse when identity is unreadable (rejected: missing evidence has
+historically been allowed so inaccessible apps remain usable).
+
+**Evidence / source:**
+`FieldReader::target_is_current` in `crates/teletype-core/src/delivery.rs`,
+the macOS adapter in `crates/teletype-desktop/src/delivery_io.rs`, and
+regressions for switches before paste, during optimistic paste, and before
+typed/set-value fallback. Full `cargo test -p teletype-core` and
+`cargo test -p teletype-desktop --lib`.
+
 ## 8. Known constraints
 
 Record constraints that future agents must know.
@@ -3384,7 +3430,7 @@ The brain must describe the checkout it sits in, not a historical snapshot.
   ("no brain change needed"). Do not manufacture entries, and do not leave a
   known-stale section standing because it was not in the diff.
 - Recorded IDs are unique: D001–D043 plus D044 (Notetaker), D045 (fetched
-  model weights), D046–D052 (Sentry, no-unload rule, and later decisions).
+  model weights), D046–D053 (Sentry, no-unload rule, and later decisions).
   A duplicate ID or a
   reference to a decision that does not match its block is a defect to fix on
   sight (see the D011/D016/D017/D020 corrections made 2026-11-19).
@@ -3414,6 +3460,7 @@ Do not add:
 | 2026-11-01 | `ali-agent-health` audit (6 checks) + `to-tickets` for the Beat-Wispr plan: registry 8/8 ACTIVE; all learning files status-tailed; fixed duplicate section number (`## 10. QA audit` → unnumbered); fixed stale `typing_windows.rs` path (now `typing/` since `8f86c5c`); added current-work topology (3-branch + plan authority), Decisions **D016** (EG-1 removal, `1ebd339`) and **D017** (commit-while-you-go streaming, `fcae04b`, plan of record) — IDs corrected 2026-11-19 against the actual decision blocks; learning **L032** (QA battery practice), planning-docs source row; added ADR-013/ADR-014 files (local-only — see drift notes). Left for Ali: (a) brain is mostly gitignored (`.gitignore: .agents/*`) and the two tracked lineages (main `caa90f4`, refactor `ae98488`) will conflict on merge — prefer the refactor lineage and salvage from there; (b) ADR-013/014 and most learnings are untracked locally — track or resign if they must survive between checkouts; (c) an older, uncommitted brain revision (v0.2.5-era: "State here?" 31-item list, QA-battery bug list) existed in a prior working tree and was never committed anywhere in git — durable items from it have been re-verified and re-recorded above (L023); the rest is treated as lost. |
 | 2026-11-25 | Docs consolidation: 37 scattered root-level files (roadmaps, plans, audits, bug records, style refs) merged into `ROADMAP.md` and deleted. Brain updated: freshness marker → `8746c1c`; §5 repo map root-docs row → `ROADMAP.md`; §11 Q005 → resolved; §12 planning-docs source row → `ROADMAP.md`; §13 plan-of-record row → `ROADMAP.md`; §13 QA-audit row → `ROADMAP.md` §11; §14 decision-ID range → D001–D052. References in `README.md`, `PRODUCT.md`, `plans/README.md`, `.agents/agents/teletype-product-manager.md`, and 4 `tasks/` files updated to point at `ROADMAP.md`. Untracked learning `2026-11-25-hidden-window-dock-click-did-nothing.md` (L100) still needs to be committed or resigned. |
 | 2026-11-26 | Plans 001–021 all DONE (17 commits on main @ `11a2dc7`). Cherry-picked batch 1 (001–007) from `advisor/*` branches. Batch 3 (014–018): engine pins in notices + pin check (11 checks), updater aligned to 2.13.3 + plugin version check, `@tauri-apps/cli` exact-pinned, `eprintln!` → `tracing` in audio callbacks. Batch 4 (019–021): FTS5 history search (use `bundled` not `bundled-full` — the latter breaks FTS5 DDL), last-dictation timing panel in Developer tab, Windows `DeliveryIo` seam (enigo + arboard; cross-compile unverified). Freshness marker → `11a2dc7`. |
+| 2026-11-27 | Full health review after critical-fix work: current branch is `main` @ `08fb3dd` (ahead of origin by one commit), one primary checkout plus 11 additional local worktrees; generated agent adapters 24/24 current; decision IDs unique through D053. Added D053: recorded delivery target must be revalidated at the injection seam. Per-entry history removal now awaits durable SQLite acknowledgment before memory/recording cleanup. Updated L038/L087 with regression evidence; nine existing candidate learnings remain candidates because their stated live/human promotion evidence is outstanding. |
 
 ## 15. Future company brain hook
 

@@ -133,7 +133,8 @@ Two separate defects with one cause: every thread in the process shares one
 
 ## Promotion
 
-Candidate. Reproduced (crash control runs) and fixed (10 clean runs), but the
-in-app race between the restore thread and a `{{clipboard}}` expansion has not
-been observed live on a desktop, so the production half of the fix is reasoned
-from the call map, not from an app-level repro.
+Verified for the concurrent-AppKit crash: the controlled reproductions,
+single-thread/skip controls and repeated clean runs establish the root cause and
+the lock fix. The distinct production race between the restore thread and a
+`{{clipboard}}` expansion has not been observed live on a desktop; do not cite
+the test crash as proof that the app-level race occurred.

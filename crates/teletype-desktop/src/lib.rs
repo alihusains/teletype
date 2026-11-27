@@ -434,11 +434,21 @@ impl AppState {
         (*self.settings.get()).clone()
     }
 
-    pub fn replace_settings(&self, settings: commands::Settings) -> commands::CommandResult<()> {
-        self.settings.update(|s| {
-            *s = settings;
+    pub fn update_settings_with(
+        &self,
+        update: impl FnOnce(&mut commands::Settings),
+    ) -> commands::CommandResult<(commands::Settings, commands::Settings)> {
+        let _save_guard = self
+            .save_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let old = self.settings();
+        let mut new = old.clone();
+        update(&mut new);
+        self.settings.update(|settings| {
+            *settings = new.clone();
         })?;
-        Ok(())
+        Ok((new, old))
     }
 
     /// Where the local profile bandit is persisted.
@@ -468,17 +478,9 @@ impl AppState {
         &self,
         patch: &commands::SettingsPatch,
     ) -> commands::CommandResult<(commands::Settings, commands::Settings)> {
-        let _save_guard = self
-            .save_lock
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let old = self.settings();
-        let mut next = old.clone();
-        patch.apply_to(&mut next);
-        self.settings.update(|s| {
-            *s = next.clone();
-        })?;
-        Ok((next, old))
+        self.update_settings_with(|settings| {
+            patch.apply_to(settings);
+        })
     }
 
     /// Whole-document variant of [`Self::update_settings`]: serialises the

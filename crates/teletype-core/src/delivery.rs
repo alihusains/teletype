@@ -218,6 +218,11 @@ pub trait FieldReader: Send + Sync {
     fn is_url_field(&self) -> bool {
         false
     }
+    /// Revalidate the recorded target immediately before an injection.
+    /// Platforms without a target identity allow delivery by default.
+    fn target_is_current(&self) -> bool {
+        true
+    }
     /// Replace the focused field's selected text (or insert at the caret)
     /// via the accessibility set-value API. `Ok(())` only when the write
     /// actually landed.
@@ -266,6 +271,11 @@ pub trait ClipboardIo: Send + Sync {
     /// `None` count is the platform's "I cannot observe the count" and
     /// restores unconditionally, the old behaviour.
     fn restore(&self, snapshot: &ClipboardSnapshot);
+    /// Restore the snapshot without keeping the dictated text as an extra
+    /// clipboard item. Used when delivery is refused after a temporary write.
+    fn restore_original(&self, snapshot: &ClipboardSnapshot) {
+        self.restore(snapshot);
+    }
     /// The clipboard's current change count, when the platform exposes one
     /// (macOS `NSPasteboard changeCount`, Windows
     /// `GetClipboardSequenceNumber`). `None` when the platform cannot
@@ -553,6 +563,11 @@ pub fn deliver(
     // field check above still wins: a secure field is refused before any
     // side effect, trust or not.
     let trusted = (io.accessibility_trusted)();
+    if !io.field.target_is_current() {
+        return DeliveryOutcome::Refused {
+            reason: "the recorded delivery target is no longer focused".into(),
+        };
+    }
 
     // No writable AX text field is focused. This is the web/Electron/chat
     // case (a browser content area, a chat box, an app whose whole content
@@ -648,6 +663,9 @@ pub fn deliver(
                 outcome
             }
         }
+        DeliveryMode::Type if !io.field.target_is_current() => DeliveryOutcome::Refused {
+            reason: "the recorded delivery target is no longer focused".into(),
+        },
         DeliveryMode::Type => match io.typer.type_text(text) {
             Ok(()) => DeliveryOutcome::Typed,
             Err(e) => {
@@ -711,9 +729,38 @@ fn keep_on_clipboard(text: &str, io: &DeliveryIo, trusted: bool) -> DeliveryOutc
 /// - keystroke not sent -> fall back to [`keep_on_clipboard`]: the text stays
 ///   on the clipboard and the user is told to paste manually.
 fn paste_unverified_path(text: &str, io: &DeliveryIo, trusted: bool) -> DeliveryOutcome {
+    let snapshot = io.clipboard.snapshot().filter(|snapshot| {
+        let size = snapshot_size(snapshot);
+        if size > SNAPSHOT_SIZE_LIMIT {
+            tracing::warn!("[deliver] clipboard snapshot too large to restore; skipping");
+            false
+        } else {
+            !snapshot.is_empty()
+        }
+    });
+    if !io.field.target_is_current() {
+        return DeliveryOutcome::Refused {
+            reason: "the recorded delivery target is no longer focused".into(),
+        };
+    }
     if io.clipboard.set_text(text).is_err() {
         return DeliveryOutcome::Refused {
             reason: "the clipboard is unavailable and there is no writable text field".into(),
+        };
+    }
+    let count_after_our_write = io.clipboard.change_count();
+    if !io.field.target_is_current() {
+        if let Some(snapshot) = &snapshot {
+            let still_ours = match count_after_our_write {
+                Some(ours) => io.clipboard.change_count().is_none_or(|now| now == ours),
+                None => true,
+            };
+            if still_ours {
+                io.clipboard.restore_original(snapshot);
+            }
+        }
+        return DeliveryOutcome::Refused {
+            reason: "the recorded delivery target is no longer focused".into(),
         };
     }
     if (io.paste_key)() {
@@ -759,6 +806,14 @@ fn paste_and_verify(text: &str, io: &DeliveryIo) -> (Option<DeliveryOutcome>, Op
     // against this, not the pre-write snapshot count: writing bumps the
     // count on macOS, so the snapshot count is always stale by one.
     let count_after_our_write = io.clipboard.change_count();
+    if !io.field.target_is_current() {
+        return (
+            Some(DeliveryOutcome::Refused {
+                reason: "the recorded delivery target is no longer focused".into(),
+            }),
+            count_after_our_write,
+        );
+    }
     let key_sent = (io.paste_key)();
     if !key_sent {
         // The keystroke failed. The text is on the clipboard. Fall through
@@ -872,6 +927,11 @@ fn fallback(text: &str, io: &DeliveryIo) -> DeliveryOutcome {
 }
 
 fn set_value_or_hold(text: &str, io: &DeliveryIo) -> DeliveryOutcome {
+    if !io.field.target_is_current() {
+        return DeliveryOutcome::Refused {
+            reason: "the recorded delivery target is no longer focused".into(),
+        };
+    }
     match io.field.set_selected_text(text) {
         Ok(()) => DeliveryOutcome::SetValue,
         Err(e) => {
@@ -1036,6 +1096,36 @@ mod tests {
         url_field: bool,
         readable: bool,
         set_calls: Arc<std::sync::atomic::AtomicU32>,
+    }
+
+    struct SwitchingTargetField {
+        checks: std::sync::atomic::AtomicU32,
+        writable_focus: bool,
+        valid_checks: u32,
+    }
+
+    impl FieldReader for SwitchingTargetField {
+        fn selected_text(&self) -> Option<String> {
+            Some(String::new())
+        }
+
+        fn is_secure_field(&self) -> bool {
+            false
+        }
+
+        fn has_writable_focus(&self) -> bool {
+            self.writable_focus
+        }
+
+        fn target_is_current(&self) -> bool {
+            self.checks
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                < self.valid_checks
+        }
+
+        fn set_selected_text(&self, _text: &str) -> Result<(), String> {
+            Err("unused".into())
+        }
     }
 
     impl FieldReader for TestField {
@@ -1312,6 +1402,99 @@ mod tests {
             1,
             "clipboard restored exactly once"
         );
+    }
+
+    #[test]
+    fn target_switch_after_precheck_prevents_paste_keystroke() {
+        let (mut io, _field, (_set, _type_calls, clip_set, restore), _typed) = make_io(
+            "hello world",
+            false,
+            true,
+            true,
+            true,
+            Some(snap_with_text("user's old copy")),
+            true,
+            None,
+        );
+        io.field = Box::new(SwitchingTargetField {
+            checks: std::sync::atomic::AtomicU32::new(0),
+            writable_focus: true,
+            valid_checks: 1,
+        });
+        let paste_calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let paste_calls_for_io = paste_calls.clone();
+        io.paste_key = Box::new(move || {
+            paste_calls_for_io.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            true
+        });
+
+        let outcome = deliver("hello world", None, &default_policy(), &io);
+
+        assert!(matches!(outcome, DeliveryOutcome::Refused { .. }));
+        assert_eq!(paste_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(clip_set.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(restore.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn target_switch_during_optimistic_paste_restores_previous_clipboard() {
+        let (mut io, _field, (_set, _type_calls, clip_set, restore), _typed) = make_io(
+            "",
+            false,
+            true,
+            true,
+            true,
+            Some(snap_with_text("user's old copy")),
+            true,
+            None,
+        );
+        io.field = Box::new(SwitchingTargetField {
+            checks: std::sync::atomic::AtomicU32::new(0),
+            writable_focus: false,
+            valid_checks: 2,
+        });
+        let paste_calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let paste_calls_for_io = paste_calls.clone();
+        io.paste_key = Box::new(move || {
+            paste_calls_for_io.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            true
+        });
+
+        let outcome = deliver("hello world", None, &default_policy(), &io);
+
+        assert!(matches!(outcome, DeliveryOutcome::Refused { .. }));
+        assert_eq!(paste_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(clip_set.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(restore.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn target_switch_prevents_typed_and_set_value_fallbacks() {
+        for mode in ["type", "setvalue"] {
+            let (mut io, _field, (set_calls, type_calls, clip_set, _restore), _typed) = make_io(
+                "",
+                false,
+                true,
+                true,
+                true,
+                Some(snap_with_text("user's old copy")),
+                true,
+                None,
+            );
+            io.field = Box::new(SwitchingTargetField {
+                checks: std::sync::atomic::AtomicU32::new(0),
+                writable_focus: true,
+                valid_checks: 1,
+            });
+            let policy = DeliveryPolicy::parse(&format!("[default]\nmode = \"{mode}\"")).unwrap();
+
+            let outcome = deliver("hello world", None, &policy, &io);
+
+            assert!(matches!(outcome, DeliveryOutcome::Refused { .. }), "{mode}");
+            assert_eq!(set_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(type_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(clip_set.load(std::sync::atomic::Ordering::SeqCst), 0);
+        }
     }
 
     #[test]

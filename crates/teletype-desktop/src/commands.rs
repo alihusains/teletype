@@ -1549,9 +1549,9 @@ pub fn speech_migration_notice(
 /// come back on every launch.
 #[tauri::command]
 pub async fn dismiss_pending_notice(state: tauri::State<'_, crate::AppState>) -> CommandResult<()> {
-    let mut settings = state.settings();
-    settings.pending_notice = None;
-    state.replace_settings(settings)
+    state
+        .update_settings_with(|settings| settings.pending_notice = None)
+        .map(|_| ())
 }
 
 /// P3.9 migration: EG-1 is gone from the catalog (its license forbids use in

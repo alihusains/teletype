@@ -20,22 +20,21 @@ schema_version: 1
 # Counted: 2 pre-beat-wispr tasks (up to 2026-10-13) + ~30 landed units across the
 # beat-wispr phases 0-3 / waves C, D, D.5, E (2026-15..16 Oct; each landed bw-c*
 # unit counted once at its lead-verified commit).
-meaningful_tasks_total: 35
-meaningful_tasks_since_specialist_review: 3
-meaningful_tasks_since_full_health_review: 33
+meaningful_tasks_total: 36
+meaningful_tasks_since_specialist_review: 4
+meaningful_tasks_since_full_health_review: 0
 
 last_specialist_review: 2026-10-16 (L033 repetition-loop-death promoted candidate->verified;
   L032 amended with the XML-as-text variant + inspection rule; no new specialist needed -
   the existing team covers the active domains)
-last_full_health_review: null
-last_major_review: 2026-11-22 (agent packaging: 8 canonical role files in .agents/agents/ plus generated OpenCode, Pi, and Agent Skills adapters; validated against AGENTS.md and the brain)
+last_full_health_review: 2026-11-27 (completed overdue manual health review: freshness/topology, D053 uniqueness, registry/adapters, specialist ownership, candidate-learning lifecycle)
+last_major_review: 2026-11-27 (cross-crate review of delivery target safety, clipboard preservation, settings serialization, and durable history removal)
 last_release_review: null
 
-# ^ since_full_health_review hit the 30 threshold on 2026-10-16. Full Health Review
-#   is still DUE (no /ali-agent-health skill exists here): run the checklist in
-#   .agents/workflows/task-classification.md by hand and reset the counter.
+# ^ since_full_health_review hit the 30 threshold on 2026-10-16. The overdue Full
+#   Health Review was completed manually on 2026-11-27; the counter is reset.
 #   2026-11-22: architecture review of the new agent packaging completed (see
 #   last_major_review); it fixed invalid skill names and stale ownership claims.
 
 # MEANINGFUL tasks counted so far:
-last_task: fixed Polish sentence capitalization and subject-verb agreement across all model paths and consolidated every keyboard binding into one Shortcuts section inside Settings (2026-11-24)
+last_task: fixed critical lifecycle, wrong-target delivery, clipboard race, persistence ordering, and settings lost-update bugs; completed full health review (2026-11-27)

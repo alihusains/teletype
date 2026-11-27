@@ -3081,6 +3081,7 @@ impl Session {
                 if self.warm_token == token && self.phase == Phase::Listening {
                     let msg = format!("Couldn't load the speech model ({reason})");
                     crate::log_entry(crate::LogLevel::Error, msg.clone());
+                    self.stop_with_note(true, "");
                     self.flash(&msg);
                 }
             }
@@ -7023,18 +7024,18 @@ impl Session {
                                 // Persist the detected language back to settings
                                 // so the Settings UI reflects it instead of
                                 // always showing "Auto-detect".
-                                let _save_guard = state
-                                    .save_lock
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                                let mut s = state.settings();
-                                if s.language != *detected {
-                                    s.language = detected.clone();
-                                    if state.replace_settings(s).is_ok() {
+                                match state.update_settings_with(|settings| {
+                                    settings.language = detected.clone();
+                                }) {
+                                    Ok((new, old)) if new.language != old.language => {
                                         let _ = app.emit("settings-changed", &());
                                     }
+                                    Ok(_) => {}
+                                    Err(error) => crate::log_entry(
+                                        crate::LogLevel::Warn,
+                                        format!("could not persist detected language: {error}"),
+                                    ),
                                 }
-                                drop(_save_guard);
                             }
                             // Route to the scratchpad when it's enabled and
                             // frontmost; otherwise inject into the previous focus.
@@ -8444,9 +8445,14 @@ impl Session {
                 .map(|a| a.application_id)
                 .filter(|id| !id.is_empty());
             #[cfg(target_os = "macos")]
-            let io = crate::delivery_io::macos_io(
+            let io = crate::delivery_io::macos_io_with_target(
                 std::sync::Arc::new(crate::clipboard::MacClipboardGuard::new()),
                 settings.keep_text_on_clipboard,
+                if e2e_forced.is_some() {
+                    None
+                } else {
+                    payload.record_target.clone()
+                },
             );
             #[cfg(target_os = "windows")]
             let io = crate::delivery_io::windows_io(settings.keep_text_on_clipboard);
@@ -15584,6 +15590,34 @@ fn f11_stale_warmup_done_is_dropped() {
         Phase::Listening,
         "a stale warm-up must not change the phase"
     );
+}
+
+#[test]
+fn warmup_failure_stops_and_discards_the_active_recording() {
+    let (_controller, mut session, _on_inject) = Controller::for_tests(Box::new(|_| {}));
+    session.phase = Phase::Listening;
+    session.next_id = 1;
+    session.warm_token = 1;
+    RECORDING.with(|slot| {
+        *slot.borrow_mut() = Some(teletype_core::audio::Recording::synthetic());
+    });
+
+    session.handle(Event::WarmupFailed {
+        session: 1,
+        reason: "missing file",
+    });
+
+    assert_eq!(session.phase, Phase::Idle);
+    assert!(RECORDING.with(|slot| slot.borrow().is_none()));
+    assert!(
+        session
+            .headless_flashes
+            .iter()
+            .any(|message| message.contains("Couldn't load the speech model")),
+        "the warm-up error must remain visible after capture stops"
+    );
+    session.handle(Event::VadFired { session: 1 });
+    assert_ne!(session.phase, Phase::Transcribing);
 }
 
 // --- no automatic model unload ---
