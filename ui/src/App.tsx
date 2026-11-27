@@ -750,19 +750,19 @@ export default function App() {
               preserves component state (fetched data, scroll position, form
               inputs) across tab switches — no re-fetch, no flash. */}
           <div style={{ display: screen === "home" ? "block" : "none" }}>
-            <HomeScreen onNavigate={(s) => setScreen(s as Screen)} />
+            <HomeScreen onNavigate={(s) => setScreen(s as Screen)} active={screen === "home"} />
           </div>
           <div style={{ display: screen === "dictation" ? "block" : "none" }}>
-            <DictationScreen />
+            <DictationScreen active={screen === "dictation"} />
           </div>
           <div style={{ display: screen === "insights" ? "block" : "none" }}>
-            <InsightsScreen onNavigate={(s) => setScreen(s as Screen)} />
+            <InsightsScreen onNavigate={(s) => setScreen(s as Screen)} active={screen === "insights"} />
           </div>
           <div style={{ display: screen === "transforms" ? "block" : "none" }}>
-            <TransformsScreen onNavigate={(s) => setScreen(s as Screen)} />
+            <TransformsScreen onNavigate={(s) => setScreen(s as Screen)} active={screen === "transforms"} />
           </div>
           <div style={{ display: screen === "dictionary" ? "block" : "none" }}>
-            <DictionaryScreen />
+            <DictionaryScreen active={screen === "dictionary"} />
           </div>
           <div style={{ display: screen === "style" ? "block" : "none" }}>
             <StylesScreen />
@@ -771,22 +771,22 @@ export default function App() {
             <CommandModeScreen />
           </div>
           <div style={{ display: screen === "notetaker" ? "block" : "none" }}>
-            <NotetakerScreen />
+            <NotetakerScreen active={screen === "notetaker"} />
           </div>
           <div style={{ display: screen === "autotext" ? "block" : "none" }}>
-            <AutoTextScreen />
+            <AutoTextScreen active={screen === "autotext"} />
           </div>
           <div style={{ display: screen === "personalization" ? "block" : "none" }}>
             <PersonalizationScreen />
           </div>
           <div style={{ display: screen === "models" ? "block" : "none" }}>
-            <ModelsScreen />
+            <ModelsScreen active={screen === "models"} />
           </div>
           <div style={{ display: screen === "settings" ? "block" : "none" }}>
             <SettingsScreen active={screen === "settings"} focusShortcuts={focusShortcuts} />
           </div>
           <div style={{ display: screen === "developer" ? "block" : "none" }}>
-            <DeveloperScreen />
+            <DeveloperScreen active={screen === "developer"} />
           </div>
           </div>
         </main>

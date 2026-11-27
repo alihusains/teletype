@@ -296,8 +296,14 @@ function Disclosure({
   );
 }
 
-export default function TransformsScreen({ onNavigate }: { onNavigate?: (screen: string) => void }) {
-  const runtime = useRuntimeStatus().status;
+export default function TransformsScreen({
+  onNavigate,
+  active = true,
+}: {
+  onNavigate?: (screen: string) => void;
+  active?: boolean;
+}) {
+  const runtime = useRuntimeStatus(active).status;
   const [transforms, setTransforms] = useState<Transform[]>([]);
   const [autoApplyEnabled, setAutoApplyEnabled] = useState(true);
   const [selected, setSelected] = useState<Transform | null>(null);

@@ -3,16 +3,19 @@
 //! Implements the `teletype_core::delivery` traits against the platform
 //! services this crate already has:
 //!
-//! - `FieldReader` — focused field text + secure-field detection + set-value,
-//!   reusing `ax_text` functions.
+//! - `FieldReader` — focused field text + secure-field detection + set-value.
+//!   macOS reuses `ax_text` functions; Windows reads the focused control
+//!   through UI Automation (`uia.rs`)
 //! - `Typer` — enigo `fast_text` (CGEvent unicode-string posts: safe from
 //!   worker threads), capped at 2 000 chars.
 //! - `ClipboardIo` — `arboard` for set-text; `MacClipboardGuard` (NSPasteboard)
-//!   for faithful snapshot/restore.
-//! - `paste_key` — ⌘V via enigo, the same keystroke the injector uses.
+//!   for faithful snapshot/restore on macOS, arboard snapshot/restore on
+//!   Windows (text-only).
+//! - `paste_key` — ⌘V (macOS) / Ctrl+V (Windows) via enigo, the same
+//!   keystroke the injector uses.
 //!
-//! macOS only. Non-macOS builds get compile-safe stubs that error on use so
-//! the crate still compiles cross-platform.
+//! Other platforms get compile-safe stubs that error on use so the crate
+//! still compiles cross-platform.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -598,6 +601,64 @@ mod windows {
             .join("\n")
     }
 
+    /// The UIA `FieldReader` (ROADMAP §16 item 5): reads the focused control
+    /// through UI Automation (`crate::uia`) instead of the old `StubField`.
+    ///
+    /// Differences from the macOS `AxFieldReader`, each deliberate:
+    ///
+    /// - `is_secure_field` — the UIA `IsPassword` property (never read the
+    ///   text of such a field; the `uia` readers refuse on their own).
+    /// - `has_writable_focus` — conservative: UIA **Edit** control only, and
+    ///   not a password field. Document/Text controls are deliberately NOT
+    ///   writable here: browser content is a Document, and reporting it as
+    ///   writable would route dictation through `paste_and_verify`, whose
+    ///   readback is impossible there, and hold the text (the exact failure
+    ///   the macOS `ax_text::has_writable_focus` gate exists to avoid).
+    ///   Unreadable/edit-less focus goes to the optimistic-paste path
+    ///   instead, matching the macOS behaviour for web areas.
+    /// - `is_url_field` — best-effort. UIA has no "address bar" role, so
+    ///   `uia::focused_is_url_field` reads the control's AutomationId,
+    ///   ClassName, and Name and runs them through
+    ///   [`is_url_like_identity`], an allowlist of known browser URL-bar
+    ///   tokens. A miss is not a failure: the optimistic-paste path's
+    ///   URL-bar risk is bounded by the same allowlist, and a false
+    ///   negative is at worst the same navigation risk macOS carries for
+    ///   bars it cannot role-identify.
+    /// - `set_selected_text` — always `Err`. UIA's `ValuePattern.SetValue`
+    ///   sets the control's *whole* value, not a selection replace (the
+    ///   0.61 client surface has no true replace primitive), so using it
+    ///   for delivery would destroy the rest of the field's text. Failing
+    ///   here preserves the safe `DeliveryOutcome::HeldForPasteLast`
+    ///   fallback the core cascade already provides.
+    /// - `target_is_current` — the trait default (`true`): Windows does
+    ///   not yet record a delivery target identity.
+    ///
+    /// All reads run on the delivery worker thread; `uia` initializes COM
+    /// per thread (`CoInitializeEx`, MTA) before its first query.
+    pub struct WindowsFieldReader;
+
+    impl FieldReader for WindowsFieldReader {
+        fn selected_text(&self) -> Option<String> {
+            crate::uia::focused_control_text().ok()
+        }
+
+        fn is_secure_field(&self) -> bool {
+            crate::uia::focused_is_secure()
+        }
+
+        fn has_writable_focus(&self) -> bool {
+            crate::uia::focused_has_writable_focus()
+        }
+
+        fn is_url_field(&self) -> bool {
+            crate::uia::focused_is_url_field()
+        }
+
+        fn set_selected_text(&self, _text: &str) -> Result<(), String> {
+            Err("UIA cannot replace a selection without replacing the whole field; holding for Paste last".into())
+        }
+    }
+
     pub fn paste_key_action() -> impl Fn() -> bool + Send + Sync + 'static {
         let enigo = Arc::new(Mutex::new(None));
         move || paste_key(&enigo)
@@ -641,12 +702,14 @@ mod windows {
 }
 
 // ---------------------------------------------------------------------------
-// Non-macOS stub FieldReader (shared by Windows and other platforms).
+// Non-macOS/non-Windows stub FieldReader
 // ---------------------------------------------------------------------------
 
-/// A field reader that reports no accessibility support. Used on Windows
-/// (UI Automation is a separate, larger effort) and on other platforms.
+/// A field reader that reports no accessibility support. Used on platforms
+/// other than macOS and Windows (both of which have real readers above).
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub struct StubField;
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 impl FieldReader for StubField {
     fn selected_text(&self) -> Option<String> {
         None
@@ -657,6 +720,44 @@ impl FieldReader for StubField {
     fn set_selected_text(&self, _text: &str) -> Result<(), String> {
         Err("delivery not supported on this platform".into())
     }
+}
+
+// ---------------------------------------------------------------------------
+// URL-bar identity matcher (platform-independent, unit-tested everywhere)
+// ---------------------------------------------------------------------------
+
+/// Best-effort browser URL-bar detection from a control's identity strings.
+///
+/// UIA (and AX on some browsers) expose no dedicated "address bar" role, so
+/// the heuristic is an **allowlist** of known browser URL-bar tokens matched
+/// case-insensitively against the AutomationId, class name, or Name of the
+/// focused control: Chrome's `omnibox`, Firefox's `urlbar` / `urlbarText`
+/// (plus its "Address and Search Bar" label), and the generic
+/// `addresseditbox` / "address bar" / "url bar" labels. Bare `address` or
+/// `url` do NOT match — they are too common in ordinary controls (address
+/// form fields, URL text in a document) to name a navigation bar.
+///
+/// Lives here (not in `uia.rs`) so the pure match is unit-testable on every
+/// platform; `crate::uia::focused_is_url_field` is the Windows caller.
+// (The `allow` is cfg-scoped: on Windows the uia caller makes it live, and
+// on other platforms only the unit tests reference it.)
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub(crate) fn is_url_like_identity(automation_id: &str, class_name: &str, name: &str) -> bool {
+    const TOKENS: &[&str] = &[
+        "omnibox",
+        "urlbar",
+        "addresseditbox",
+        "address bar",
+        "url bar",
+        "address and search bar",
+    ];
+    for field in [automation_id, class_name, name] {
+        let lower = field.to_ascii_lowercase();
+        if TOKENS.iter().any(|token| lower.contains(token)) {
+            return true;
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -696,8 +797,10 @@ mod fallback {
 /// macOS: real adapters (AX field reader, enigo typer, NSPasteboard
 /// clipboard guard, enigo ⌘V).
 ///
-/// Other platforms: compile-safe stubs that error on use (Windows
-/// verification is out of scope for this unit).
+/// Windows: real adapters (UIA field reader, enigo typer, arboard
+/// clipboard, enigo Ctrl+V) — see `windows_io`.
+///
+/// Other platforms: compile-safe stubs that error on use.
 ///
 /// `keep_text` is `settings.keep_text_on_clipboard` for this delivery: the
 /// caller builds a fresh bundle per take, so the setting is read live rather
@@ -746,7 +849,7 @@ pub fn macos_io(_clipboard_guard: Arc<()>, _keep_text: bool) -> DeliveryIo {
 pub fn windows_io(keep_text: bool) -> DeliveryIo {
     use windows::*;
     DeliveryIo {
-        field: Box::new(StubField),
+        field: Box::new(windows::WindowsFieldReader),
         typer: Box::new(EnigoTyper::new()),
         clipboard: Box::new(ArboardClipboard::new(keep_text)),
         paste_key: Box::new(paste_key_action()),
@@ -792,5 +895,52 @@ mod tests {
     #[test]
     fn retention_never_keeps_empty_text() {
         assert_eq!(clipboard_retention(true, ""), None);
+    }
+
+    // --- URL-bar identity matcher (runs on every platform) ---
+
+    #[test]
+    fn url_identity_matches_known_omnibox_tokens() {
+        assert!(is_url_like_identity("omnibox", "", ""));
+        assert!(is_url_like_identity("", "OmniboxViewField", ""));
+        // case-insensitive
+        assert!(is_url_like_identity("", "", "OMNIBOX"));
+    }
+
+    #[test]
+    fn url_identity_matches_known_urlbar_tokens() {
+        assert!(is_url_like_identity("urlbar", "", ""));
+        assert!(is_url_like_identity("urlbarText", "", ""));
+        assert!(is_url_like_identity("", "", "URL Bar"));
+    }
+
+    #[test]
+    fn url_identity_matches_known_address_bar_tokens() {
+        assert!(is_url_like_identity("AddressEditBox", "", ""));
+        assert!(is_url_like_identity("", "", "Address Bar"));
+        assert!(is_url_like_identity("", "", "Address and Search Bar"));
+        assert!(is_url_like_identity("", "", "address and search bar"));
+    }
+
+    #[test]
+    fn url_identity_rejects_bare_address_and_url() {
+        // Bare `address` and `url` are too common in ordinary controls
+        // (mailing-address form fields, a document containing a URL) to
+        // name a navigation bar.
+        assert!(!is_url_like_identity("Address", "", ""));
+        assert!(!is_url_like_identity("", "", "URL"));
+        assert!(!is_url_like_identity("", "AddressForm", "shipping address"));
+        assert!(!is_url_like_identity("", "", "Search"));
+        assert!(!is_url_like_identity("", "", ""));
+    }
+
+    /// ROADMAP §16 item 5: the reader must be movable to the delivery worker
+    /// thread (the `FieldReader` trait requires it); compile-checked here so
+    /// a future field with a `Rc`/`RefCell`/COM pointer is caught.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_field_reader_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>(_: &T) {}
+        assert_send_sync(&super::windows::WindowsFieldReader);
     }
 }

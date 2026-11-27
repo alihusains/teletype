@@ -1,6 +1,6 @@
 # Project Brain
 
-<!-- brain-freshness: version=v0.2.22 head=08fb3dd updated=2026-11-27 -->
+<!-- brain-freshness: version=v0.2.23 head=2ad4a7f updated=2026-11-28 -->
 
 This file is the durable working memory for this project.
 
@@ -79,18 +79,71 @@ last-dictation timing panel in Developer tab (Mic/Polish/Words/models);
 Windows `DeliveryIo` seam (enigo SendInput for typing + Ctrl+V, arboard for
 clipboard text-only snapshot/restore; `FieldReader` is a stub — UIA is a
 separate effort). Windows cross-compile not verified (no target on dev
-machine). Verified: 1413 core + 649 desktop + 624 UI tests pass, tsc clean,
+machine). **The UIA stub was replaced 2026-11-27** — see the 2026-11-28 note
+below; this sentence records the state at batch 4, not the current state. Verified: 1413 core + 649 desktop + 624 UI tests pass, tsc clean,
 11/11 pin checks green.
 
-**Update 2026-11-27 (critical bug fixes, prepared for v0.2.23):** reviewed and
+**Update 2026-11-27 (public marketing site):** the GitHub Pages site is live at
+https://alihusains.github.io/teletype/, served from the `gh-pages` branch. It is
+a dependency-free static site (`index.html`, `styles.css`, `app.js`, local Open
+Runde + Inter fonts, app icon, `.nojekyll`), with the editable working copy in
+`site/` on `main's` worktree. The section order and layout mirror the
+EnviousWispr reference (hero product demo, app strip, five-stage pipeline, two
+speech engines, BYOK/local polish lanes, 12 cleanup examples, nine use cases,
+evidence, comparisons, founder, closing, footer), restyled to Teletype violet.
+The proof section deliberately carries no testimonials or press quotes — only
+in-repo evidence (test counts, eval latency/WER, delivery matrix, MIT) with its
+limits stated. Deploy = rebuild the `gh-pages` tree from `site/`; do not edit the
+branch by hand. The temporary `site/_preview.html` / `_measure.html` review
+harnesses were deleted before publishing.
+
+**Update 2026-11-27 (critical bug fixes, released as v0.2.23):** reviewed and
 fixed the reported take lifecycle, settings lost-update, wrong-window delivery, clipboard
 overwrite, and history deletion races. The delivery cascade now revalidates the
 recorded target immediately before paste/type/AX writes; clipboard restoration
 compares against Teletype's post-write change count; per-entry history removal
 waits for SQLite acknowledgment before memory/recording cleanup; settings
-writers mutate the latest locked snapshot. Regression tests and full core and
-desktop library suites pass. Release is prepared as v0.2.23; the user explicitly
-approved the unsigned public pre-release channel because signing keys are absent.
+writers mutate the latest locked snapshot. Regression tests, full core and
+desktop suites, CI run `45934065921`, release rehearsal, and publish workflow
+`45938212535` passed. The unsigned pre-release is live at
+https://github.com/alihusains/teletype/releases/tag/v0.2.23 with macOS Apple
+Silicon, macOS Intel, and Windows installers. `latest.json` has no platform
+entries: in-app updates are disabled until signing keys are configured. The
+user explicitly approved this unsigned public pre-release channel.
+
+**Update 2026-11-28 (dictation.rs split, shipped in v0.3.0):**
+the 16,461-line `dictation.rs` is now a 3,738-line root. Tests moved to
+`dictation/tests.rs` (4,921) plus six sibling test modules; the 6,434-line
+`impl Session` moved verbatim into `dictation/session/{state,hotkey,take,
+transcribe,learning,delivery,lifecycle}.rs`; the controller surface (`Event`,
+`Controller`, `HotkeyConflict`, `visible_conflict`) moved to
+`dictation/controller.rs`; the trace machinery was already in
+`dictation_stages.rs`. Method bodies are unchanged; private methods were
+widened only to `pub(in crate::dictation)`. Verified 661 desktop lib tests
+(3 ignored), 1,416 core tests (one timing-sensitive VAD test flakes under
+parallel load and passes alone), 628 UI tests, fmt/clippy clean.
+
+**Update 2026-11-28 (roadmap items 2, 4, 5, shipped in v0.3.0):**
+
+- The per-app polish learning loop is closed in the desktop layer:
+  `choose_take_profile_for_app` in `dictation.rs` resolves the bandit choice
+  and encodes it into the instruction channel; the pipeline no longer
+  consults its own empty `BanditState::default()` (`pipeline.rs`). An
+  explicit per-app override wins. Regression tests pin the seam.
+- The UI `active` gate is complete (see L063 above). The non-obvious part:
+  gating only the poll in `useRuntimeStatus` is insufficient — its
+  `runtime-status` event path resets the poll timer, so the subscription
+  itself must follow `active`. `ReadinessPanel` also owns a 1 s
+  `useNow` tick that must be gated, because the hook retains its last
+  value while hidden.
+- Windows delivery uses `WindowsFieldReader` (UIA) instead of the stub.
+  Deliberate conservatism: `set_selected_text` always returns `Err` so the
+  core cascade falls back to `HeldForPasteLast` (UIA `SetValue` replaces the
+  whole field, not the selection); writable focus is Edit-only, never
+  Document/Text or a password field; URL-bar detection is a token allowlist
+  on AutomationId/ClassName/Name; COM is initialized per thread with
+  `CoInitializeEx(MTA)`. Verified by Windows-target compilation only —
+  real-hardware behaviour remains unproven (`docs/windows-from-mac.md`).
 
 **Update 2026-11-25 (plans/ batch 2 landed uncommitted on `main` @ `8746c1c`):**
 the `plans/` folder (improve-skill audit, 001-013) is now fully implemented.
@@ -523,7 +576,7 @@ no recommendation may change until it is recorded.
 | `crates/` | Rust workspace (5 members) | `Cargo.toml` |
 | `crates/teletype-core/` | Pure business logic | `pipeline.rs`, `state.rs`, `llm.rs`, `transforms/`, `autotext/`, `personalization/`, `context/` |
 | `crates/teletype-inference/` | LLM providers + catalog | `server.rs`, `openai_compat.rs`, `catalog.rs`, `llama.rs` (stub) |
-| `crates/teletype-desktop/` | Tauri app shell | `lib.rs`, `commands.rs`, `dictation.rs`, `overlay.rs`, `secrets.rs`, `fn_tap.m` |
+| `crates/teletype-desktop/` | Tauri app shell | `lib.rs`, `commands.rs`, `dictation.rs` + `dictation/` (controller, session, tests, stages), `overlay.rs`, `secrets.rs`, `fn_tap.m` |
 | `ui/` | React frontend | `src/App.tsx`, `src/pill.tsx`, `src/screens/` (13 screens) |
 | `docs/` | Architecture reference | `architecture.md` |
 | `scripts/` | llama-server build | `build-llama-server.sh` |
@@ -2926,7 +2979,7 @@ Record constraints that future agents must know.
 | `teletype-core` stays platform-free | Cross-platform boundary; tested via mocks | `docs/architecture.md` |
 | English-first; Parakeet is English-only, `"auto"` resolves to `"en"` | Model capability; prevents mis-transcription | `ROADMAP.md` §14 (formerly `checkpoint.md`) language guard |
 | macOS 14+, Rust 1.88+, Node 18+, CMake required | Build/toolchain floor | `README.md` (the old `README-github.md` is gone) |
-| Windows platform layer stubbed | UIA/OCR, injection, hotkey, tray not implemented | `README.md` Status |
+| Windows platform layer partly implemented | UIA `FieldReader`, typing, Ctrl+V, and text-only clipboard restore have shipped; OCR, hotkey, tray, and real-Windows validation remain | `docs/windows-from-mac.md`, ROADMAP §16 item 5 |
 | No telemetry / analytics ever on by default | Product stance + EW contrast | `roadmap.md`, D003 |
 | Never log transcripts, AutoText values, or keys | Privacy contract | `docs/architecture.md`, `prompt.md` |
 | Never edit `S1_SYSTEM_PROMPT` without retraining | The prompt text and the S1-mini artifact are one contract (transcribed from the published card at the pinned revision); only the generic `CORE_RULES`/`build_prompt` path may absorb new rules | `crates/teletype-core/src/transforms/prompt.rs` header comment |
@@ -3311,7 +3364,7 @@ Keep only the most important summaries and links to detailed learnings.
 | L060 | **The Insights learning card was dead in production because `get_insights` never filled `insights.learning`.** `insights::compute_learning` had only test callers; the `?demo` preview injected the field, so every visual check looked healthy while a real install always showed the empty state. `history.rs` now opens `<app_data>/learning/learning.sqlite` only when it exists, reads the last 300 dictations, the lexicon and the last 10 accuracy points, and assigns the result; a store that will not open logs a warning instead of failing the request. Lesson: a preview fixture can hide a dead backend field; when a card is permanently empty, grep for writers of the field, not just its renderer. | insights / learning store / desktop IPC | verified (`cargo check`, UI 223 tests, `tsc`, live preview wide/narrow light/dark) | `learnings/2026-10-25-insights-learning-was-never-populated.md` |
 | L061 | **A stricter polish rejection exposed an unscrubbed NUL in the fallback.** The old journey test passed because the mock model's output replaced the NUL-bearing input; once the ceiling rejected that output, the raw transcript reached delivery. `Pipeline` step 0.0 now drops control characters except tab/newline. Lesson: a validator that falls back to the input makes every input hazard a delivery hazard; sanitize at the pipeline boundary. | transforms / validator / pipeline | verified (`cargo test -p teletype-core`, 808 lib + journey_smoke 62, clippy clean) | `learnings/2026-10-25-polish-ceiling-exposed-nul.md` |
 | L062 | **`StylesScreen.refresh` depended on the `useResource` container, so the mount effect re-fired 30,000 `get_settings` calls in 12 s and pushed the renderer into "Maximum update depth exceeded".** `useResource` memoises its return, but its identity still changes on every response, and a container in a `useCallback`/`useEffect` dep array turns that into a reload loop. Fix: depend on `profileList.reload` (a stable `useCallback`), not on `profileList` itself. A new `stylesModelCapability.test.tsx` guard uses a fresh-object IPC mock (the shared `mockInvokeResponses` returns the same reference every call, so `setData(sameRef)` bails out and the loop is invisible in the existing suite). Lesson: an object whose identity changes with its contents is not safe in a dependency array, even when it is memoised. | ui / writeGuard / StylesScreen | verified (20/20 touched UI tests, `tsc --noEmit`, live boot console 0 errors) | `learnings/2026-10-25-use-resource-dep-reload-storm.md` |
-| L063 | **`App.tsx` keeps all 13 screens mounted with `display: none`; only `SettingsScreen` passes `active` and gates its own background work.** The other 12 run their `useEffect` mount and polling loops on every app launch. Measured boot trace (12 s, `?demo` preview): `plugin:event|listen` 39, `get_logs` 25, `get_runtime_status` 20, `get_settings` 20, `unlisten` 12, `stop_hotkey_capture` 10. Fixing the `StylesScreen` storm (L062) removed the worst offender; the remaining pattern is a design choice, not a bug: always-mounted screens keep state alive across tab switches, but the `active` gate on `SettingsScreen` is the precedent for doing background work only when the tab is in view. Options: propagate `active` to all screens (matches the `SettingsScreen` precedent, minimal risk); or leave it, accepting the IPC cost at boot. Not resolved unilaterally because it changes the tab-switch feel. | ui / App.tsx / IPC | verified (boot trace measured, `tsc --noEmit`) | `learnings/2026-10-25-all-screens-stay-mounted.md` |
+| L063 | **`App.tsx` keeps all 13 screens mounted with `display: none`; only `SettingsScreen` passes `active` and gates its own background work.** The other 12 run their `useEffect` mount and polling loops on every app launch. Measured boot trace (12 s, `?demo` preview): `plugin:event|listen` 39, `get_logs` 25, `get_runtime_status` 20, `get_settings` 20, `unlisten` 12, `stop_hotkey_capture` 10. Fixing the `StylesScreen` storm (L062) removed the worst offender; the remaining pattern is a design choice, not a bug: always-mounted screens keep state alive across tab switches, but the `active` gate on `SettingsScreen` is the precedent for doing background work only when the tab is in view. Options: propagate `active` to all screens (matches the `SettingsScreen` precedent, minimal risk); or leave it, accepting the IPC cost at boot. **Resolved 2026-11-28:** ten screens now pass/take `active`; the shared `useRuntimeStatus(active)` and `ReadinessPanel active` gate the 5 s poll and 1 s clock, and `useTauriEvent` gained `enabled` so hidden screens unsubscribe. | ui / App.tsx / IPC | verified (boot trace measured) → resolved 2026-11-28 (628 UI tests, `tsc --noEmit`) | `learnings/2026-10-25-all-screens-stay-mounted.md` |
 | L064 | **The `ui/src/dev/browserPreview.ts` fixture and the `Settings` TS interface had both drifted from the real `get_settings` response.** The fixture was typed `Record<string, unknown>`, so an omitted key was invisible until runtime. A screen doing `setX(s.field)` then assigned `undefined` over a defined initial value, which React reports as a controlled input going uncontrolled. Fixing the fixture's type to `Settings` exposed that the interface itself was missing `scratchpadEnabled` / `openaiBaseUrl` / `openaiModel`, and the three test fixtures that build a complete `Settings` were silently missing the same fields. Lesson: type a dev-preview IPC fixture against the same interface the real response uses, and make the interface exhaustive enough to be worth typing against, so drift becomes a `tsc` error instead of a runtime warning. When the typed-fixture fix does not compile, the missing property is the finding about the interface, not an obstacle to the fix. | ui / dev preview / settings contract | verified (`tsc --noEmit` exit 0, 20/20 touched tests, preview boot console 0 errors) | `learnings/2026-10-25-preview-fixture-settings-drift.md` |
 | L065 | **`useWrites().run(...)` always resolves to a truthy object, so `if (await writes.run(...))` takes the success branch on every failure.** `runWrite` catches instead of throwing and returns `{ ok: false; error: string }`; that is a non-empty object and therefore truthy. All 20 call sites in `ui/src/screens/*.tsx` now use `const res = await writes.run(...); if (!res.ok)`. Lesson: a guard function that never throws must signal failure through a field, and every consumer must read that field; a bare truthiness check compiles, passes review, and is dead code for the error path. | ui / writeGuard | verified (`grep` confirms no truthiness-branch `writes.run` call sites) | `learnings/2026-10-25-writes-run-truthiness.md` |
 | L066 | **`learning.accuracy` (`personal_accuracy_history`) is permanently empty in production, so an accuracy-over-time UI would be dead.** The reader is wired (`history.rs` calls `store.personal_accuracy_history(10)`) and the field has a populated shape, which is why it looks usable; the only writer is `run_replay` (`learning/replay.rs`), and `grep -rn run_replay crates/` outside `replay.rs` returns nothing. Every caller is inside that file's `#[cfg(test)]` module, so no runtime path ever records a row, and a fresh store asserts empty history. The `?demo` fixture injects fake accuracy points, masking it. Decision during the bolder Insights pass: do NOT build an accuracy-trend section; use fields with a production writer (streak, heatmap, words, per-active-day, best streak, pace multiplier). Lesson: before building UI on a field, verify it has a production writer, not just a reader and a demo fixture. Re-check before any accuracy work, since `run_replay` could gain a runtime caller later. | insights / learning replay / ui | candidate (grep proves no runtime caller; needs human confirm) | `learnings/2026-10-26-accuracy-history-dead-in-prod.md` |

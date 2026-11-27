@@ -45,8 +45,9 @@ enviouswispr/
 .claude/
 
 # Internal planning notes that reference the EnviousWispr reference tree.
-# Kept locally for context, not published.
-roadmap.md
+# Kept locally for context, not published. ROADMAP.md is the public,
+# consolidated plan and must stay tracked (the old lowercase rule matched it
+# case-insensitively on macOS and silently kept it out of git).
 T2.1-plan.md
 findings.md
 

@@ -45,6 +45,9 @@ export interface RuntimeStatusInfo {
  * Polling is deliberately coarse and pauses while the tab is hidden: the
  * state that changes fast is the dictation phase, and that already arrives as
  * its own event. Nothing here is on the dictation hot path.
+ *
+ * The subscription follows `active` as well as the poll, because the event
+ * path resets the poll timer and would otherwise revive a hidden screen's poll.
  */
 const POLL_MS = 5000;
 
@@ -116,7 +119,7 @@ export function useRuntimeStatus(active = true): RuntimeStatusInfo {
     // moments after the event already delivered the same answer.
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => readRef.current(), POLL_MS);
-  });
+  }, active);
 
   return { status, lastChecked, stale };
 }
@@ -219,12 +222,17 @@ export function StatusRow({
 export function ReadinessPanel({
   status,
   onFix,
+  active = true,
 }: {
   status: RuntimeStatus | null;
   onFix?: () => void;
+  active?: boolean;
 }) {
-  const info = useRuntimeStatus();
-  const now = useNow(1000, info.status !== null && !info.stale);
+  const info = useRuntimeStatus(active);
+  // A hidden screen's panel must not keep the 1 s "checked Ns ago" tick alive
+  // either: useRuntimeStatus retains its last value while inactive, so without
+  // this gate the clock would keep re-rendering forever.
+  const now = useNow(1000, active && info.status !== null && !info.stale);
   // Prefer the caller's value (a screen may pass its own snapshot); fall back
   // to this panel's own read so the checked-ago line is always live.
   const current = status ?? info.status;

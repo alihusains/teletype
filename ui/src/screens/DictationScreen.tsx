@@ -43,7 +43,7 @@ function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
-export default function DictationScreen() {
+export default function DictationScreen({ active = true }: { active?: boolean }) {
   const history = useResource(() => invoke<HistoryEntry[]>("list_dictation_history"));
   const entries = history.data ?? [];
   const [query, setQuery] = useState("");
@@ -166,8 +166,14 @@ export default function DictationScreen() {
   }, [enqueue]);
 
   // Refresh when the window regains focus (after dictating in another app)
-  // or becomes visible, so new entries appear without switching tabs.
+  // or becomes visible, so new entries appear without switching tabs. The
+  // screen is hidden (display: none) while another tab is open, and the
+  // window focus/visibility never changes in that case, so the listeners
+  // would only ever fire as stale work — gate them on activity. The
+  // mount-time history load stays ungated: it is one-shot and the screen
+  // is active when it first mounts.
   useEffect(() => {
+    if (!active) return;
     const win = getCurrentWebviewWindow();
     const onFocus = () => history.reload();
     window.addEventListener("focus", onFocus);
@@ -181,7 +187,7 @@ export default function DictationScreen() {
       document.removeEventListener("visibilitychange", onFocus);
       unlistenFocus?.();
     };
-  }, [history]);
+  }, [history, active]);
 
   // A-10: the "Copied" flag is set only on success. A rejected writeText
   // shows "Copy failed" in the same place, so the affordance is honest.

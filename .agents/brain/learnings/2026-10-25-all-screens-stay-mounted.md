@@ -61,3 +61,22 @@ gate it on visibility rather than to optimise the call.
 
 When adding a screen with a poll or a subscription, take an `active` prop and
 short-circuit the effect, following `SettingsScreen`/`useRuntimeStatus(active)`.
+
+## Update 2026-11-28 (resolved)
+
+Option 2 above was implemented without changing the always-mounted design: the
+six screens with intervals/focus/listeners plus Home, Models and Transforms now
+take `active` (Settings already had it). Two non-obvious follow-ups mattered:
+
+- `useRuntimeStatus` owns both a 5 s poll and an event path that resets that
+  poll's timer. Gating only the poll effect lets a `runtime-status` event on a
+  hidden screen restart it, so `useTauriEvent` gained an `enabled` argument
+  and the subscription follows `active` too.
+- `ReadinessPanel` calls the hook itself and runs a 1 s `useNow` clock. The
+  hook retains its last value while inactive, so the clock condition needed an
+  explicit `active &&`; both panel call sites forward the screen's gate.
+
+One-shot mount fetches and user-action timers were deliberately left ungated to
+preserve state across tab switches. Verified with fake-timer regression tests in
+`activeScreenGate.test.tsx` and `runtimeStatusEvent.test.tsx` (628 UI tests
+total, typecheck clean).

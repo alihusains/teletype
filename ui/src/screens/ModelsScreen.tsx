@@ -282,7 +282,7 @@ function DeleteButton({
   );
 }
 
-export default function ModelsScreen() {
+export default function ModelsScreen({ active = true }: { active?: boolean }) {
   const [models, setModels] = useState<ModelStatus[]>([]);
   const [speechModels, setSpeechModels] = useState<SpeechModelStatus[]>([]);
   const store = useDownloadStore();
@@ -308,7 +308,7 @@ export default function ModelsScreen() {
   // Real runtime state for both models. Polled coarsely; this screen is the
   // one place the user goes specifically to answer "what is loaded?", so it
   // must not be a mount-time snapshot.
-  const runtime = useRuntimeStatus().status;
+  const runtime = useRuntimeStatus(active).status;
 
   // OpenAI-compatible connector state
   const [selectedProvider, setSelectedProvider] = useState("");
@@ -795,6 +795,7 @@ export default function ModelsScreen() {
       <div style={{ marginBottom: 20 }}>
         <ReadinessPanel
           status={runtime}
+          active={active}
           onFix={() =>
             document
               .getElementById("ai-models-list")

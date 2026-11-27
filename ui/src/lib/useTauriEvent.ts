@@ -7,12 +7,15 @@ import { useEffect, useRef } from "react";
  * Uses a `cancelled` flag so that if the component unmounts before the
  * `listen` promise resolves (React StrictMode double-mount), the listener is
  * removed immediately instead of being orphaned or over-unlisted.
+ *
+ * Pass `enabled=false` to keep a mounted-but-hidden screen from subscribing.
  */
-export function useTauriEvent<T>(event: string, handler: EventCallback<T>) {
+export function useTauriEvent<T>(event: string, handler: EventCallback<T>, enabled = true) {
   const latest = useRef(handler);
   latest.current = handler;
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     listen<T>(event, (e) => latest.current(e)).then((fn) => {
@@ -23,7 +26,7 @@ export function useTauriEvent<T>(event: string, handler: EventCallback<T>) {
       cancelled = true;
       unlisten?.();
     };
-  }, [event]);
+  }, [event, enabled]);
 }
 
 /**

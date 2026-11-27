@@ -91,6 +91,38 @@ fn commands_tree() -> String {
     out
 }
 
+/// The dictation surface since the 2026-11-28 split: `dictation.rs` plus
+/// every `.rs` file under `dictation/` (controller, session/*, tests, stages),
+/// concatenated. The tests below trace a signal through the whole module, so
+/// reading only the root file silently loses moved code.
+fn dictation_tree() -> String {
+    let mut out = read("crates/teletype-desktop/src/dictation.rs");
+    let dir = repo_root().join("crates/teletype-desktop/src/dictation");
+    let mut files: Vec<PathBuf> = Vec::new();
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().and_then(|s| s.to_str()) == Some("rs") {
+                out.push(p);
+            }
+        }
+    }
+    walk(&dir, &mut files);
+    files.sort();
+    for p in files {
+        out.push('\n');
+        out.push_str(
+            &std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display())),
+        );
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // minimal parsers
 // ---------------------------------------------------------------------------
@@ -712,7 +744,7 @@ fn contract_05_the_no_model_signal_reaches_a_user_visible_surface() {
         "BUG-05 has returned: the no-model arm runs before the flag is computed"
     );
 
-    let dictation = read("crates/teletype-desktop/src/dictation.rs");
+    let dictation = dictation_tree();
     assert!(
         dictation.contains("result.transform_skipped_no_model"),
         "the desktop controller no longer reads the no-model signal"
@@ -825,7 +857,10 @@ fn contract_06_every_setting_has_a_production_caller() {
 
 /// (file, in declaration block, in Default impl, in save_settings body)
 fn read_count_in_file(path: &str, snake: &str, camel: &str) -> usize {
-    let rs = read(path);
+    read_count_in_text(&read(path), snake, camel)
+}
+
+fn read_count_in_text(rs: &str, snake: &str, camel: &str) -> usize {
     let mut in_decl = false;
     let mut in_default = false;
     let mut in_save = false;
@@ -880,7 +915,7 @@ fn read_count_in_file(path: &str, snake: &str, camel: &str) -> usize {
 /// commands.rs; a setting read from any of them counts.
 fn settings_read_apply_callers(snake: &str, camel: &str) -> usize {
     let mut total = read_count_in_file("crates/teletype-desktop/src/commands.rs", snake, camel)
-        + read_count_in_file("crates/teletype-desktop/src/dictation.rs", snake, camel)
+        + read_count_in_text(&dictation_tree(), snake, camel)
         + read_count_in_file("crates/teletype-desktop/src/lib.rs", snake, camel);
     // Since the S1 split the settings commands live in commands/<domain>.rs;
     // a field read from any of them counts.

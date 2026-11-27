@@ -51,7 +51,7 @@ type StoredNote = {
   source: "typed" | "dictated";
 };
 
-export default function NotetakerScreen() {
+export default function NotetakerScreen({ active = true }: { active?: boolean }) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [enabled, setEnabled] = useState(false);
   const [query, setQuery] = useState("");
@@ -97,9 +97,16 @@ export default function NotetakerScreen() {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // The wall clock only feeds the "Today 14:32" labels, so it can sleep while
+  // the screen is hidden. The autosave timers are user-action-driven and stay
+  // unconditional: a hidden window must not lose an unsaved note.
+  useEffect(() => {
+    if (!active) return;
     const t = window.setInterval(() => setNow(Date.now()), 60 * 1000);
     return () => window.clearInterval(t);
-  }, [refresh]);
+  }, [active]);
 
   // Debounced autosave: any typed edit marks the note dirty and schedules a
   // save; switching notes or unmounting flushes a pending save first. The

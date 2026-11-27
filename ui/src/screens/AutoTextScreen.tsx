@@ -269,7 +269,7 @@ function EntryForm({
 
 type StrNum = { [k: string]: number };
 
-export default function AutoTextScreen() {
+export default function AutoTextScreen({ active = true }: { active?: boolean }) {
   const [showSystem, setShowSystem] = useState(false);
   const [usage, setUsage] = useState<StrNum>({});
   const [showCreate, setShowCreate] = useState(false);
@@ -420,8 +420,11 @@ export default function AutoTextScreen() {
 
   // Re-fetch usage + entries whenever the window becomes visible again:
   // typed expansions happen in OTHER apps while this window is hidden, so
-  // the counts change without any event reaching this screen.
+  // the counts change without any event reaching this screen. Gated on
+  // activity: while another tab is open the window focus/visibility never
+  // changes, so the listeners would only ever fire as stale work.
   useEffect(() => {
+    if (!active) return;
     const onVisible = () => {
       if (document.visibilityState === "visible") refresh();
     };
@@ -431,7 +434,7 @@ export default function AutoTextScreen() {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
-  }, []);
+  }, [active]);
 
   // Group system entries into balanced, meaningful categories.
   const systemGroups = useMemo(() => {

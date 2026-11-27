@@ -66,7 +66,7 @@ function s1ValueFor(axis: "styling" | "structure" | "context", s1: S1Control): s
   return s1[axis];
 }
 
-export default function DeveloperScreen() {
+export default function DeveloperScreen({ active = true }: { active?: boolean }) {
   const [lines, setLines] = useState<LogEntry[]>([]);
   const [follow, setFollow] = useState(true);
   const [s1, setS1] = useState<S1Control | null>(null);
@@ -100,7 +100,13 @@ export default function DeveloperScreen() {
       .catch(() => {});
   });
 
+  // All screens stay mounted (display: none), so the 500 ms log/timings poll
+  // must not run while this screen is hidden. The one-shot get_profile /
+  // get_settings reads are left ungated: they happen once at mount and the
+  // screen is active when it first mounts (App renders it hidden but the
+  // data is cheap and the settings-changed listener keeps it fresh).
   useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     const tick = () => {
       if (cancelled) return;
@@ -121,7 +127,7 @@ export default function DeveloperScreen() {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     if (follow && preRef.current) {

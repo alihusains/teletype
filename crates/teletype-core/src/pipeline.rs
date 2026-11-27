@@ -293,18 +293,12 @@ impl<'a> Pipeline<'a> {
             crate::profile::PolishProfile::Natural,
             raw_word_count,
         );
-        // T5: the bandit may pick an adjacent learned profile for this app.
-        // With no bandit store threaded in yet (the desktop layer owns that
-        // wiring) the state is empty and the recommended default is kept, so
-        // every existing caller behaves byte-for-byte as before.
-        let app_key = crate::profile::normalize_key(&context.application_id);
-        let resolved_profile = choose_take_profile(
-            &app_key,
-            explicit_profile,
-            recommended_profile,
-            &crate::learning::profile_bandit::BanditState::default(),
-            0,
-        );
+        // T5: the bandit choice is resolved by the desktop layer, which
+        // encodes it into the instruction channel before the pipeline runs.
+        // The pipeline must not consult an (empty) bandit of its own: an
+        // encoded explicit profile wins, otherwise the recommended default
+        // per-app category table result runs exactly as-is.
+        let resolved_profile = explicit_profile.unwrap_or(recommended_profile);
         let mut profile_reason = String::new();
 
         // 0.0. Scrub control characters before anything else. A NUL or other

@@ -62,8 +62,10 @@ function dayLabel(ms: number): string {
 
 export default function HomeScreen({
   onNavigate,
+  active = true,
 }: {
   onNavigate?: (screen: string) => void;
+  active?: boolean;
 }) {
   const [privacyDismissed, setPrivacyDismissed] = useState(loadPrivacyDismissed);
 
@@ -74,7 +76,7 @@ export default function HomeScreen({
   // to a user who had downloaded a small model and then selected a different
   // one that was absent, and their first dictation failed. It also could not
   // distinguish downloaded from loaded, which is the question being asked.
-  const runtime = useRuntimeStatus().status;
+  const runtime = useRuntimeStatus(active).status;
 
   const dismissPrivacy = () => {
     setPrivacyDismissed(true);
@@ -103,7 +105,7 @@ export default function HomeScreen({
   // to idle after transcribe + transform + inject).
   useTauriEvent<{ phase: string }>("dictation-state", ({ payload }) => {
     if (payload.phase === "idle") refresh();
-  });
+  }, active);
 
   const grouped = useMemo(() => {
     const groups: { label: string; items: HistoryEntry[] }[] = [];
@@ -197,7 +199,7 @@ export default function HomeScreen({
         </div>
       )}
 
-      <ReadinessPanel status={runtime} onFix={() => onNavigate?.("models")} />
+      <ReadinessPanel status={runtime} onFix={() => onNavigate?.("models")} active={active} />
 
       {/* The one atmospheric band in the app. The gradient sets the clinical,
           open-sky tone; every section below stays pure white. It spans the

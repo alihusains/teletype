@@ -809,7 +809,7 @@ export default function SettingsScreen({
   };
   // Coarse 5s poll, paused when the window is hidden: the readiness chips must
   // not wake the engines or the render loop while the window is in the background.
-  const runtimeStatus = useRuntimeStatus().status;
+  const runtimeStatus = useRuntimeStatus(active).status;
 
   // Settings search (P8.7): query state plus the current match position for
   // Enter-to-advance. `active` gates the DOM sweep so searching is skipped

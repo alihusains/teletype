@@ -2438,7 +2438,13 @@ function MilestonesCard({ data }: { data: Insights }) {
  * Screen
  * ------------------------------------------------------------------ */
 
-export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: string) => void }) {
+export default function InsightsScreen({
+  onNavigate,
+  active = true,
+}: {
+  onNavigate?: (screen: string) => void;
+  active?: boolean;
+}) {
   const [data, setData] = useState<Insights>(EMPTY);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2512,7 +2518,10 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
 
   // Re-fetch when the window becomes visible again (dictations and typed
   // expansions in other apps change the data while this window is hidden).
+  // Gated on activity: while another tab is open the window focus/visibility
+  // never changes, so the listeners would only ever fire as stale work.
   useEffect(() => {
+    if (!active) return;
     const onVisible = () => {
       if (document.visibilityState === "visible") refresh();
     };
@@ -2522,7 +2531,7 @@ export default function InsightsScreen({ onNavigate }: { onNavigate?: (screen: s
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
     };
-  }, [refresh]);
+  }, [refresh, active]);
 
   const chooseRange = (id: Range) => {
     if (id === "custom") {

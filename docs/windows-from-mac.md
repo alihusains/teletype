@@ -19,6 +19,32 @@ The Windows layer is further along than "stubbed":
 | Build + pipeline smoke | `release.yml` `release-windows` runs the shipped `.exe --self-test` | green in v0.2.21 |
 | Compile gate on every PR | `ci.yml` `windows-compile` | green |
 
+## Current state (2026-11-27)
+
+The last remaining "stub" on the delivery path is gone: the Windows
+`FieldReader` is now a real **UIA reader** (`uia.rs` +
+`delivery_io::WindowsFieldReader`). It provides:
+
+- **selection readback** — `focused_control_text` (TextPattern →
+  ValuePattern → Name) verifies pastes on writable Edit fields;
+- **secure-field detection** — UIA `IsPassword`; dictation is refused
+  before any side effect, and the field is never read;
+- **conservative writable-focus** — UIA **Edit** control only, never a
+  password field, and never a Document/Text control (browser content is a
+  Document; it goes to the optimistic-paste path, matching macOS);
+- **URL-bar guard** — best-effort allowlist on the control's AutomationId /
+  ClassName / Name (`omnibox`, `urlbar`, `addresseditbox`, "address bar",
+  "url bar", "address and search bar"); bare `address`/`url` do not match.
+
+Injection, paste (Ctrl+V), and the clipboard adapter already shipped
+(see the table above). The delivery cascade also now initializes COM per
+worker thread (`CoInitializeEx`, MTA) before its first UIA query.
+
+What is **still unverified**: nothing here has been exercised on a real
+Windows desktop — a Mac and a `windows-latest` CI runner can only prove
+the code compiles (the §3 checklist is the way to close that gap), and the
+Windows test suite is still compile-only / blocked by needle-sys LNK1143.
+
 So the gap is **not a missing implementation, it is missing evidence on a real
 Windows desktop**. Nothing in this repo has ever run the app with a human
 holding a hotkey, in a real window station, and watched text land.

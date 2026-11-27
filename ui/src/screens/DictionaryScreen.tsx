@@ -74,7 +74,7 @@ const pill: React.CSSProperties = {
   borderRadius: 999,
 };
 
-export default function DictionaryScreen() {
+export default function DictionaryScreen({ active = true }: { active?: boolean }) {
   const [tab, setTab] = useState("words");
   const [words, setWords] = useState<DictionaryWord[]>([]);
   const [packs, setPacks] = useState<PackInfo[]>([]);
@@ -119,13 +119,14 @@ export default function DictionaryScreen() {
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
     // jsdom has no matchMedia; degrade to the non-narrow layout there.
+    if (!active) return;
     if (typeof window.matchMedia !== "function") return;
     const mq = window.matchMedia("(max-width: 760px)");
     setNarrow(mq.matches);
     const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
-  }, []);
+  }, [active]);
 
   const writes = useWrites();
 

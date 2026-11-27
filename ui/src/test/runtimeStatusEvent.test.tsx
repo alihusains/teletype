@@ -5,6 +5,7 @@ import { useRuntimeStatus, checkedAgoLabel, type RuntimeStatus } from "../lib/ru
 import {
   emitTauriEvent,
   invokeCalls,
+  listenHandlersFor,
   mockListenCapture,
   resetTauriMocks,
   type InvokeCall,
@@ -28,6 +29,12 @@ function Probe() {
       <span data-testid="last-checked">{String(lastChecked)}</span>
     </div>
   );
+}
+
+/** A probe that exposes the visibility gate. */
+function GatedProbe({ active }: { active: boolean }) {
+  const { status } = useRuntimeStatus(active);
+  return <span data-testid="gated-speech">{status?.speech.state ?? "null"}</span>;
 }
 
 const LOADING_PAYLOAD: RuntimeStatus = {
@@ -153,6 +160,40 @@ describe("useRuntimeStatus event path", () => {
 
     expect(screen.getByTestId("stale").textContent).toBe("true");
     expect(screen.getByTestId("speech-state").textContent).toBe("null");
+  });
+
+  it("does not poll or subscribe while inactive, and catches up when activated", async () => {
+    vi.useFakeTimers();
+    invokeFn.mockResolvedValue(LOADING_PAYLOAD);
+
+    const { rerender } = render(<GatedProbe active={false} />);
+    await flush();
+
+    expect(pollCalls()).toHaveLength(0);
+    expect(listenHandlersFor("runtime-status")).toHaveLength(0);
+
+    // A runtime event must not revive a hidden screen's poll.
+    await act(async () => {
+      await emitTauriEvent("runtime-status", LOADED_PAYLOAD);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    expect(pollCalls()).toHaveLength(0);
+    expect(screen.getByTestId("gated-speech").textContent).toBe("null");
+
+    // Activating reads immediately, subscribes, then resumes the 5 s cadence.
+    rerender(<GatedProbe active={true} />);
+    await flush();
+    expect(pollCalls()).toHaveLength(1);
+    expect(listenHandlersFor("runtime-status")).toHaveLength(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    expect(pollCalls()).toHaveLength(2);
   });
 });
 
